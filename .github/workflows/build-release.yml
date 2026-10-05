@@ -143,16 +143,55 @@ jobs:
       - name: Build frontend
         run: pnpm run build
 
+      # Actions logs need a GitHub sign-in, so each Rust step tees into a file
+      # that the diagnostics step copies into the public job summary.
       - name: Rust format
+        shell: bash
         run: |
-          cargo fmt --package discord-cdp-launch-core --package discord-cdp-launcher -- --check
-          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+          set -o pipefail
+          mkdir -p target
+          {
+            cargo fmt --package discord-cdp-launch-core --package discord-cdp-launcher -- --check
+            cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+          } 2>&1 | tee target/rust-fmt.log
 
+      # The first Cargo compilation of the pipeline: compile errors and clippy
+      # lints both surface here, and `-D warnings` fails on both.
       - name: Rust clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo clippy --workspace --all-targets --all-features --message-format=short \
+            -- -D warnings 2>&1 | tee target/rust-clippy.log
 
       - name: Rust tests
-        run: cargo test --workspace
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --workspace --no-fail-fast 2>&1 | tee target/rust-tests.log
+
+      # `error[E...]` means the code does not compile, `clippy::` means a lint
+      # was escalated by `-D warnings` — the two need different fixes.
+      - name: Publish Rust diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo '### Rust diagnostics'
+            echo
+            for f in target/rust-fmt.log target/rust-clippy.log target/rust-tests.log; do
+              [ -f "$f" ] || continue
+              echo "#### $f"
+              echo
+              echo '```text'
+              if [ "$f" = "target/rust-fmt.log" ]; then
+                head -n 80 "$f"
+              else
+                grep -E 'error|FAILED|panicked at' "$f" | head -n 120
+              fi
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify CDP core dependency boundary
         run: pnpm run check:cdp-core-deps
