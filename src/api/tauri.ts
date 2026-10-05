@@ -1,0 +1,1090 @@
+import { Channel, invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
+import { commandErrorMessage } from '@/utils/commandError'
+
+export type GameQuestMode = 'simulate' | 'heartbeat' | 'cdp'
+
+export interface DiscordUser {
+  id: string
+  username: string
+  discriminator: string
+  avatar: string | null
+  global_name: string | null
+  /** Nitro subscription type: 0=None, 1=Nitro Classic, 2=Nitro, 3=Nitro Basic */
+  premium_type?: number | null
+}
+
+/** A Discord billing subscription (subset of fields used by the UI). */
+export interface BillingSubscription {
+  id: string
+  status: number
+  current_period_start: string | null
+  current_period_end: string | null
+  payment_gateway_plan_id?: string | null
+  items?: Array<{ id: string; plan_id: string; quantity: number }>
+}
+
+/** Discord's server-provided countdown state for a reward program. */
+export interface ProgramReward {
+  reward_program?: number | string | null
+  next_reward_date?: string | null
+  program_current_state?: string | null
+  total_countdown_duration_ms?: number | null
+}
+
+export interface ProgramRewardsResponse {
+  rewards?: Record<string, ProgramReward> | ProgramReward[] | null
+}
+
+export function normalizeProgramRewards(
+  response: ProgramRewardsResponse | ProgramReward[] | null,
+): ProgramReward[] {
+  if (Array.isArray(response)) return response
+  if (Array.isArray(response?.rewards)) return response.rewards
+
+  return Object.entries(response?.rewards ?? {}).map(([key, reward]) => ({
+    ...reward,
+    // Discord currently returns the program name as the map key. Preserve an
+    // explicit field when present and normalize numeric keys for callers.
+    reward_program:
+      reward.reward_program ?? (Number.isNaN(Number(key)) ? key : Number(key)),
+  }))
+}
+
+export interface Quest {
+  id: string
+  traffic_metadata_raw?: string | null
+  traffic_metadata_sealed?: string | null
+  config: {
+    id?: string
+    messages: {
+      quest_name: string
+      game_title?: string
+      task_title?: string
+      task_description?: string
+    }
+    rewards_config?: {
+      rewards: QuestReward[]
+    }
+    stream_duration_requirement_minutes?: number
+    task_config?: {
+      tasks?: Record<string, QuestTaskConfigEntry>
+    }
+    task_config_v2?: {
+      tasks?: Record<string, QuestTaskConfigEntry>
+    }
+    application?: {
+      id: string
+      name: string
+      link: string
+      icon?: string
+    }
+    assets?: {
+      hero?: string
+    }
+    expires_at?: string
+    features?: string[]
+    share_policy?: unknown
+    cta_config?: {
+      link?: string | null
+      [key: string]: unknown
+    }
+    preview?: unknown
+    targeted_content?: unknown
+    traffic_metadata_raw?: string | null
+    traffic_metadata_sealed?: string | null
+  }
+  user_status: QuestUserStatus | null
+}
+
+export interface QuestReward {
+  type: number
+  sku_id: string
+  messages: {
+    name: string
+    name_with_article?: string
+    redemption_instructions_by_platform?: Record<string, string>
+  }
+  asset?: string | null
+  asset_video?: string | null
+  approximate_count?: number | null
+  redemption_link?: string | null
+  expires_at?: string | null
+  expires_at_premium?: string | null
+  expiration_mode?: number | null
+  orb_quantity?: number | null
+  premium_orb_quantity?: number | null
+  quantity?: number | null
+}
+
+export interface QuestTaskConfigEntry {
+  type?: string
+  target?: number
+  applications?: Array<{ id: string }>
+  external_ids?: string[]
+  assets?: unknown
+  messages?: Record<string, string>
+  event_name?: string
+}
+
+export interface QuestTaskProgress {
+  value?: number
+  target?: number
+  completed_at?: string | null
+}
+
+export interface QuestUserStatus {
+  user_id?: string
+  quest_id?: string
+  enrolled_at?: string | null
+  completed_at?: string | null
+  claimed_at?: string | null
+  claimed_tier?: number | null
+  last_stream_heartbeat_at?: string | null
+  stream_progress_seconds?: number | null
+  dismissed_quest_content?: number | null
+  progress?: Record<string, QuestTaskProgress>
+  orb_quantity_claimed?: number | null
+}
+
+export interface ExcludedQuest {
+  id: string
+  replacement_id?: string | null
+}
+
+export interface CurrentUserQuestsResponse {
+  quests: Quest[]
+  excluded_quests: ExcludedQuest[]
+  quest_enrollment_blocked_until?: string | null
+}
+
+export interface DetectableGame {
+  id: string
+  name: string
+  executables: Array<{
+    name: string
+    os: string
+  }>
+  icon?: string
+  type_name?: string
+}
+
+// Auth commands
+export type DesktopClientArg = 'auto' | 'official' | 'vesktop'
+export type CdpPortOwner = 'none' | 'official' | 'vesktop' | 'other'
+
+export interface ExtractedAccount {
+  token: string
+  user: DiscordUser
+}
+
+export type AuthProgressPhase =
+  | 'extracting_tokens'
+  | 'validating_tokens'
+  | 'accounts_found'
+  | 'validating_token'
+  | 'capturing_cdp_session'
+  | 'validating_cdp_session'
+  | 'preparing_session'
+  | 'syncing_client_info'
+  | 'complete'
+
+export interface AuthProgress {
+  phase: AuthProgressPhase
+  current: number | null
+  total: number | null
+  valid_accounts: number | null
+}
+
+export type AuthProgressHandler = (progress: AuthProgress) => void
+
+function createAuthProgressChannel(onProgress?: AuthProgressHandler): Channel<AuthProgress> {
+  return new Channel<AuthProgress>((progress) => onProgress?.(progress))
+}
+
+export async function autoDetectToken(
+  onProgress?: AuthProgressHandler,
+): Promise<ExtractedAccount[]> {
+  return await invoke('auto_detect_token', {
+    onProgress: createAuthProgressChannel(onProgress),
+  })
+}
+
+export async function setToken(token: string, onProgress?: AuthProgressHandler): Promise<DiscordUser> {
+  return await invoke('set_token', { token, onProgress: createAuthProgressChannel(onProgress) })
+}
+
+// RPC commands
+export function connectToDiscordRpc(activityJson: string, action: string = 'connect'): Promise<void> {
+  return invoke('connect_to_discord_rpc', { activity_json: activityJson, action })
+}
+
+export async function disconnectFromDiscordRpc(): Promise<void> {
+  return await invoke('disconnect_from_discord_rpc')
+}
+
+// User status commands
+export async function getQuests(): Promise<Quest[]> {
+  return await invoke('get_quests')
+}
+
+export async function getQuestsFull(): Promise<CurrentUserQuestsResponse> {
+  return await invoke('get_quests_full')
+}
+
+export async function getVirtualCurrencyBalance(): Promise<number> {
+  const response = await invoke<{ balance?: number }>('get_virtual_currency_balance')
+  return response.balance ?? 0
+}
+
+export async function getBillingSubscriptions(): Promise<BillingSubscription[]> {
+  const response = await invoke<BillingSubscription[]>('get_billing_subscriptions')
+  return response ?? []
+}
+
+/** Fetch Discord's authoritative reward-program countdown data. */
+export async function getProgramRewards(): Promise<ProgramReward[]> {
+  const response = await invoke<ProgramRewardsResponse | ProgramReward[] | null>('get_program_rewards')
+  return normalizeProgramRewards(response)
+}
+
+export async function getQuestDecisionDebug(placement: number): Promise<unknown> {
+  return await invoke('get_quest_decision_debug', { placement })
+}
+
+export async function getQuestDecisionsDebug(placement: number, num: number): Promise<unknown> {
+  return await invoke('get_quest_decisions_debug', { placement, num })
+}
+
+export async function claimQuestReward(questId: string, platform?: string): Promise<unknown> {
+  return await invoke('claim_quest_reward', { questId, platform })
+}
+
+export async function startVideoQuest(
+  questId: string,
+  secondsNeeded: number,
+  initialProgress: number,
+  speedMultiplier: number,
+  heartbeatInterval: number
+): Promise<void> {
+  return await invoke('start_video_quest', {
+    questId,
+    secondsNeeded,
+    initialProgress,
+    speedMultiplier,
+    heartbeatInterval
+  })
+}
+
+export async function startStreamQuest(
+  questId: string,
+  streamKey: string,
+  secondsNeeded: number,
+  initialProgress: number
+): Promise<void> {
+  return await invoke('start_stream_quest', {
+    questId,
+    streamKey,
+    secondsNeeded,
+    initialProgress
+  })
+}
+
+export type QuestTaskState = 'running' | 'finished' | 'failed'
+
+export interface QuestTaskStatus {
+  questId: string
+  state: QuestTaskState
+  error: string | null
+}
+
+export async function stopQuest(questId?: string | null): Promise<void> {
+  return await invoke('stop_quest', questId ? { questId } : {})
+}
+
+/** Outcome of every quest task the backend still tracks, keyed by quest id.
+ *  Quest events carry no quest id, so parallel quests are demultiplexed here. */
+export async function getQuestTaskStatuses(): Promise<QuestTaskStatus[]> {
+  return await invoke('get_quest_task_statuses')
+}
+
+// [LEGACY] Direct heartbeat mode — kept for backward compatibility
+// Use startCdpQuest() instead for new code
+export async function startGameHeartbeatQuest(
+  questId: string,
+  applicationId: string,
+  secondsNeeded: number,
+  initialProgress: number
+): Promise<void> {
+  return await invoke('start_game_heartbeat_quest', {
+    questId,
+    applicationId,
+    secondsNeeded,
+    initialProgress
+  })
+}
+
+export async function startPlayActivityQuest(
+  questId: string,
+  applicationId: string,
+  secondsNeeded: number,
+  initialProgress: number,
+  mode: GameQuestMode,
+  cdpPort: number,
+  heartbeatInterval: number,
+  progressPollingInterval: number
+): Promise<void> {
+  return await invoke('start_play_activity_quest', {
+    questId,
+    applicationId,
+    secondsNeeded,
+    initialProgress,
+    mode,
+    cdpPort,
+    heartbeatInterval,
+    progressPollingInterval
+  })
+}
+
+// Game simulator commands
+export async function createSimulatedGame(
+  path: string,
+  executableName: string,
+  appId: string
+): Promise<void> {
+  return await invoke('create_simulated_game', {
+    path,
+    executableName,
+    appId
+  })
+}
+
+export async function runSimulatedGame(
+  name: string,
+  path: string,
+  executableName: string,
+  appId: string
+): Promise<void> {
+  return await invoke('run_simulated_game', {
+    name,
+    path,
+    executableName,
+    appId
+  })
+}
+
+export async function stopSimulatedGame(execName: string): Promise<void> {
+  return await invoke('stop_simulated_game', { execName })
+}
+
+export async function getRunningSimulatedGames(): Promise<string[]> {
+  return await invoke('get_running_simulated_games')
+}
+
+export interface ManualCdpGameSimulation {
+  appId: string
+  appName: string
+  cdpPort: number
+}
+
+export async function startManualCdpGameSimulation(
+  appId: string,
+  appName: string,
+  cdpPort: number
+): Promise<ManualCdpGameSimulation> {
+  return await invoke('start_manual_cdp_game_simulation', { appId, appName, cdpPort })
+}
+
+export async function stopManualCdpGameSimulation(): Promise<void> {
+  return await invoke('stop_manual_cdp_game_simulation')
+}
+
+export async function getManualCdpGameSimulation(): Promise<ManualCdpGameSimulation | null> {
+  return await invoke('get_manual_cdp_game_simulation')
+}
+
+export type GameIdleMode = 'process' | 'cdp'
+export type GameIdlePhase = 'starting' | 'playing' | 'resting' | 'stopping' | 'error' | 'stopped'
+
+export interface GameIdleConfig {
+  mode: GameIdleMode
+  playMinutes: number
+  restMinutes: number
+  cdpPort: number
+  simulationPath: string
+}
+
+export interface GameIdleItem {
+  id: string
+  name: string
+  icon?: string | null
+  typeName?: string | null
+  occurrenceId: string
+}
+
+export interface GameIdleStatus {
+  sessionId: string
+  mode: GameIdleMode
+  phase: GameIdlePhase
+  playMinutes: number
+  restMinutes: number
+  current: GameIdleItem | null
+  recent: GameIdleItem[]
+  upcoming: GameIdleItem[]
+  phaseStartedAt: number
+  phaseEndsAt: number | null
+  accumulatedPlayedSeconds: number
+  warning: string | null
+}
+
+export interface GameSimulationHistoryEntry {
+  appId: string
+  appName: string
+  totalSeconds: number
+  updatedAt: string
+}
+
+export interface SimulationHistorySegment {
+  appId: string
+  appName: string
+  pendingFinish: boolean
+}
+
+export interface SimulationHistoryStatus {
+  active: boolean
+  pendingFinish: boolean
+  appId?: string | null
+  appName?: string | null
+  segments: SimulationHistorySegment[]
+}
+
+export async function startGameIdle(
+  config: GameIdleConfig,
+  games: DetectableGame[]
+): Promise<GameIdleStatus> {
+  return await invoke('start_game_idle', { config, games })
+}
+
+export async function getGameIdleStatus(): Promise<GameIdleStatus | null> {
+  return await invoke('get_game_idle_status')
+}
+
+export async function removeGameIdleQueueItem(
+  sessionId: string,
+  appId: string,
+  occurrenceId: string
+): Promise<GameIdleStatus> {
+  return await invoke('remove_game_idle_queue_item', { sessionId, appId, occurrenceId })
+}
+
+export async function stopGameIdle(): Promise<GameIdleStatus | null> {
+  return await invoke('stop_game_idle')
+}
+
+export async function getGameSimulationHistory(): Promise<GameSimulationHistoryEntry[]> {
+  return await invoke('get_game_simulation_history')
+}
+
+export async function startGameSimulationUsage(appId: string, appName: string): Promise<boolean> {
+  return await invoke('start_game_simulation_usage', { appId, appName })
+}
+
+// Close one application's recording segment, or all of them when no id is given.
+export async function stopGameSimulationUsage(appId?: string): Promise<void> {
+  return await invoke('stop_game_simulation_usage', appId ? { appId } : {})
+}
+
+export async function getGameSimulationUsageStatus(): Promise<SimulationHistoryStatus> {
+  return await invoke('get_game_simulation_usage_status')
+}
+
+export async function stopAllGameSimulations(): Promise<void> {
+  return await invoke('stop_all_game_simulations')
+}
+
+export function onGameIdleStatus(callback: (status: GameIdleStatus) => void) {
+  return listen<GameIdleStatus>('game-idle-status-changed', event => callback(event.payload))
+}
+
+export function onGameSimulationHistoryUpdated(
+  callback: (entry: GameSimulationHistoryEntry) => void
+) {
+  return listen<GameSimulationHistoryEntry>(
+    'game-simulation-history-updated',
+    event => callback(event.payload)
+  )
+}
+
+export async function fetchDetectableGames(): Promise<DetectableGame[]> {
+  return await invoke('fetch_detectable_games')
+}
+
+export async function acceptQuest(questId: string): Promise<void> {
+  return await invoke('accept_quest', { questId })
+}
+
+// Event listeners
+export function onQuestProgress(callback: (progress: number) => void) {
+  return listen<number>('quest-progress', (event) => {
+    callback(event.payload)
+  })
+}
+
+export function onQuestComplete(callback: () => void) {
+  return listen('quest-complete', () => {
+    callback()
+  })
+}
+
+export function onQuestError(callback: (error: string) => void) {
+  return listen<string | DesktopClientCommandError>('quest-error', (event) => {
+    callback(commandErrorMessage(event.payload))
+  })
+}
+
+export async function forceVideoProgress(questId: string, timestamp: number): Promise<void> {
+  return await invoke('force_video_progress', { questId, timestamp })
+}
+
+// Debug info types
+export interface SuperProperties {
+  os: string
+  browser: string
+  release_channel: string
+  client_version?: string
+  os_version: string
+  os_arch?: string
+  app_arch?: string
+  system_locale: string
+  has_client_mods: boolean
+  browser_user_agent: string
+  browser_version: string
+  os_sdk_version?: string
+  client_build_number: number
+  native_build_number?: number
+  client_event_source: string | null
+  launch_signature?: string
+  client_launch_id?: string
+  client_heartbeat_session_id?: string
+  client_app_state?: string
+}
+
+export interface DebugInfo {
+  x_super_properties_base64?: string
+  super_properties?: SuperProperties
+  client_launch_id?: string
+  client_heartbeat_session_id?: string
+  launch_signature?: string
+  source?: string  // "Auto-Generated" or "Discord Client (Extracted)"
+  client_identity?: ClientIdentitySnapshot
+  header_profile?: HeaderProfilePreview
+}
+
+export interface ClientIdentitySnapshot {
+  user_agent: string
+  client_version?: string
+  browser_version: string
+  client_build_number?: number
+  native_build_number?: number
+  source: string
+}
+
+export interface HeaderProfilePreview {
+  timezone: string
+  timezone_source: string
+  locale: string
+  locale_source: string
+  accept_language: string
+  accept_language_source: string
+  installation_id_present: boolean
+  installation_id_source: string
+}
+
+export async function getDebugInfo(): Promise<DebugInfo> {
+  return await invoke('get_debug_info')
+}
+
+export type RuntimeIdentityLevel = 'full' | 'degraded' | 'disabled' | 'notApplicable'
+
+export interface RuntimeIdentityStatus {
+  platform: string
+  level: RuntimeIdentityLevel
+  mainExecutableOk: boolean
+  helperIdentityOk: boolean | null
+  packageSignatureOk: boolean | null
+  desktopIntegrationOk: boolean | null
+  reasons: string[]
+}
+
+export async function getRuntimeIdentityStatus(): Promise<RuntimeIdentityStatus> {
+  return await invoke('get_runtime_identity_status')
+}
+
+/** Interactive debug export; see docs/runtime-identity-debug-audit.schema.json. */
+export interface RuntimeIdentityAudit {
+  schemaVersion: number
+  capturedAtUnix: number
+  platform: string
+  buildProfile: string
+  status: RuntimeIdentityStatus
+  main: {
+    basename: string
+    path: string
+    pathHasProductToken: boolean
+    unexpectedPathProductToken: boolean
+  }
+  helper: {
+    installed: boolean
+    basename: string | null
+    path: string | null
+    pathHasProductToken: boolean | null
+    manifestHashOk: boolean | null
+    signatureOk: boolean | null
+  }
+  legacyArtifactCount: number
+  migrationResult: string
+  fingerprint: {
+    status: string
+    sha256: string | null
+    length: number
+    fieldCount: number
+    fieldNames: string[]
+    rawAvailableLocally: boolean
+  }
+  platformDetails: Record<string, unknown>
+  baseline: {
+    matches: boolean
+    differences: string[]
+    configuredWindowIdentityMatches: boolean | null
+    observedWindowIdentityMatches: boolean | null
+    unavailableObservations: string[]
+    fingerprintFieldsAdded: string[]
+    fingerprintFieldsRemoved: string[]
+  }
+}
+
+export async function getRuntimeIdentityAudit(fingerprintRaw?: string): Promise<RuntimeIdentityAudit> {
+  return await invoke('get_runtime_identity_audit', { fingerprintRaw })
+}
+
+// Runner information
+export interface RunnerInfo {
+  embedded: boolean
+  commit_hash: string
+  build_time: string
+  size_bytes: number
+}
+
+export async function getRunnerInfo(): Promise<RunnerInfo> {
+  return await invoke('get_runner_info')
+}
+
+// CDP (Chrome DevTools Protocol) types and commands
+export interface CdpRuntime {
+  runtimeStatus: 'ready' | 'loading' | 'unsupported' | 'probeFailed' | 'noCandidate'
+  webSocketReachable: boolean
+  appRootPresent: boolean
+  moduleLoaderPresent: boolean
+  nativeBridgePresent: boolean
+  focused: boolean
+  failureStage: string | null
+  reasonCode: string | null
+}
+
+export interface CdpStatus {
+  runtime?: CdpRuntime
+  available: boolean
+  connected: boolean
+  target_title: string | null
+  error: string | null
+}
+
+export interface CdpSuperProperties {
+  base64: string
+  decoded: SuperProperties
+}
+
+export async function checkCdpStatus(port?: number): Promise<CdpStatus> {
+  return await invoke('check_cdp_status', { port })
+}
+
+export async function fetchSuperPropertiesCdp(port?: number): Promise<CdpSuperProperties> {
+  return await invoke('fetch_super_properties_cdp', { port })
+}
+
+export interface CdpRunningGamesSnapshot {
+  captured_at: number
+  page_title: string
+  page_url: string
+  store_found: boolean
+  store_path: string | null
+  native_module_found: boolean
+  native_module_name: string
+  native_module_methods: string[]
+  games: Array<Record<string, unknown>>
+  visible_games: Array<Record<string, unknown>>
+  visible_game?: Record<string, unknown> | null
+  analytics_game?: Record<string, unknown> | null
+  debug_game?: Record<string, unknown> | null
+  store_views_diff?: Record<string, unknown> | null
+  native_diagnostics: Array<Record<string, unknown>>
+  errors: string[]
+}
+
+export async function fetchRunningGamesCdp(port?: number): Promise<CdpRunningGamesSnapshot> {
+  return await invoke('fetch_running_games_cdp', { port })
+}
+
+export type DiscordChannelArg = 'auto' | 'stable' | 'ptb' | 'canary'
+export type DiscordChannelResult = 'stable' | 'ptb' | 'canary'
+export type ProviderId = 'discord.official' | 'vencord.vesktop' | (string & {})
+export type SessionOwnership = 'managed' | 'externalAttached' | 'ambiguousExternal' | 'unknown'
+export type DiscoverySource = 'user' | 'runningProcess' | 'osMetadata' | 'standardPath'
+export type ValidationState = 'valid' | 'missing' | 'invalid'
+export type CdpEndpointState = 'unreachable' | 'occupiedNonCdp' | 'cdpWithoutDiscordTarget' | 'discordReady'
+
+export type ClientSelection =
+  | { kind: 'auto' }
+  | { kind: 'provider'; providerId: ProviderId; variantId?: string | null }
+  | { kind: 'installation'; installationId: string }
+
+export type ClientLaunchTarget =
+  | { kind: 'executable'; path: string; workingDir: string; prefixArgs: string[] }
+  | { kind: 'macBundle'; bundlePath: string; executablePath: string }
+  | { kind: 'flatpak'; appId: string; command?: string | null }
+
+export interface ClientInstallation {
+  id: string
+  providerId: ProviderId
+  variantId: string | null
+  displayName: string
+  source: DiscoverySource
+  launchTarget: ClientLaunchTarget
+  capabilities: { cdp: boolean; localToken: boolean; restoreNormal: boolean }
+  validation: ValidationState
+}
+
+export interface ClientProcess {
+  providerId: ProviderId
+  installationId: string
+  variantId: string | null
+  executablePath: string | null
+  running: boolean
+}
+
+export interface DesktopClientState {
+  installations: ClientInstallation[]
+  processes: ClientProcess[]
+  endpoint: {
+    port: number
+    status: CdpEndpointState
+    owner: CdpPortOwner
+    ownerProviderId: ProviderId | null
+    targetTitle: string | null
+    runtime?: CdpRuntime
+  }
+  selection: ClientSelection
+  discoveryIssues: Array<{ providerId: ProviderId | null; code: string; message: string }>
+  port: number
+  revision: number
+}
+
+export interface DesktopClientCommandError {
+  code: string
+  params: Record<string, unknown>
+  message: string
+}
+
+export type CdpTargetClassification =
+  | 'notPage'
+  | 'aboutBlank'
+  | 'updater'
+  | 'discordAuxiliary'
+  | 'discordMainRenderer'
+  | 'discordOtherRenderer'
+  | 'nonDiscordPage'
+  | 'missingWebSocketDebuggerUrl'
+
+export interface CdpDiagnosticProcess {
+  pid: number
+  processName: string
+  providerId: ProviderId | null
+  installationId: string | null
+  executablePath: string | null
+  isSelectedInstallation: boolean
+  hasRemoteDebuggingPortArg: boolean
+  remoteDebuggingPort: number | null
+  startTime: number | null
+}
+
+export interface CdpDiagnosticTarget {
+  id: string
+  type: string
+  title: string
+  url: string
+  hasWebSocketDebuggerUrl: boolean
+  isDiscordTarget: boolean
+  isAuxiliaryWindow: boolean
+  isMainRenderer: boolean
+  classification: CdpTargetClassification
+  runtime?: CdpRuntime
+}
+
+export interface CdpDiagnosticSnapshot {
+  timestamp: string
+  port: number
+  endpointStatus: CdpEndpointState
+  endpointOwner: CdpPortOwner
+  ownerProviderId: ProviderId | null
+  selectedClient: string | null
+  selectedInstallationId: string | null
+  selectedProviderId: ProviderId | null
+  selectedVariantId: string | null
+  selectedExecutablePath: string | null
+  selectedRunning: boolean
+  portListening: boolean
+  cdpHttpReachable: boolean
+  cdpHttpStatus: number | null
+  cdpResponseParseable: boolean
+  cdpTargetCount: number
+  discordTargetCount: number
+  mainRendererFound: boolean
+  runtime?: CdpRuntime
+  processes: CdpDiagnosticProcess[]
+  targets: CdpDiagnosticTarget[]
+}
+
+export interface DesktopClientInventory {
+  officialInstalled: boolean
+  vesktopInstalled: boolean
+  officialRunning: boolean
+  vesktopRunning: boolean
+  cdpOwner: CdpPortOwner
+  stableInstalled: boolean
+  ptbInstalled: boolean
+  canaryInstalled: boolean
+  stableRunning: boolean
+  ptbRunning: boolean
+  canaryRunning: boolean
+}
+
+export type CdpLaunchTarget = 'stable' | 'ptb' | 'canary' | 'vesktop'
+
+export interface DiscordCdpLaunchResult {
+  launched_path: string
+  channel: DiscordChannelResult
+  port: number
+  cdp_connected: boolean
+  providerId: ProviderId
+  installationId: string | null
+  variantId: string | null
+  ownership: SessionOwnership
+}
+
+export async function isDiscordRunning(channel?: DiscordChannelArg): Promise<boolean> {
+  return await invoke('is_discord_running', { channel })
+}
+
+export async function listDesktopClients(port?: number): Promise<DesktopClientInventory> {
+  return await invoke('list_desktop_clients', { port })
+}
+
+export async function getDesktopClientState(port?: number): Promise<DesktopClientState> {
+  return await invoke('get_desktop_client_state', { port })
+}
+
+export async function getCdpDiagnosticSnapshot(port?: number): Promise<CdpDiagnosticSnapshot> {
+  return await invoke('get_cdp_diagnostic_snapshot', { port })
+}
+
+export async function addDesktopClientInstallation(providerId: ProviderId, path: string, port?: number): Promise<DesktopClientState> {
+  return await invoke('add_desktop_client_installation', { providerId, path, port })
+}
+
+export async function removeDesktopClientInstallation(installationId: string, port?: number): Promise<DesktopClientState> {
+  return await invoke('remove_desktop_client_installation', { installationId, port })
+}
+
+export async function setDesktopClientSelection(selection: ClientSelection, port?: number): Promise<DesktopClientState> {
+  return await invoke('set_desktop_client_selection', { selection, port })
+}
+
+export async function launchDesktopClientCdp(port?: number, selection?: ClientSelection, restartExisting = false): Promise<DiscordCdpLaunchResult> {
+  return await invoke('launch_desktop_client_cdp', { port, selection, restartExisting })
+}
+
+export async function launchDiscordCdp(
+  port?: number,
+  channel?: DiscordChannelArg,
+  client?: DesktopClientArg,
+): Promise<DiscordCdpLaunchResult> {
+  return await invoke('launch_discord_cdp', { port, channel, client })
+}
+
+export async function restartDiscordCdp(
+  port?: number,
+  channel?: DiscordChannelArg,
+  client?: DesktopClientArg,
+): Promise<DiscordCdpLaunchResult> {
+  return await invoke('restart_discord_cdp', { port, channel, client })
+}
+
+export async function createDiscordCdpLauncherShortcut(
+  port?: number,
+  channel?: DiscordChannelArg,
+  client?: DesktopClientArg,
+  installationPath?: string,
+): Promise<string> {
+  return await invoke('create_discord_cdp_launcher_shortcut', { port, channel, client, installationPath })
+}
+
+export async function createDiscordDebugShortcut(port?: number): Promise<string> {
+  return await invoke('create_discord_debug_shortcut', { port })
+}
+
+// SuperProperties Mode types and commands
+export type SuperPropertiesMode = 'cdp' | 'remote_js' | 'default'
+
+export interface SuperPropertiesModeInfo {
+  mode: SuperPropertiesMode
+  mode_display: string
+  build_number: number | null
+}
+
+export interface AutoFetchResult {
+  success: boolean
+  mode: SuperPropertiesMode
+  build_number: number | null
+}
+
+export async function getSuperPropertiesMode(): Promise<SuperPropertiesModeInfo> {
+  return await invoke('get_super_properties_mode')
+}
+
+export async function autoFetchSuperProperties(cdpPort?: number): Promise<AutoFetchResult> {
+  return await invoke('auto_fetch_super_properties', { cdpPort })
+}
+
+export async function retrySuperProperties(cdpPort?: number): Promise<AutoFetchResult> {
+  return await invoke('retry_super_properties', { cdpPort })
+}
+
+// CDP captured headers (full network capture)
+export interface CapturedRequest {
+  url: string
+  method: string
+  headers: Record<string, string>
+}
+
+export interface CdpCapturedHeaders {
+  total_requests: number
+  requests: CapturedRequest[]
+  header_key_counts: Record<string, number>
+  header_kv_counts: Record<string, number>
+  capture_duration_secs: number
+}
+
+export async function captureDiscordHeadersCdp(port?: number, durationSecs?: number): Promise<CdpCapturedHeaders> {
+  return await invoke('capture_discord_headers_cdp', { port, durationSecs })
+}
+
+// CDP Quest Completion
+
+export async function startCdpQuest(
+  questId: string,
+  questType: 'play' | 'stream' | 'video' | 'activity',
+  applicationId: string,
+  applicationName: string,
+  secondsNeeded: number,
+  initialProgress: number,
+  cdpPort: number,
+  checkpointTimes?: number[]
+): Promise<void> {
+  return await invoke('start_cdp_quest', {
+    questId,
+    questType,
+    applicationId,
+    applicationName,
+    secondsNeeded,
+    initialProgress,
+    cdpPort,
+    checkpointTimes: checkpointTimes || []
+  })
+}
+
+export async function navigateDiscordSpa(targetPath: string, cdpPort: number): Promise<void> {
+  return await invoke('navigate_discord_spa', { targetPath, cdpPort })
+}
+
+// Platform capabilities (read-only descriptor; brand-new command)
+//
+// `tokenAutoDetection` mirrors the backend descriptor: `full` (local token
+// extraction), `manual_only` (manual token entry + CDP auto-login), or
+// `unavailable` (no token flow).
+export type CapabilityLevel = 'full' | 'manual_only' | 'unavailable'
+
+export interface PlatformCapabilities {
+  os: string
+  arch: string
+  cdpLauncher: boolean
+  launcherEntry: boolean
+  gameSimulation: boolean
+  tokenAutoDetection: CapabilityLevel
+  /** Preferred order of GameExecutable.os values when picking an executable. */
+  executableOsPriority: string[]
+  defaultGameQuestMode: GameQuestMode
+}
+
+export async function getPlatformCapabilities(): Promise<PlatformCapabilities> {
+  return await invoke('get_platform_capabilities')
+}
+
+// CDP auto-login: capture the currently logged-in Discord session over CDP and
+// establish a DQH login from it. The raw token is captured, validated, and
+// stored entirely on the Rust side — only the resolved DiscordUser is returned
+// to the frontend. Requires Discord to be running with CDP enabled.
+export async function autoLoginViaCdp(port?: number, onProgress?: AuthProgressHandler): Promise<DiscordUser> {
+  return await invoke('auto_login_via_cdp', { port, onProgress: createAuthProgressChannel(onProgress) })
+}
+
+export interface RunningDiscordCdpSession {
+  channel: DiscordChannelResult
+  port: number
+}
+
+export interface RunningDesktopCdpSession {
+  providerId: ProviderId
+  installationId: string | null
+  variantId: string | null
+  port: number
+  ownership: SessionOwnership
+  executablePath: string | null
+}
+
+export async function listRunningDiscordCdpSessions(): Promise<RunningDiscordCdpSession[]> {
+  return await invoke('list_running_discord_cdp_sessions')
+}
+
+export async function listRunningDesktopCdpSessions(): Promise<RunningDesktopCdpSession[]> {
+  return await invoke('list_running_desktop_cdp_sessions')
+}
+
+export async function restoreDesktopClientSession(
+  installationId: string,
+  port: number,
+  confirmExternal = false,
+): Promise<void> {
+  return await invoke('restore_desktop_client_session', { installationId, port, confirmExternal })
+}
+
+export async function startDiscordNormalRestoreHelper(): Promise<void> {
+  return await invoke('start_discord_normal_restore_helper')
+}
+
+export async function prepareAppExit(): Promise<void> {
+  return await invoke('prepare_app_exit')
+}
+
+export async function exitAppNow(): Promise<void> {
+  return await invoke('exit_app_now')
+}

@@ -1,0 +1,16 @@
+[package]
+name = "discord-cdp-launcher"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+build = "build.rs"
+
+[[bin]]
+name = "waybridge"
+path = "src/main.rs"
+
+[dependencies]
+discord-cdp-launch-core = { path = "../crates/discord-cdp-launch-core" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

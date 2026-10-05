@@ -1,0 +1,4287 @@
+// Prevents additional console window on Windows in release
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod cdp_client;
+mod cdp_game_spoof;
+mod cdp_quest;
+mod discord_api;
+mod discord_cdp_commands;
+mod discord_gateway;
+mod game_idle;
+mod game_simulator;
+mod logger;
+mod models;
+mod platform_capabilities;
+mod quest_completer;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod runtime_bridge;
+mod runtime_identity;
+mod simulation_history;
+#[cfg(windows)]
+#[cfg_attr(debug_assertions, allow(dead_code))]
+mod stealth_pe;
+mod super_properties;
+mod token_extractor;
+
+use discord_api::DiscordApiClient;
+use models::*;
+use once_cell::sync::Lazy;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use super_properties::XSuperPropertiesManager;
+use tauri::ipc::Channel;
+use tauri::{Emitter, Listener, Manager, State, WebviewWindowBuilder};
+
+/// Global X-Super-Properties manager (session-level)
+/// Automatically generates key validation fields, fetches latest version info from Discord after login
+static SUPER_PROPERTIES_MANAGER: Lazy<Mutex<XSuperPropertiesManager>> =
+    Lazy::new(|| Mutex::new(XSuperPropertiesManager::new()));
+
+const APP_EXIT_RPC_DISCONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+/// Bound for waiting on a cancelled quest task. CDP cancel cleanup uses one
+/// 15s evaluation; keep headroom for a poll-loop select to notice cancel.
+const QUEST_STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(45);
+/// Last-chance wait inside `exit_app_now` after the frontend's short prepare
+/// deadline. Covers verified manual CDP cleanup (five 15s evaluations) plus
+/// a cancelled quest task so `process::exit` does not abort in-flight rollback.
+const APP_EXIT_FINAL_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Tracks whether process-local exit cleanup and verified active-work cleanup
+/// have completed. Local cleanup is one-shot; active-work cleanup stays
+/// retryable until it succeeds so a failed CDP rollback cannot permanently
+/// skip later `prepare_app_exit` calls.
+struct AppExitCleanupState {
+    prepared: AtomicBool,
+    local_done: AtomicBool,
+}
+
+impl AppExitCleanupState {
+    const fn new() -> Self {
+        Self {
+            prepared: AtomicBool::new(false),
+            local_done: AtomicBool::new(false),
+        }
+    }
+
+    fn is_prepared(&self) -> bool {
+        self.prepared.load(Ordering::SeqCst)
+    }
+
+    fn mark_prepared(&self) {
+        self.prepared.store(true, Ordering::SeqCst);
+    }
+
+    fn claim_local_cleanup(&self) -> bool {
+        !self.local_done.swap(true, Ordering::SeqCst)
+    }
+}
+
+static APP_EXIT_CLEANUP: AppExitCleanupState = AppExitCleanupState::new();
+
+/// Global state: Discord API client
+struct AppState {
+    client: Mutex<Option<DiscordApiClient>>,
+    authenticated_user: Mutex<Option<DiscordUser>>,
+    quest_tasks: Mutex<Vec<QuestTask>>,
+    manual_cdp_game: tokio::sync::Mutex<ManualCdpGameSessionState>,
+    game_idle: std::sync::Arc<game_idle::GameIdleManager>,
+    simulation_history: std::sync::Arc<simulation_history::SimulationHistory>,
+    /// Serializes quest startup, manual CDP startup, and active-work teardown
+    /// so the two Discord-activity owners cannot both pass their idle checks.
+    activity_gate: tokio::sync::Mutex<()>,
+}
+
+/// Upper bound on concurrently running quests. Every quest is an independent
+/// per-quest-id loop, so the limit is about staying believable on one account
+/// rather than about shared local resources.
+const MAX_PARALLEL_QUESTS: usize = 5;
+
+/// One running quest task. Quests execute in parallel and are addressed by id,
+/// so each entry needs its own cancel channel and outcome instead of the single
+/// global slot a replacement quest used to overwrite.
+struct QuestTask {
+    quest_id: String,
+    /// CDP quests drive the one Discord desktop window and SPA route, so only
+    /// one of them may exist at a time, and nothing else may start alongside it.
+    /// Direct-API quests only post heartbeats for their own quest id.
+    exclusive: bool,
+    cancel_flag: tokio::sync::mpsc::Sender<()>,
+    /// Background completion task. Stop waits on this so CDP quest cleanup
+    /// cannot race a newly admitted manual spoof or replacement quest.
+    join: Option<tokio::task::JoinHandle<()>>,
+    outcome: std::sync::Arc<std::sync::Mutex<QuestTaskRecord>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+enum QuestTaskState {
+    Running,
+    Finished,
+    Failed,
+}
+
+struct QuestTaskRecord {
+    state: QuestTaskState,
+    error: Option<String>,
+}
+
+impl QuestTaskRecord {
+    fn running() -> Self {
+        Self {
+            state: QuestTaskState::Running,
+            error: None,
+        }
+    }
+
+    fn mark(
+        state: &std::sync::Mutex<QuestTaskRecord>,
+        new_state: QuestTaskState,
+        error: Option<String>,
+    ) {
+        let mut record = state.lock().unwrap();
+        // A cancelled task reports `Finished`; an error must never be lost.
+        if record.state == QuestTaskState::Failed && new_state == QuestTaskState::Finished {
+            return;
+        }
+        record.state = new_state;
+        record.error = error;
+    }
+}
+
+/// Serialized quest state for the frontend. Quest events carry no quest id, so
+/// a page that runs several quests at once demultiplexes them through this list.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct QuestTaskStatus {
+    quest_id: String,
+    state: QuestTaskState,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuestSlotConflict {
+    AlreadyRunning,
+    ExclusiveBusy,
+    Full,
+}
+
+/// Decide whether one more quest may be admitted. `running` holds the
+/// `(quest_id, exclusive)` pairs of quests whose task has not ended yet; ended
+/// tasks are not listed, so a quest that finished without being released never
+/// blocks its own restart.
+fn quest_slot_conflict(
+    running: &[(String, bool)],
+    quest_id: &str,
+    exclusive: bool,
+    limit: usize,
+) -> Option<QuestSlotConflict> {
+    if running.iter().any(|(id, _)| id.as_str() == quest_id) {
+        return Some(QuestSlotConflict::AlreadyRunning);
+    }
+    if exclusive && !running.is_empty() {
+        // A CDP quest needs the whole desktop client to itself.
+        return Some(QuestSlotConflict::ExclusiveBusy);
+    }
+    if running.iter().any(|(_, is_exclusive)| *is_exclusive) {
+        return Some(QuestSlotConflict::ExclusiveBusy);
+    }
+    if running.len() >= limit {
+        return Some(QuestSlotConflict::Full);
+    }
+    None
+}
+
+fn quest_slot_conflict_message(conflict: QuestSlotConflict, quest_id: &str) -> String {
+    match conflict {
+        QuestSlotConflict::AlreadyRunning => {
+            format!("Quest {quest_id} is already running; stop it first")
+        }
+        QuestSlotConflict::ExclusiveBusy => {
+            "A CDP task owns the Discord client; stop it first".to_string()
+        }
+        QuestSlotConflict::Full => {
+            format!("At most {MAX_PARALLEL_QUESTS} quests can run at the same time")
+        }
+    }
+}
+
+#[cfg(test)]
+mod quest_slot_tests {
+    use super::{quest_slot_conflict, QuestSlotConflict, MAX_PARALLEL_QUESTS};
+
+    fn running(ids: &[(&str, bool)]) -> Vec<(String, bool)> {
+        ids.iter()
+            .map(|(id, exclusive)| (id.to_string(), *exclusive))
+            .collect()
+    }
+
+    #[test]
+    fn admits_distinct_api_quests_up_to_the_limit() {
+        for index in 0..MAX_PARALLEL_QUESTS {
+            let existing = (0..index)
+                .map(|i| (format!("quest-{i}"), false))
+                .collect::<Vec<_>>();
+            let candidate = format!("quest-{index}");
+            assert_eq!(
+                quest_slot_conflict(&existing, &candidate, false, MAX_PARALLEL_QUESTS),
+                None
+            );
+        }
+        let full: Vec<(String, bool)> = (0..MAX_PARALLEL_QUESTS)
+            .map(|i| (format!("quest-{i}"), false))
+            .collect();
+        assert_eq!(
+            quest_slot_conflict(&full, "quest-extra", false, MAX_PARALLEL_QUESTS),
+            Some(QuestSlotConflict::Full)
+        );
+    }
+
+    #[test]
+    fn refuses_the_same_quest_id_twice() {
+        assert_eq!(
+            quest_slot_conflict(&running(&[("quest-a", false)]), "quest-a", false, 5),
+            Some(QuestSlotConflict::AlreadyRunning)
+        );
+    }
+
+    #[test]
+    fn cdp_quest_is_exclusive_in_both_directions() {
+        assert_eq!(
+            quest_slot_conflict(&running(&[("quest-a", false)]), "quest-b", true, 5),
+            Some(QuestSlotConflict::ExclusiveBusy)
+        );
+        assert_eq!(
+            quest_slot_conflict(&running(&[("quest-a", true)]), "quest-b", false, 5),
+            Some(QuestSlotConflict::ExclusiveBusy)
+        );
+        assert_eq!(quest_slot_conflict(&[], "quest-a", true, 5), None);
+    }
+
+    #[test]
+    fn duplicate_wins_over_capacity() {
+        let full: Vec<(String, bool)> = (0..MAX_PARALLEL_QUESTS)
+            .map(|i| (format!("quest-{i}"), false))
+            .collect();
+        assert_eq!(
+            quest_slot_conflict(&full, "quest-0", false, MAX_PARALLEL_QUESTS),
+            Some(QuestSlotConflict::AlreadyRunning)
+        );
+    }
+}
+
+#[derive(Debug, Default)]
+struct ManualCdpGameSessionState {
+    active: Option<ManualCdpGameSimulation>,
+}
+
+impl ManualCdpGameSessionState {
+    fn ensure_idle(&self) -> Result<(), String> {
+        match &self.active {
+            Some(session) => Err(format!(
+                "A manual CDP game simulation is already active for {}",
+                session.app_name
+            )),
+            None => Ok(()),
+        }
+    }
+
+    fn activate(&mut self, session: ManualCdpGameSimulation) {
+        self.active = Some(session);
+    }
+
+    fn active(&self) -> Option<ManualCdpGameSimulation> {
+        self.active.clone()
+    }
+
+    fn clear(&mut self) {
+        self.active = None;
+    }
+
+    fn finish_cleanup(&mut self, result: Result<(), String>) -> Result<(), String> {
+        result?;
+        self.clear();
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod manual_cdp_game_session_tests {
+    use super::*;
+
+    fn session(name: &str) -> ManualCdpGameSimulation {
+        ManualCdpGameSimulation {
+            app_id: "123456".to_string(),
+            app_name: name.to_string(),
+            cdp_port: 9223,
+        }
+    }
+
+    #[test]
+    fn only_one_manual_cdp_game_can_be_active() {
+        let mut state = ManualCdpGameSessionState::default();
+        state.ensure_idle().unwrap();
+        state.activate(session("First"));
+
+        assert!(state.ensure_idle().is_err());
+        assert_eq!(state.active().unwrap().app_name, "First");
+    }
+
+    #[test]
+    fn failed_start_does_not_record_a_session() {
+        let state = ManualCdpGameSessionState::default();
+        state.ensure_idle().unwrap();
+
+        // CDP startup failed before activate() was called.
+        assert!(state.active().is_none());
+    }
+
+    #[test]
+    fn cleanup_failure_keeps_the_session_for_retry() {
+        let mut state = ManualCdpGameSessionState::default();
+        state.activate(session("Retry Me"));
+
+        assert!(state
+            .finish_cleanup(Err("Discord target disconnected".to_string()))
+            .is_err());
+        assert_eq!(state.active().unwrap().app_name, "Retry Me");
+
+        state.finish_cleanup(Ok(())).unwrap();
+        assert!(state.active().is_none());
+    }
+
+    #[test]
+    fn session_uses_the_frontend_camel_case_contract() {
+        let value = serde_json::to_value(session("Contract")).unwrap();
+        assert_eq!(value["appId"], "123456");
+        assert_eq!(value["appName"], "Contract");
+        assert_eq!(value["cdpPort"], 9223);
+        assert!(value.get("app_id").is_none());
+    }
+}
+
+#[cfg(test)]
+mod app_exit_cleanup_state_tests {
+    use super::AppExitCleanupState;
+
+    #[test]
+    fn failed_active_work_cleanup_leaves_exit_retryable() {
+        let state = AppExitCleanupState::new();
+        assert!(state.claim_local_cleanup());
+        assert!(!state.claim_local_cleanup());
+        assert!(!state.is_prepared());
+    }
+
+    #[test]
+    fn successful_exit_preparation_skips_later_attempts() {
+        let state = AppExitCleanupState::new();
+        assert!(state.claim_local_cleanup());
+        state.mark_prepared();
+        assert!(state.is_prepared());
+    }
+}
+
+#[cfg(test)]
+mod quest_stop_wait_tests {
+    use super::await_quest_task;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn waiting_for_a_quest_task_observes_cleanup_before_returning() {
+        let cleaned = Arc::new(AtomicBool::new(false));
+        let cleaned_for_task = cleaned.clone();
+        let join = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            cleaned_for_task.store(true, Ordering::SeqCst);
+        });
+
+        await_quest_task(join).await;
+        assert!(cleaned.load(Ordering::SeqCst));
+    }
+}
+
+/// Auto-detect Discord tokens (returns all valid accounts found)
+#[tauri::command]
+async fn auto_detect_token(
+    _state: State<'_, AppState>,
+    on_progress: Channel<AuthProgress>,
+) -> Result<Vec<ExtractedAccount>, String> {
+    use crate::logger::{log, LogCategory, LogLevel};
+
+    log(
+        LogLevel::Info,
+        LogCategory::TokenExtraction,
+        "Starting auto token detection",
+        None,
+    );
+
+    let _ = on_progress.send(AuthProgress::phase(AuthProgressPhase::ExtractingTokens));
+
+    // Extract tokens. Local profile scans and Linux Secret Service access are
+    // blocking operations, so keep them off the async command thread.
+    let tokens = tauri::async_runtime::spawn_blocking(token_extractor::extract_tokens)
+        .await
+        .map_err(|e| {
+            log(
+                LogLevel::Error,
+                LogCategory::TokenExtraction,
+                "Token extraction task failed",
+                Some(&e.to_string()),
+            );
+            format!("Token extraction task failed: {}", e)
+        })?
+        .map_err(|e| {
+            log(
+                LogLevel::Error,
+                LogCategory::TokenExtraction,
+                "Token extraction failed",
+                Some(&e.to_string()),
+            );
+            format!("Token extraction failed: {}", e)
+        })?;
+
+    log(
+        LogLevel::Info,
+        LogCategory::TokenExtraction,
+        &format!("Extracted {} potential tokens", tokens.len()),
+        None,
+    );
+
+    log(
+        LogLevel::Debug,
+        LogCategory::TokenExtraction,
+        &format!("Validating {} tokens", tokens.len()),
+        None,
+    );
+
+    let progress_channel = on_progress.clone();
+    let (valid_accounts, last_error) = validate_extracted_tokens(
+        tokens,
+        |token, index| async move {
+            log(
+                LogLevel::Debug,
+                LogCategory::TokenExtraction,
+                &format!("Validating token {}", index),
+                None,
+            );
+            let client = DiscordApiClient::new(token.clone())
+                .map_err(|error| format!("Failed to create API client: {error}"))?;
+            match client.get_current_user().await {
+                Ok(user) => {
+                    log(
+                        LogLevel::Info,
+                        LogCategory::TokenExtraction,
+                        &format!("Token {} validated successfully", index),
+                        None,
+                    );
+                    Ok(ExtractedAccount { token, user })
+                }
+                Err(error) => {
+                    log(
+                        LogLevel::Warn,
+                        LogCategory::TokenExtraction,
+                        &format!("Token {} validation failed", index),
+                        Some(&error.to_string()),
+                    );
+                    Err(format!("Token validation failed: {error}"))
+                }
+            }
+        },
+        move |progress| {
+            let _ = progress_channel.send(progress);
+        },
+    )
+    .await;
+
+    log(
+        LogLevel::Info,
+        LogCategory::TokenExtraction,
+        &format!(
+            "Token detection complete: {} valid accounts found",
+            valid_accounts.len()
+        ),
+        None,
+    );
+
+    if valid_accounts.is_empty() {
+        return Err(if let Some(last_error) = last_error {
+            format!("No valid accounts found. Last error: {}", last_error)
+        } else {
+            "No valid accounts found".to_string()
+        });
+    }
+
+    // Sort accounts? Maybe by username? Or keep order.
+
+    Ok(valid_accounts)
+}
+
+async fn validate_extracted_tokens<F, Fut, P>(
+    tokens: Vec<String>,
+    mut validate: F,
+    mut report: P,
+) -> (Vec<ExtractedAccount>, Option<String>)
+where
+    F: FnMut(String, usize) -> Fut,
+    Fut: std::future::Future<Output = Result<ExtractedAccount, String>>,
+    P: FnMut(AuthProgress),
+{
+    let total = tokens.len();
+    let mut valid_accounts = Vec::new();
+    let mut last_error = None;
+
+    report(AuthProgress::validating(0, total));
+    for (index, token) in tokens.into_iter().enumerate() {
+        let current = index + 1;
+        report(AuthProgress::validating(current, total));
+        match validate(token, current).await {
+            Ok(account) => valid_accounts.push(account),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    report(AuthProgress::accounts_found(total, valid_accounts.len()));
+
+    (valid_accounts, last_error)
+}
+
+async fn capture_cdp_session_with_progress<T, E, Fut, P>(
+    capture: Fut,
+    mut report: P,
+) -> Result<T, E>
+where
+    Fut: std::future::Future<Output = Result<T, E>>,
+    P: FnMut(AuthProgress),
+{
+    report(AuthProgress::phase(AuthProgressPhase::CapturingCdpSession));
+    capture.await
+}
+
+#[cfg(test)]
+mod auth_progress_tests {
+    use super::{capture_cdp_session_with_progress, validate_extracted_tokens};
+    use crate::models::{AuthProgress, AuthProgressPhase, DiscordUser, ExtractedAccount};
+    use std::sync::{Arc, Mutex};
+
+    fn account(token: String) -> ExtractedAccount {
+        ExtractedAccount {
+            token,
+            user: DiscordUser {
+                id: "test-user".to_string(),
+                username: "tester".to_string(),
+                discriminator: "0".to_string(),
+                avatar: None,
+                global_name: None,
+                premium_type: None,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_token_scan_reports_zero_counts_without_validation() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let (accounts, last_error) = validate_extracted_tokens(
+            Vec::new(),
+            |token, _| async move { Ok(account(token)) },
+            move |progress| captured.lock().unwrap().push(progress),
+        )
+        .await;
+
+        assert!(accounts.is_empty());
+        assert!(last_error.is_none());
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec![
+                AuthProgress::validating(0, 0),
+                AuthProgress::accounts_found(0, 0),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn partial_validation_reports_each_index_and_keeps_valid_accounts() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let (accounts, last_error) = validate_extracted_tokens(
+            vec!["invalid-secret".to_string(), "valid-secret".to_string()],
+            |token, _| async move {
+                if token.starts_with("valid-") {
+                    Ok(account(token))
+                } else {
+                    Err("rejected".to_string())
+                }
+            },
+            move |progress| captured.lock().unwrap().push(progress),
+        )
+        .await;
+
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(last_error.as_deref(), Some("rejected"));
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec![
+                AuthProgress::validating(0, 2),
+                AuthProgress::validating(1, 2),
+                AuthProgress::validating(2, 2),
+                AuthProgress::accounts_found(2, 1),
+            ]
+        );
+
+        let serialized = serde_json::to_string(&*events.lock().unwrap()).unwrap();
+        assert!(!serialized.contains("invalid-secret"));
+        assert!(!serialized.contains("valid-secret"));
+    }
+
+    #[tokio::test]
+    async fn failed_cdp_capture_stops_after_the_capture_phase() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let result: Result<(), &str> =
+            capture_cdp_session_with_progress(async { Err("capture failed") }, move |progress| {
+                captured.lock().unwrap().push(progress)
+            })
+            .await;
+
+        assert_eq!(result, Err("capture failed"));
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec![AuthProgress::phase(AuthProgressPhase::CapturingCdpSession)]
+        );
+    }
+}
+
+/// Clears cached SuperProperties and regenerates the per-session identifiers.
+fn reset_super_properties_session() {
+    if let Ok(mut manager) = SUPER_PROPERTIES_MANAGER.lock() {
+        manager.reset();
+    }
+}
+
+/// Login with provided token
+#[tauri::command]
+async fn set_token(
+    token: String,
+    state: State<'_, AppState>,
+    on_progress: Channel<AuthProgress>,
+) -> Result<DiscordUser, String> {
+    use crate::logger::{log, LogCategory, LogLevel};
+
+    let _ = on_progress.send(AuthProgress::phase(AuthProgressPhase::ValidatingToken));
+
+    // Create API client
+    let client =
+        DiscordApiClient::new(token).map_err(|e| format!("Failed to create API client: {}", e))?;
+
+    // Validate token
+    let user = client
+        .get_current_user()
+        .await
+        .map_err(|e| format!("Failed to validate token: {}", e))?;
+
+    let _ = on_progress.send(AuthProgress::phase(AuthProgressPhase::PreparingSession));
+
+    // New login == new request session: without this, launch/heartbeat ids from
+    // the previous account keep being replayed in X-Super-Properties.
+    reset_super_properties_session();
+
+    // Fetch latest build_number and client info before returning (so frontend await can rely on completion)
+
+    // Priority 1: Try CDP
+    let mut cdp_success = false;
+    let cdp_port = cdp_client::DEFAULT_CDP_PORT;
+
+    log(
+        LogLevel::Info,
+        LogCategory::TokenExtraction,
+        &format!(
+            "Attempting to fetch SuperProperties via CDP on port {}",
+            cdp_port
+        ),
+        None,
+    );
+
+    if let Ok(cdp_result) = cdp_client::fetch_super_properties_via_cdp(cdp_port).await {
+        log(
+            LogLevel::Info,
+            LogCategory::TokenExtraction,
+            &format!(
+                "Successfully fetched SuperProperties via CDP. Build: {}",
+                cdp_result
+                    .decoded
+                    .get("client_build_number")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+            ),
+            None,
+        );
+        if let Ok(mut manager) = SUPER_PROPERTIES_MANAGER.lock() {
+            manager.set_from_cdp(&cdp_result.base64, &cdp_result.decoded);
+        }
+        cdp_success = true;
+    } else {
+        log(
+            LogLevel::Debug,
+            LogCategory::TokenExtraction,
+            "CDP fetch failed, falling back to JS scraping",
+            None,
+        );
+    }
+
+    // Priority 2: Remote JS (Fallback)
+    if !cdp_success {
+        // Get build_number
+        match token_extractor::fetch_build_number_from_discord().await {
+            Ok(build_number) => {
+                log(
+                    LogLevel::Info,
+                    LogCategory::TokenExtraction,
+                    &format!(
+                        "Successfully fetched build number from JS: {}",
+                        build_number
+                    ),
+                    None,
+                );
+                if let Ok(mut manager) = SUPER_PROPERTIES_MANAGER.lock() {
+                    manager.set_from_remote_js(build_number);
+                }
+            }
+            Err(e) => {
+                log(
+                    LogLevel::Warn,
+                    LogCategory::TokenExtraction,
+                    &format!("Failed to fetch build number from JS: {}", e),
+                    None,
+                );
+            }
+        }
+    }
+
+    let _ = on_progress.send(AuthProgress::phase(AuthProgressPhase::SyncingClientInfo));
+
+    // Get client info (native_build_number and version)
+    match token_extractor::fetch_discord_client_info().await {
+        Ok(info) => {
+            log(
+                LogLevel::Info,
+                LogCategory::TokenExtraction,
+                &format!(
+                    "Successfully fetched client info: version={}, native_build={}",
+                    info.client_version(),
+                    info.native_build_number
+                ),
+                None,
+            );
+            if let Ok(mut manager) = SUPER_PROPERTIES_MANAGER.lock() {
+                manager.set_client_info(info.client_version(), info.native_build_number);
+            }
+        }
+        Err(e) => {
+            log(
+                LogLevel::Warn,
+                LogCategory::TokenExtraction,
+                &format!("Failed to fetch client info: {}", e),
+                None,
+            );
+        }
+    }
+
+    // Save client AFTER initializing SuperProperties to avoid race conditions
+    // where other commands might use the client with stale properties
+    let _gate = state.activity_gate.lock().await;
+    state.game_idle.ensure_idle().await?;
+    *state.authenticated_user.lock().unwrap() = Some(user.clone());
+    *state.client.lock().unwrap() = Some(client);
+
+    let _ = on_progress.send(AuthProgress::phase(AuthProgressPhase::Complete));
+
+    Ok(user)
+}
+
+/// CDP auto-login: capture the currently logged-in Discord session over CDP and
+/// establish a DQH login from it. This is the primary login path on Linux.
+///
+/// The raw token is captured, validated, and stored **entirely on the Rust
+/// side** — only the resolved `DiscordUser` is returned to the frontend. This
+/// deliberately avoids `auto_detect_token`'s pattern of handing raw tokens to
+/// the WebView: a running client has exactly one current account. Requires
+/// Discord to be running with CDP enabled. Works on every platform; on Linux it
+/// is the primary login path (local keyring extraction is a later phase).
+#[tauri::command]
+async fn auto_login_via_cdp(
+    port: Option<u16>,
+    state: State<'_, AppState>,
+    on_progress: Channel<AuthProgress>,
+) -> Result<DiscordUser, String> {
+    use crate::logger::{log, LogCategory, LogLevel};
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+
+    let cdp_port = port.unwrap_or(cdp_client::DEFAULT_CDP_PORT);
+
+    log(
+        LogLevel::Info,
+        LogCategory::TokenExtraction,
+        &format!("Starting CDP auto-login on port {}", cdp_port),
+        None,
+    );
+
+    // 1. Capture the current session's Authorization over CDP. The token stays
+    //    inside `session` (a zero-on-drop wrapper) and is never returned to the
+    //    UI, logged, or persisted.
+    let progress_channel = on_progress.clone();
+    let session = capture_cdp_session_with_progress(
+        cdp_client::capture_discord_auth_via_cdp(cdp_port, std::time::Duration::from_secs(20)),
+        move |progress| {
+            let _ = progress_channel.send(progress);
+        },
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let _ = on_progress.send(AuthProgress::phase(AuthProgressPhase::ValidatingCdpSession));
+
+    // 2. Build an API client from the captured token and validate it via
+    //    /users/@me. An invalid capture is rejected here.
+    let client = DiscordApiClient::new(session.authorization.to_string())
+        .map_err(|e| format!("Failed to create API client: {}", e))?;
+    let user = client
+        .get_current_user()
+        .await
+        .map_err(|e| format!("Captured Discord session is not valid: {}", e))?;
+
+    let _ = on_progress.send(AuthProgress::phase(AuthProgressPhase::PreparingSession));
+
+    reset_super_properties_session();
+
+    // 3. Bootstrap SuperProperties. Prefer the exact `x-super-properties` we
+    //    captured (the value the client actually sends); fall back to a fresh
+    //    CDP fetch. Either way the manager has built-in defaults on failure.
+    let mut super_properties_ready = false;
+    if let Some(base64) = session.super_properties.as_ref() {
+        if let Ok(decoded_bytes) = BASE64.decode(base64) {
+            if let Ok(decoded) = serde_json::from_slice::<serde_json::Value>(&decoded_bytes) {
+                if let Ok(mut manager) = SUPER_PROPERTIES_MANAGER.lock() {
+                    manager.set_from_cdp(base64, &decoded);
+                    super_properties_ready = true;
+                }
+            }
+        }
+    }
+    if !super_properties_ready {
+        if let Ok(cdp_result) = cdp_client::fetch_super_properties_via_cdp(cdp_port).await {
+            if let Ok(mut manager) = SUPER_PROPERTIES_MANAGER.lock() {
+                manager.set_from_cdp(&cdp_result.base64, &cdp_result.decoded);
+            }
+        }
+    }
+
+    // 4. Save the client last (mirrors set_token) so no request runs with stale
+    //    super properties.
+    let _gate = state.activity_gate.lock().await;
+    state.game_idle.ensure_idle().await?;
+    *state.authenticated_user.lock().unwrap() = Some(user.clone());
+    *state.client.lock().unwrap() = Some(client);
+
+    log(
+        LogLevel::Info,
+        LogCategory::TokenExtraction,
+        "CDP auto-login succeeded",
+        None,
+    );
+
+    let _ = on_progress.send(AuthProgress::phase(AuthProgressPhase::Complete));
+
+    Ok(user)
+}
+
+/// Refuse CDP mutations when Helper's authenticated account differs from the
+/// account currently open in the selected desktop client. Without this guard,
+/// injection can affect account B while progress polling still targets A.
+async fn ensure_cdp_account_consistency(
+    state: &State<'_, AppState>,
+    cdp_port: u16,
+) -> Result<(), String> {
+    let expected = state
+        .authenticated_user
+        .lock()
+        .map_err(|_| "Authenticated account state is unavailable".to_string())?
+        .clone()
+        .ok_or_else(|| "Not logged in".to_string())?;
+
+    let session = cdp_client::capture_discord_auth_via_cdp(
+        cdp_port,
+        std::time::Duration::from_secs(8),
+    )
+    .await
+    .map_err(|error| {
+        format!(
+            "Could not verify the account open in the desktop client on CDP port {cdp_port}: {error}"
+        )
+    })?;
+    let client = DiscordApiClient::new(session.authorization.to_string())
+        .map_err(|error| format!("Could not validate the desktop client account: {error}"))?;
+    let actual = client
+        .get_current_user()
+        .await
+        .map_err(|error| format!("Could not read the desktop client account: {error}"))?;
+    if actual.id == expected.id {
+        return Ok(());
+    }
+
+    let owner = match discord_cdp_launch_core::inspect_cdp_port_owner(cdp_port) {
+        discord_cdp_launch_core::CdpPortOwner::Official => "Discord",
+        discord_cdp_launch_core::CdpPortOwner::Vesktop => "Vesktop",
+        discord_cdp_launch_core::CdpPortOwner::None => "the selected desktop client",
+        discord_cdp_launch_core::CdpPortOwner::Other => "an unrecognized desktop client",
+    };
+    let expected_name = expected
+        .global_name
+        .as_deref()
+        .unwrap_or(&expected.username);
+    let actual_name = actual.global_name.as_deref().unwrap_or(&actual.username);
+    Err(format!(
+        "account_mismatch: Helper is signed in as {expected_name} ({}), but {owner} is signed in as {actual_name} ({}). Sign both into the same account before starting a CDP task.",
+        expected.id, actual.id
+    ))
+}
+
+/// Get quest list (via HTTP API /quests/@me endpoint)
+#[tauri::command]
+async fn get_quests(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let client = {
+        let guard = state.client.lock().unwrap();
+        guard
+            .as_ref()
+            .ok_or_else(|| "Not logged in".to_string())?
+            .clone()
+    };
+
+    let quests = client
+        .get_quests_raw()
+        .await
+        .map_err(|e| format!("Failed to get quest list: {}", e))?;
+
+    // Return the "quests" array directly
+    Ok(quests
+        .get("quests")
+        .cloned()
+        .unwrap_or(serde_json::Value::Array(vec![])))
+}
+
+/// Get full quest list response, preserving excluded quests and enrollment block status.
+#[tauri::command]
+async fn get_quests_full(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let client = {
+        let guard = state.client.lock().unwrap();
+        guard
+            .as_ref()
+            .ok_or_else(|| "Not logged in".to_string())?
+            .clone()
+    };
+
+    client
+        .get_quests_raw()
+        .await
+        .map_err(|e| format!("Failed to get quest list: {}", e))
+}
+
+/// Start video quest
+#[tauri::command]
+async fn start_video_quest(
+    quest_id: String,
+    seconds_needed: u32,
+    initial_progress: f64,
+    speed_multiplier: f64,
+    heartbeat_interval: u64,
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    let _gate = state.activity_gate.lock().await;
+    state.game_idle.ensure_idle().await?;
+    ensure_quest_slot_available(&state, &quest_id, false)?;
+
+    let client = state.client.lock().unwrap();
+    let client = client
+        .as_ref()
+        .ok_or_else(|| "Not logged in".to_string())?
+        .clone();
+
+    let quest_id_for_state = quest_id.clone();
+    let outcome = new_quest_outcome();
+    let outcome_writer = std::sync::Arc::clone(&outcome);
+    let (cancel_tx, cancel_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let join = tokio::spawn(async move {
+        let result = quest_completer::complete_video_quest(
+            &client,
+            quest_id,
+            seconds_needed,
+            initial_progress,
+            speed_multiplier,
+            heartbeat_interval,
+            app_handle.clone(),
+            cancel_rx,
+        )
+        .await;
+
+        match result {
+            Ok(()) => quest_task_finished(&outcome_writer),
+            Err(e) => {
+                let message = format!("Video quest failed: {}", e);
+                quest_task_failed(&outcome_writer, message.clone());
+                let _ = app_handle.emit("quest-error", message);
+            }
+        }
+    });
+    register_quest_task(&state, quest_id_for_state, false, cancel_tx, join, outcome);
+
+    Ok(())
+}
+
+/// Start stream quest
+#[tauri::command]
+async fn start_stream_quest(
+    quest_id: String,
+    stream_key: String,
+    seconds_needed: u32,
+    initial_progress: f64,
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    let _gate = state.activity_gate.lock().await;
+    state.game_idle.ensure_idle().await?;
+    ensure_quest_slot_available(&state, &quest_id, false)?;
+
+    let client = {
+        let guard = state.client.lock().unwrap();
+        guard
+            .as_ref()
+            .ok_or_else(|| "Not logged in".to_string())?
+            .clone()
+    };
+
+    let quest_id_for_state = quest_id.clone();
+    let outcome = new_quest_outcome();
+    let outcome_writer = std::sync::Arc::clone(&outcome);
+    let (cancel_tx, cancel_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let join = tokio::spawn(async move {
+        let result = quest_completer::complete_stream_quest(
+            &client,
+            quest_id,
+            stream_key,
+            seconds_needed,
+            initial_progress,
+            app_handle.clone(),
+            cancel_rx,
+        )
+        .await;
+
+        match result {
+            Ok(()) => quest_task_finished(&outcome_writer),
+            Err(e) => {
+                let message = format!("Stream quest failed: {}", e);
+                quest_task_failed(&outcome_writer, message.clone());
+                let _ = app_handle.emit("quest-error", message);
+            }
+        }
+    });
+    register_quest_task(&state, quest_id_for_state, false, cancel_tx, join, outcome);
+
+    Ok(())
+}
+
+/// Start game quest via direct heartbeat (without running simulated game)
+#[tauri::command]
+async fn start_game_heartbeat_quest(
+    quest_id: String,
+    application_id: String,
+    seconds_needed: u32,
+    initial_progress: f64,
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    let _gate = state.activity_gate.lock().await;
+    state.game_idle.ensure_idle().await?;
+    ensure_quest_slot_available(&state, &quest_id, false)?;
+
+    let client = {
+        let guard = state.client.lock().unwrap();
+        guard
+            .as_ref()
+            .ok_or_else(|| "Not logged in".to_string())?
+            .clone()
+    };
+
+    let quest_id_for_state = quest_id.clone();
+    let outcome = new_quest_outcome();
+    let outcome_writer = std::sync::Arc::clone(&outcome);
+    let (cancel_tx, cancel_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let join = tokio::spawn(async move {
+        let result = quest_completer::complete_game_quest_via_heartbeat(
+            &client,
+            quest_id,
+            application_id,
+            seconds_needed,
+            initial_progress,
+            app_handle.clone(),
+            cancel_rx,
+        )
+        .await;
+
+        match result {
+            Ok(()) => quest_task_finished(&outcome_writer),
+            Err(e) => {
+                let message = format!("Game heartbeat quest failed: {}", e);
+                quest_task_failed(&outcome_writer, message.clone());
+                let _ = app_handle.emit("quest-error", message);
+            }
+        }
+    });
+    register_quest_task(&state, quest_id_for_state, false, cancel_tx, join, outcome);
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlayActivityTransport {
+    DirectApi,
+    Cdp,
+}
+
+impl TryFrom<&str> for PlayActivityTransport {
+    type Error = String;
+
+    fn try_from(mode: &str) -> Result<Self, Self::Error> {
+        match mode {
+            "simulate" | "heartbeat" => Ok(Self::DirectApi),
+            "cdp" => Ok(Self::Cdp),
+            _ => Err(format!("Unsupported PLAY_ACTIVITY mode: {}", mode)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod play_activity_transport_tests {
+    use super::PlayActivityTransport;
+
+    #[test]
+    fn maps_supported_frontend_modes_to_a_transport() {
+        assert_eq!(
+            PlayActivityTransport::try_from("simulate"),
+            Ok(PlayActivityTransport::DirectApi)
+        );
+        assert_eq!(
+            PlayActivityTransport::try_from("heartbeat"),
+            Ok(PlayActivityTransport::DirectApi)
+        );
+        assert_eq!(
+            PlayActivityTransport::try_from("cdp"),
+            Ok(PlayActivityTransport::Cdp)
+        );
+        assert!(PlayActivityTransport::try_from("unknown").is_err());
+    }
+}
+
+/// Start a PLAY_ACTIVITY cloud-game quest using the current game quest mode.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn start_play_activity_quest(
+    quest_id: String,
+    application_id: String,
+    seconds_needed: u32,
+    initial_progress: f64,
+    mode: String,
+    cdp_port: u16,
+    heartbeat_interval: u64,
+    progress_polling_interval: u64,
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    let transport = PlayActivityTransport::try_from(mode.as_str())?;
+    if heartbeat_interval == 0 {
+        return Err("PLAY_ACTIVITY heartbeat interval must be greater than zero".to_string());
+    }
+    if progress_polling_interval == 0 {
+        return Err(
+            "PLAY_ACTIVITY progress polling interval must be greater than zero".to_string(),
+        );
+    }
+
+    let client = state.client.lock().unwrap().clone();
+    if transport == PlayActivityTransport::DirectApi && client.is_none() {
+        return Err("Not logged in".to_string());
+    }
+    let _gate = state.activity_gate.lock().await;
+    state.game_idle.ensure_idle().await?;
+    let exclusive = transport == PlayActivityTransport::Cdp;
+    ensure_quest_slot_available(&state, &quest_id, exclusive)?;
+    if exclusive {
+        ensure_cdp_account_consistency(&state, cdp_port).await?;
+    }
+    let quest_id_for_state = quest_id.clone();
+    let outcome = new_quest_outcome();
+    let outcome_writer = std::sync::Arc::clone(&outcome);
+    let (cancel_tx, cancel_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let join = tokio::spawn(async move {
+        let result = cdp_client::with_pinned_discord_session(async {
+            if transport == PlayActivityTransport::Cdp {
+                cdp_quest::complete_play_activity_via_cdp(
+                    cdp_port,
+                    quest_id,
+                    application_id,
+                    seconds_needed,
+                    initial_progress,
+                    heartbeat_interval,
+                    progress_polling_interval,
+                    app_handle.clone(),
+                    cancel_rx,
+                )
+                .await
+            } else {
+                quest_completer::complete_play_activity_via_heartbeat(
+                    client
+                        .as_ref()
+                        .expect("direct PLAY_ACTIVITY mode validated an API client"),
+                    quest_id,
+                    application_id,
+                    seconds_needed,
+                    initial_progress,
+                    heartbeat_interval,
+                    progress_polling_interval,
+                    app_handle.clone(),
+                    cancel_rx,
+                )
+                .await
+            }
+        })
+        .await;
+
+        match result {
+            Ok(()) => quest_task_finished(&outcome_writer),
+            Err(error) => {
+                quest_task_failed(
+                    &outcome_writer,
+                    format!("PLAY_ACTIVITY quest failed: {}", error),
+                );
+                if transport == PlayActivityTransport::Cdp {
+                    cdp_quest::cdp_cleanup_after_stop(
+                        cdp_port,
+                        "task failed or target invalidated",
+                        true,
+                    )
+                    .await;
+                }
+                let _ = app_handle.emit(
+                    "quest-error",
+                    cdp_quest::quest_error_payload(&error, "PLAY_ACTIVITY quest failed"),
+                );
+            }
+        }
+    });
+    register_quest_task(
+        &state,
+        quest_id_for_state,
+        exclusive,
+        cancel_tx,
+        join,
+        outcome,
+    );
+
+    Ok(())
+}
+
+/// Start a quest via CDP injection
+///
+/// Dispatches to the appropriate CDP completion function based on quest_type.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn start_cdp_quest(
+    quest_id: String,
+    quest_type: String,
+    application_id: String,
+    application_name: String,
+    seconds_needed: u32,
+    initial_progress: f64,
+    cdp_port: u16,
+    checkpoint_times: Option<Vec<u32>>,
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    let _gate = state.activity_gate.lock().await;
+    state.game_idle.ensure_idle().await?;
+    ensure_quest_slot_available(&state, &quest_id, true)?;
+    ensure_cdp_account_consistency(&state, cdp_port).await?;
+    let quest_id_for_state = quest_id.clone();
+    let outcome = new_quest_outcome();
+    let outcome_writer = std::sync::Arc::clone(&outcome);
+    let (cancel_tx, cancel_rx) = tokio::sync::mpsc::channel::<()>(1);
+
+    let quest_type_clone = quest_type.clone();
+
+    // Clone the API client for progress polling (play/stream quests)
+    let client = state.client.lock().unwrap().clone();
+
+    let join = tokio::spawn(async move {
+        let result = cdp_client::with_pinned_discord_session(async {
+            match quest_type_clone.as_str() {
+                "play" => {
+                    cdp_quest::complete_play_quest_via_cdp(
+                        cdp_port,
+                        quest_id,
+                        application_id,
+                        application_name,
+                        seconds_needed,
+                        initial_progress,
+                        client,
+                        app_handle.clone(),
+                        cancel_rx,
+                    )
+                    .await
+                }
+                "stream" => {
+                    cdp_quest::complete_stream_quest_via_cdp(
+                        cdp_port,
+                        quest_id,
+                        application_id,
+                        seconds_needed,
+                        initial_progress,
+                        client,
+                        app_handle.clone(),
+                        cancel_rx,
+                    )
+                    .await
+                }
+                "video" => {
+                    cdp_quest::complete_video_quest_via_cdp(
+                        cdp_port,
+                        quest_id,
+                        seconds_needed,
+                        initial_progress,
+                        app_handle.clone(),
+                        cancel_rx,
+                    )
+                    .await
+                }
+                "activity" => {
+                    let times = checkpoint_times
+                        .filter(|v| !v.is_empty())
+                        .unwrap_or_else(|| vec![180, 180, 180]);
+                    cdp_quest::complete_activity_quest_via_cdp(
+                        cdp_port,
+                        quest_id,
+                        application_id,
+                        initial_progress,
+                        times,
+                        client,
+                        app_handle.clone(),
+                        cancel_rx,
+                    )
+                    .await
+                }
+                _ => Err(anyhow::anyhow!(
+                    "Unknown CDP quest type: {}",
+                    quest_type_clone
+                )),
+            }
+        })
+        .await;
+
+        match result {
+            Ok(()) => quest_task_finished(&outcome_writer),
+            Err(e) => {
+                quest_task_failed(&outcome_writer, format!("CDP quest failed: {}", e));
+                cdp_quest::cdp_cleanup_after_stop(
+                    cdp_port,
+                    "task failed or target invalidated",
+                    true,
+                )
+                .await;
+                let _ = app_handle.emit(
+                    "quest-error",
+                    cdp_quest::quest_error_payload(&e, "CDP quest failed"),
+                );
+            }
+        }
+    });
+    register_quest_task(&state, quest_id_for_state, true, cancel_tx, join, outcome);
+
+    Ok(())
+}
+
+/// Stop one quest by id, or every quest and the manual CDP session when no id
+/// is given (logout, window close, Stop-all).
+#[tauri::command]
+async fn stop_quest(quest_id: Option<String>, state: State<'_, AppState>) -> Result<(), String> {
+    let _gate = state.activity_gate.lock().await;
+    match quest_id.filter(|id| !id.trim().is_empty()) {
+        Some(id) => {
+            stop_quest_tasks(&state, |task| task.quest_id == id.trim()).await;
+            Ok(())
+        }
+        None => stop_active_work_internal(&state).await,
+    }
+}
+
+/// Report every tracked quest task with its own outcome, so a page that runs
+/// several quests at once can tell which one finished or failed. Quest events
+/// carry no quest id and stay the fast path for a single quest.
+#[tauri::command]
+fn get_quest_task_statuses(state: State<'_, AppState>) -> Result<Vec<QuestTaskStatus>, String> {
+    Ok(state
+        .quest_tasks
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|task| {
+            let record = task.outcome.lock().unwrap();
+            QuestTaskStatus {
+                quest_id: task.quest_id.clone(),
+                state: record.state,
+                error: record.error.clone(),
+            }
+        })
+        .collect())
+}
+
+fn register_quest_task(
+    state: &State<'_, AppState>,
+    quest_id: String,
+    exclusive: bool,
+    cancel_flag: tokio::sync::mpsc::Sender<()>,
+    join: tokio::task::JoinHandle<()>,
+    outcome: std::sync::Arc<std::sync::Mutex<QuestTaskRecord>>,
+) {
+    let mut tasks = state.quest_tasks.lock().unwrap();
+    tasks.push(QuestTask {
+        quest_id,
+        exclusive,
+        cancel_flag,
+        join: Some(join),
+        outcome,
+    });
+}
+
+fn quest_task_is_running(task: &QuestTask) -> bool {
+    task.outcome.lock().unwrap().state == QuestTaskState::Running
+}
+
+fn new_quest_outcome() -> std::sync::Arc<std::sync::Mutex<QuestTaskRecord>> {
+    std::sync::Arc::new(std::sync::Mutex::new(QuestTaskRecord::running()))
+}
+
+/// Record how a quest loop ended in its own slot. Quest events carry no quest
+/// id, so a page that runs several quests at once reads these outcomes instead.
+fn quest_task_finished(outcome: &std::sync::Mutex<QuestTaskRecord>) {
+    QuestTaskRecord::mark(outcome, QuestTaskState::Finished, None);
+}
+
+fn quest_task_failed(outcome: &std::sync::Mutex<QuestTaskRecord>, error: String) {
+    QuestTaskRecord::mark(outcome, QuestTaskState::Failed, Some(error));
+}
+
+/// Reject a quest start that cannot be tracked: the same quest id already
+/// running, a CDP task that owns the desktop client, or the parallel cap.
+/// Called while the activity gate is held, so the check and the later
+/// registration cannot interleave with another start.
+fn ensure_quest_slot_available(
+    state: &State<'_, AppState>,
+    quest_id: &str,
+    exclusive: bool,
+) -> Result<(), String> {
+    let running: Vec<(String, bool)> = state
+        .quest_tasks
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|task| quest_task_is_running(task))
+        .map(|task| (task.quest_id.clone(), task.exclusive))
+        .collect();
+    match quest_slot_conflict(&running, quest_id, exclusive, MAX_PARALLEL_QUESTS) {
+        Some(conflict) => Err(quest_slot_conflict_message(conflict, quest_id)),
+        None => Ok(()),
+    }
+}
+
+fn take_quest_tasks(
+    state: &State<'_, AppState>,
+    mut should_take: impl FnMut(&QuestTask) -> bool,
+) -> Vec<QuestTask> {
+    let mut tasks = state.quest_tasks.lock().unwrap();
+    let mut taken = Vec::new();
+    let mut kept = Vec::new();
+    for task in std::mem::take(&mut *tasks) {
+        if should_take(&task) {
+            taken.push(task);
+        } else {
+            kept.push(task);
+        }
+    }
+    *tasks = kept;
+    taken
+}
+
+async fn cancel_quest_task(task: QuestTask) {
+    let _ = task.cancel_flag.send(()).await;
+    if let Some(join) = task.join {
+        await_quest_task(join).await;
+    }
+    println!("Quest stopped: {}", task.quest_id);
+}
+
+async fn stop_quest_tasks(
+    state: &State<'_, AppState>,
+    should_take: impl FnMut(&QuestTask) -> bool,
+) {
+    for task in take_quest_tasks(state, should_take) {
+        cancel_quest_task(task).await;
+    }
+}
+
+async fn stop_quest_internal(state: &State<'_, AppState>) {
+    stop_quest_tasks(state, |_| true).await;
+}
+
+async fn await_quest_task(join: tokio::task::JoinHandle<()>) {
+    match tokio::time::timeout(QUEST_STOP_WAIT, join).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            eprintln!("Quest task ended with a join error after cancel: {error}");
+        }
+        Err(_) => {
+            eprintln!(
+                "Quest task did not finish within {QUEST_STOP_WAIT:?} after cancel; leftover Discord activity may still be cleaned up in the background"
+            );
+        }
+    }
+}
+
+/// Reject starting a Discord-activity owner while any quest task is running.
+async fn ensure_no_active_quest(state: &State<'_, AppState>) -> Result<(), String> {
+    let stale = {
+        let mut tasks = state.quest_tasks.lock().unwrap();
+        if tasks.iter().any(quest_task_is_running) {
+            return Err("Stop the active quest first".to_string());
+        }
+        // Completed background tasks close their receiver. Discard that stale
+        // bookkeeping without treating it as an active quest, but still wait so
+        // any in-flight CDP cleanup can finish.
+        std::mem::take(&mut *tasks)
+    };
+    for task in stale {
+        if let Some(join) = task.join {
+            await_quest_task(join).await;
+        }
+    }
+    Ok(())
+}
+
+/// A direct-API quest loop only posts heartbeats for its own quest id, so it can
+/// coexist with a simulated game. Only a CDP quest, which drives the desktop
+/// client itself, blocks one.
+fn has_running_exclusive_quest(state: &State<'_, AppState>) -> bool {
+    state
+        .quest_tasks
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|task| task.exclusive && quest_task_is_running(task))
+}
+
+fn ensure_no_running_simulated_game() -> Result<(), String> {
+    if game_simulator::has_running_simulated_games() {
+        Err("Stop the active simulated game before starting another activity".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+/// Guard for starting one more simulated game from the Game Simulator page.
+/// Simulated games may run in parallel, but two processes sharing an executable
+/// name are tracked as a single record that Stop cannot address separately, so
+/// the name still has to be unique. The cap bounds the process count and keeps
+/// Discord's running-game list believable.
+fn ensure_simulated_game_can_start(executable_name: &str) -> Result<(), String> {
+    if game_simulator::is_simulated_game_running(executable_name) {
+        return Err(format!(
+            "{} is already running; stop it before starting another instance",
+            executable_name
+        ));
+    }
+    let running = game_simulator::running_simulated_game_names();
+    let limit = game_simulator::MAX_PARALLEL_SIMULATED_GAMES;
+    if running.len() >= limit {
+        return Err(format!("At most {limit} simulated games can run at the same time"));
+    }
+    Ok(())
+}
+
+async fn stop_manual_cdp_game_simulation_internal(
+    state: &State<'_, AppState>,
+) -> Result<(), String> {
+    // Keep the lock for the full verified cleanup so a concurrent start cannot
+    // install a new spoof between cleanup and clearing the saved session.
+    let mut sessions = state.manual_cdp_game.lock().await;
+    let Some(session) = sessions.active() else {
+        return Ok(());
+    };
+
+    let cleanup_result = cdp_quest::stop_manual_game_spoof(session.cdp_port)
+        .await
+        .map_err(|error| {
+            format!(
+                "Failed to stop manual CDP game simulation: {error}. Restart Discord if the simulated game remains visible."
+            )
+        });
+    sessions.finish_cleanup(cleanup_result)
+}
+
+async fn stop_active_work_internal(state: &State<'_, AppState>) -> Result<(), String> {
+    stop_quest_internal(state).await;
+    stop_manual_cdp_game_simulation_internal(state).await
+}
+
+/// Navigate Discord client SPA to a specific path (no reload)
+#[tauri::command]
+async fn navigate_discord_spa(target_path: String, cdp_port: u16) -> Result<(), String> {
+    cdp_quest::navigate_discord_spa(cdp_port, &target_path)
+        .await
+        .map_err(|e| format!("Failed to navigate Discord SPA: {}", e))
+}
+
+/// Create simulated game
+#[tauri::command]
+async fn create_simulated_game(
+    path: String,
+    executable_name: String,
+    app_id: String,
+) -> Result<(), String> {
+    game_simulator::create_simulated_game(&path, &executable_name, &app_id)
+        .map_err(|e| format!("Failed to create simulated game: {}", e))
+}
+
+/// Run simulated game
+#[tauri::command]
+async fn run_simulated_game(
+    name: String,
+    path: String,
+    executable_name: String,
+    app_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let _gate = state.activity_gate.lock().await;
+    state.game_idle.ensure_idle().await?;
+    // A simulated game publishes its own Discord activity, so only a CDP quest,
+    // which drives the desktop client, has to be stopped first. Direct-API quest
+    // loops post heartbeats for a single quest id and can run alongside games.
+    if has_running_exclusive_quest(&state) {
+        return Err("Stop the active CDP quest first".to_string());
+    }
+    state.manual_cdp_game.lock().await.ensure_idle()?;
+    ensure_simulated_game_can_start(&executable_name)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        game_simulator::run_simulated_game(&name, &path, &executable_name, &app_id)
+    })
+    .await
+    .map_err(|e| format!("Game simulator task failed: {}", e))?
+    .map_err(|e| format!("Failed to run simulated game: {}", e))
+}
+
+/// Stop simulated game
+#[tauri::command]
+async fn stop_simulated_game(exec_name: String, state: State<'_, AppState>) -> Result<(), String> {
+    let _gate = state.activity_gate.lock().await;
+    state.game_idle.ensure_idle().await?;
+    game_simulator::stop_simulated_game(&exec_name)
+        .map_err(|e| format!("Failed to stop simulated game: {}", e))
+}
+
+#[tauri::command]
+fn get_running_simulated_games() -> Vec<String> {
+    game_simulator::running_simulated_game_names()
+}
+
+/// Start a persistent manual game simulation inside Discord via CDP.
+#[tauri::command]
+async fn start_manual_cdp_game_simulation(
+    app_id: String,
+    app_name: String,
+    cdp_port: u16,
+    state: State<'_, AppState>,
+) -> Result<ManualCdpGameSimulation, String> {
+    let app_id = app_id.trim().to_string();
+    let app_name = app_name.trim().to_string();
+    if app_id.is_empty() {
+        return Err("Application ID is required for CDP game simulation".to_string());
+    }
+    if app_name.is_empty() {
+        return Err("Application name is required for CDP game simulation".to_string());
+    }
+    if cdp_port == 0 {
+        return Err("CDP port must be between 1 and 65535".to_string());
+    }
+
+    // Keep the gate through activation so a concurrent quest start cannot
+    // pass its idle check, register a quest task, and then allow this command
+    // to inject a second Discord activity.
+    let _gate = state.activity_gate.lock().await;
+    state.game_idle.ensure_idle().await?;
+    ensure_no_active_quest(&state).await?;
+    ensure_no_running_simulated_game()?;
+
+    let mut sessions = state.manual_cdp_game.lock().await;
+    sessions.ensure_idle()?;
+
+    let status = cdp_client::check_cdp_available(cdp_port).await;
+    if !status.connected {
+        return Err(status
+            .error
+            .unwrap_or_else(|| format!("Discord CDP is not connected on port {cdp_port}")));
+    }
+
+    ensure_cdp_account_consistency(&state, cdp_port).await?;
+
+    if let Err(error) = cdp_client::with_pinned_discord_session(cdp_quest::start_manual_game_spoof(
+        cdp_port, &app_id, &app_name,
+    ))
+    .await
+    {
+        // The watcher can cancel the start future after injection, before its
+        // internal rollback runs. Clean up outside the cancelled session scope.
+        cdp_quest::cdp_cleanup_after_stop(cdp_port, "manual game simulation aborted", false).await;
+        return Err(format!(
+            "Failed to start manual CDP game simulation: {error}"
+        ));
+    }
+
+    let session = ManualCdpGameSimulation {
+        app_id,
+        app_name,
+        cdp_port,
+    };
+    sessions.activate(session.clone());
+    Ok(session)
+}
+
+/// Stop and fully verify cleanup of the current manual CDP game simulation.
+#[tauri::command]
+async fn stop_manual_cdp_game_simulation(state: State<'_, AppState>) -> Result<(), String> {
+    let _gate = state.activity_gate.lock().await;
+    stop_manual_cdp_game_simulation_internal(&state).await
+}
+
+/// Return the backend-owned manual CDP game simulation, if one is active.
+#[tauri::command]
+async fn get_manual_cdp_game_simulation(
+    state: State<'_, AppState>,
+) -> Result<Option<ManualCdpGameSimulation>, String> {
+    Ok(state.manual_cdp_game.lock().await.active())
+}
+
+#[tauri::command]
+async fn start_game_idle(
+    config: game_idle::GameIdleConfig,
+    games: Vec<DetectableGame>,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<game_idle::GameIdleStatus, String> {
+    config.validate()?;
+    let _gate = state.activity_gate.lock().await;
+    let user = state
+        .authenticated_user
+        .lock()
+        .map_err(|_| "Authenticated account state is unavailable".to_string())?
+        .clone()
+        .ok_or_else(|| "Sign in before starting game idle mode".to_string())?;
+
+    state.game_idle.ensure_idle().await?;
+    ensure_no_active_quest(&state).await?;
+    state.manual_cdp_game.lock().await.ensure_idle()?;
+    ensure_no_running_simulated_game()?;
+    if config.mode == game_idle::GameIdleMode::Cdp {
+        let status = cdp_client::check_cdp_available(config.cdp_port).await;
+        if !status.connected {
+            return Err(status.error.unwrap_or_else(|| {
+                format!("Discord CDP is not connected on port {}", config.cdp_port)
+            }));
+        }
+        ensure_cdp_account_consistency(&state, config.cdp_port).await?;
+    }
+    let history_path = simulation_history::SimulationHistory::file_path(&app)?;
+    state
+        .game_idle
+        .start(
+            config,
+            games,
+            user.id,
+            std::sync::Arc::clone(&state.simulation_history),
+            history_path,
+            app,
+        )
+        .await
+}
+
+#[tauri::command]
+async fn get_game_idle_status(
+    state: State<'_, AppState>,
+) -> Result<Option<game_idle::GameIdleStatus>, String> {
+    Ok(state.game_idle.status().await)
+}
+
+#[tauri::command]
+async fn remove_game_idle_queue_item(
+    session_id: String,
+    app_id: String,
+    occurrence_id: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<game_idle::GameIdleStatus, String> {
+    state
+        .game_idle
+        .remove_upcoming(&session_id, &app_id, &occurrence_id, &app)
+        .await
+}
+
+#[tauri::command]
+async fn stop_game_idle(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Option<game_idle::GameIdleStatus>, String> {
+    let _gate = state.activity_gate.lock().await;
+    state
+        .game_idle
+        .stop(std::sync::Arc::clone(&state.simulation_history), &app)
+        .await
+}
+
+#[tauri::command]
+async fn get_game_simulation_history(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Vec<simulation_history::GameSimulationHistoryEntry>, String> {
+    let user_id = state
+        .authenticated_user
+        .lock()
+        .map_err(|_| "Authenticated account state is unavailable".to_string())?
+        .as_ref()
+        .map(|user| user.id.clone());
+    let Some(user_id) = user_id else {
+        return Ok(Vec::new());
+    };
+    let path = simulation_history::SimulationHistory::file_path(&app)?;
+    state
+        .simulation_history
+        .entries_for_user(&path, &user_id)
+        .await
+}
+
+#[tauri::command]
+async fn start_game_simulation_usage(
+    app_id: String,
+    app_name: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<bool, String> {
+    if app_id.trim().is_empty() {
+        return Ok(false);
+    }
+    let user_id = state
+        .authenticated_user
+        .lock()
+        .map_err(|_| "Authenticated account state is unavailable".to_string())?
+        .as_ref()
+        .map(|user| user.id.clone());
+    let Some(user_id) = user_id else {
+        return Ok(false);
+    };
+    let path = simulation_history::SimulationHistory::file_path(&app)?;
+    state
+        .simulation_history
+        .begin(
+            path,
+            app,
+            user_id,
+            app_id.trim().to_string(),
+            app_name.trim().to_string(),
+        )
+        .await?;
+    Ok(true)
+}
+
+/// Stop recording play time. With `app_id` only that application's segment is
+/// closed and the other simulated games keep recording; without it every
+/// segment is written in one save.
+#[tauri::command]
+async fn stop_game_simulation_usage(
+    app_id: Option<String>,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let _gate = state.activity_gate.lock().await;
+    state.game_idle.ensure_idle().await?;
+    let app_id = app_id.filter(|id| !id.trim().is_empty());
+    if let Some(app_id) = app_id {
+        let path = simulation_history::SimulationHistory::file_path(&app)?;
+        state
+            .simulation_history
+            .finish_one(&path, Some(&app), app_id.trim())
+            .await?;
+    } else {
+        state.simulation_history.finish_active(Some(&app)).await?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_game_simulation_usage_status(
+    state: State<'_, AppState>,
+) -> Result<simulation_history::SimulationHistoryStatus, String> {
+    Ok(state.simulation_history.status().await)
+}
+
+/// Stop every application-simulation owner before logout or account switch.
+/// This remains authoritative even when the page that launched a manual
+/// process has already been unmounted.
+#[tauri::command]
+async fn stop_all_game_simulations(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let _gate = state.activity_gate.lock().await;
+    let idle_error = state
+        .game_idle
+        .stop(std::sync::Arc::clone(&state.simulation_history), &app)
+        .await
+        .err();
+    let active_work_error = stop_active_work_internal(&state).await.err();
+
+    let process_error = match tauri::async_runtime::spawn_blocking(|| {
+        let mut first_error = None;
+        for executable in game_simulator::running_simulated_game_names() {
+            if let Err(error) = game_simulator::stop_simulated_game(&executable) {
+                first_error.get_or_insert_with(|| error.to_string());
+            }
+        }
+        first_error
+    })
+    .await
+    {
+        Ok(error) => error.map(|error| format!("Failed to stop a simulated game: {error}")),
+        Err(error) => Some(format!("Game process cleanup task failed: {error}")),
+    };
+
+    let rpc_error = clear_discord_rpc().await.err();
+    let history_error = state
+        .simulation_history
+        .finish_active(Some(&app))
+        .await
+        .err();
+
+    match idle_error
+        .or(active_work_error)
+        .or(process_error)
+        .or(rpc_error)
+        .or(history_error)
+    {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+/// Get detectable games list (works with or without login)
+#[tauri::command]
+async fn fetch_detectable_games(state: State<'_, AppState>) -> Result<Vec<DetectableGame>, String> {
+    // Use the authenticated client when available (carries auth headers + super-properties).
+    // When not logged in, fall back to a plain public HTTP request — the detectable-games
+    // endpoints require no authentication.
+    let auth_client = {
+        let guard = state.client.lock().unwrap();
+        guard.as_ref().cloned()
+    };
+
+    if let Some(client) = auth_client {
+        return client
+            .fetch_detectable_games()
+            .await
+            .map_err(|e| format!("Failed to get games list: {}", e));
+    }
+
+    // ── Unauthenticated fallback ──────────────────────────────────────────
+    let http = reqwest::Client::builder()
+        .user_agent(super_properties::discord_user_agent(
+            super_properties::DEFAULT_CLIENT_VERSION,
+        ))
+        .connect_timeout(std::time::Duration::from_secs(8))
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+
+    const API_BASE: &str = "https://discord.com/api/v9";
+    let games_url = format!("{}/applications/detectable", API_BASE);
+    let apps_url = format!("{}/applications/non-games/detectable", API_BASE);
+
+    let (games_res, apps_res) =
+        tokio::join!(http.get(&games_url).send(), http.get(&apps_url).send());
+
+    let mut all_items: Vec<DetectableGame> = Vec::new();
+
+    if let Ok(resp) = games_res {
+        if resp.status().is_success() {
+            if let Ok(mut list) = resp.json::<Vec<DetectableGame>>().await {
+                for g in &mut list {
+                    g.type_name = Some("Game".to_string());
+                }
+                all_items.extend(list);
+            }
+        }
+    }
+
+    if let Ok(resp) = apps_res {
+        if resp.status().is_success() {
+            if let Ok(mut list) = resp.json::<Vec<DetectableGame>>().await {
+                for a in &mut list {
+                    a.type_name = Some("App".to_string());
+                }
+                all_items.extend(list);
+            }
+        }
+    }
+
+    Ok(all_items)
+}
+
+/// Accept quest
+#[tauri::command]
+async fn accept_quest(
+    quest_id: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let client = {
+        let guard = state.client.lock().unwrap();
+        guard
+            .as_ref()
+            .ok_or_else(|| "Not logged in".to_string())?
+            .clone()
+    };
+
+    let result = client
+        .accept_quest(&quest_id)
+        .await
+        .map_err(|e| format!("Failed to accept quest: {}", e))?;
+
+    Ok(result)
+}
+
+#[tauri::command]
+async fn get_virtual_currency_balance(
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let client = {
+        let guard = state.client.lock().unwrap();
+        guard
+            .as_ref()
+            .ok_or_else(|| "Not logged in".to_string())?
+            .clone()
+    };
+
+    client
+        .get_virtual_currency_balance()
+        .await
+        .map_err(|e| format!("Failed to get virtual currency balance: {}", e))
+}
+
+#[tauri::command]
+async fn get_billing_subscriptions(
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let client = {
+        let guard = state.client.lock().unwrap();
+        guard
+            .as_ref()
+            .ok_or_else(|| "Not logged in".to_string())?
+            .clone()
+    };
+
+    client
+        .get_billing_subscriptions()
+        .await
+        .map_err(|e| format!("Failed to get billing subscriptions: {}", e))
+}
+
+#[tauri::command]
+async fn get_program_rewards(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let client = {
+        let guard = state.client.lock().unwrap();
+        guard
+            .as_ref()
+            .ok_or_else(|| "Not logged in".to_string())?
+            .clone()
+    };
+
+    client
+        .get_program_rewards()
+        .await
+        .map_err(|e| format!("Failed to get program rewards: {}", e))
+}
+
+#[tauri::command]
+async fn get_quest_decision_debug(
+    placement: u64,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let client = {
+        let guard = state.client.lock().unwrap();
+        guard
+            .as_ref()
+            .ok_or_else(|| "Not logged in".to_string())?
+            .clone()
+    };
+
+    client
+        .get_quest_decision_debug(placement)
+        .await
+        .map_err(|e| format!("Failed to get quest placement decision: {}", e))
+}
+
+#[tauri::command]
+async fn get_quest_decisions_debug(
+    placement: u64,
+    num: u64,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let client = {
+        let guard = state.client.lock().unwrap();
+        guard
+            .as_ref()
+            .ok_or_else(|| "Not logged in".to_string())?
+            .clone()
+    };
+
+    client
+        .get_quest_decisions_debug(placement, num)
+        .await
+        .map_err(|e| format!("Failed to get quest placement decisions: {}", e))
+}
+
+#[tauri::command]
+async fn claim_quest_reward(
+    quest_id: String,
+    platform: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let client = {
+        let guard = state.client.lock().unwrap();
+        guard
+            .as_ref()
+            .ok_or_else(|| "Not logged in".to_string())?
+            .clone()
+    };
+
+    client
+        .claim_quest_reward(&quest_id, platform)
+        .await
+        .map_err(|e| format!("Failed to claim quest reward: {}", e))
+}
+
+mod rpc;
+mod runner;
+
+use once_cell::sync::OnceCell;
+static DISCORD_RPC_CLIENT: OnceCell<Mutex<Option<rpc::Client>>> = OnceCell::new();
+
+fn get_discord_rpc_client() -> &'static Mutex<Option<rpc::Client>> {
+    DISCORD_RPC_CLIENT.get_or_init(|| Mutex::new(None))
+}
+
+pub(crate) async fn clear_discord_rpc() -> Result<(), String> {
+    let client = get_discord_rpc_client()
+        .lock()
+        .map_err(|_| "Discord RPC state lock is poisoned".to_string())?
+        .take();
+    if let Some(client) = client {
+        client.discord.disconnect().await;
+    }
+    Ok(())
+}
+
+pub(crate) async fn replace_discord_rpc(activity_json: String) -> Result<(), String> {
+    clear_discord_rpc().await?;
+    let client = runner::set_activity(activity_json)
+        .await
+        .map_err(|error| format!("Failed to connect Discord RPC: {error}"))?;
+    *get_discord_rpc_client()
+        .lock()
+        .map_err(|_| "Discord RPC state lock is poisoned".to_string())? = Some(client);
+    Ok(())
+}
+
+#[tauri::command(rename_all = "snake_case")]
+fn connect_to_discord_rpc(
+    handle: tauri::AppHandle,
+    activity_json: String,
+    action: String,
+) -> Result<(), String> {
+    let _ = action;
+    let app = handle.clone();
+
+    let event_connecting = "client_connecting";
+    let event_connected = "client_connected";
+    let event_disconnect = "event_disconnect";
+
+    let activity = runner::parse_activity_json(&activity_json)?;
+
+    let connecting_payload = serde_json::json!({
+        "app_id": activity.app_id,
+    });
+
+    // Clear existing client
+    {
+        let mut client_guard = get_discord_rpc_client()
+            .lock()
+            .map_err(|_| "Discord RPC state lock is poisoned".to_string())?;
+        client_guard.take();
+    }
+
+    let task = tauri::async_runtime::spawn(async move {
+        handle
+            .emit(event_connecting, connecting_payload)
+            .unwrap_or_else(|e| eprintln!("Failed to emit event: {}", e));
+
+        let client_result = runner::set_activity(activity_json).await;
+
+        match client_result {
+            Ok(client) => {
+                let connected_payload = serde_json::json!({
+                    "app_id": activity.app_id,
+                });
+
+                {
+                    let mut client_guard = get_discord_rpc_client()
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    *client_guard = Some(client);
+                }
+
+                handle
+                    .emit(event_connected, connected_payload)
+                    .unwrap_or_else(|e| {
+                        eprintln!("Failed to emit event: {}", e);
+                    });
+
+                handle.listen(event_disconnect, move |_| {
+                    println!("Disconnecting from Discord RPC inner");
+                    drop(tauri::async_runtime::spawn(async move {
+                        let client_option = {
+                            let mut client_guard = get_discord_rpc_client()
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                            client_guard.take()
+                        };
+                        if let Some(client) = client_option {
+                            client.discord.disconnect().await;
+                            println!("Disconnected from Discord RPC inner");
+                        }
+                    }));
+                });
+            }
+            Err(e) => {
+                println!("Failed to set activity: {}", e);
+            }
+        }
+    });
+
+    app.listen(event_disconnect, move |_| {
+        println!("Disconnecting from Discord RPC...");
+        task.abort();
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn disconnect_from_discord_rpc(app: tauri::AppHandle) -> Result<(), String> {
+    // Cancel a connection task that may still be waiting for Discord. Without
+    // this, a stop click immediately after launch could be followed by the
+    // pending task storing a new RPC client and restoring the presence.
+    let _ = app.emit("event_disconnect", ());
+
+    clear_discord_rpc().await
+}
+
+fn validate_explorer_directory(path: &str) -> Result<std::path::PathBuf, String> {
+    let path = std::path::PathBuf::from(path);
+    if !path.is_absolute() {
+        return Err("The requested directory path must be absolute".to_string());
+    }
+    if !path.exists() {
+        return Err("The requested directory does not exist".to_string());
+    }
+    if !path.is_dir() {
+        return Err("The requested path is not a directory".to_string());
+    }
+    Ok(path)
+}
+
+#[tauri::command]
+async fn open_in_explorer(path: String) -> Result<(), String> {
+    let path = validate_explorer_directory(&path)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut path = path.to_string_lossy().replace("/", "\\");
+        // Explorer generally doesn't like the \\?\ prefix for opening folders
+        if path.starts_with("\\\\?\\") {
+            path = path[4..].to_string();
+        }
+        println!("Opening explorer at: {}", path);
+        std::process::Command::new("explorer")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("Failed to open explorer: {}", e))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        println!("Opening Finder at: {}", path.display());
+        std::process::Command::new("/usr/bin/open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open Finder: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        println!("Opening file manager at: {}", path.display());
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open directory: {}", e))?;
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        let _ = path; // Suppress unused variable warning on other platforms
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod explorer_directory_tests {
+    use super::validate_explorer_directory;
+    use std::fs;
+
+    fn unique_test_root() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("dqh-open-directory-{}", uuid::Uuid::new_v4()))
+    }
+
+    #[test]
+    fn accepts_an_existing_absolute_directory() {
+        let root = unique_test_root();
+        fs::create_dir_all(&root).unwrap();
+
+        assert_eq!(
+            validate_explorer_directory(root.to_str().unwrap()).unwrap(),
+            root
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn rejects_relative_missing_and_file_paths() {
+        assert_eq!(
+            validate_explorer_directory("relative-directory").unwrap_err(),
+            "The requested directory path must be absolute"
+        );
+
+        let root = unique_test_root();
+        let missing = root.join("missing");
+        assert_eq!(
+            validate_explorer_directory(missing.to_str().unwrap()).unwrap_err(),
+            "The requested directory does not exist"
+        );
+
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("file.txt");
+        fs::write(&file, b"test").unwrap();
+        assert_eq!(
+            validate_explorer_directory(file.to_str().unwrap()).unwrap_err(),
+            "The requested path is not a directory"
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+}
+
+/// Initialize the platform runtime identity before creating any window.
+pub fn initialize_runtime_identity_and_run() {
+    configure_linux_webkit_runtime();
+
+    runtime_identity::initialize();
+
+    // Set up cleanup hook for panics with recursion guard
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static CLEANUP_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        if !CLEANUP_IN_PROGRESS.swap(true, Ordering::SeqCst) {
+            // Use catch_unwind to safely run cleanup
+            let cleanup_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                runtime_identity::cleanup_on_exit();
+            }));
+
+            if cleanup_result.is_err() {
+                eprintln!("[Runtime] Error: panic occurred during cleanup in panic hook");
+            }
+
+            // Do NOT reset flag - if we panicked, we don't want to try cleaning up again
+            // CLEANUP_IN_PROGRESS.store(false, Ordering::SeqCst);
+        }
+        // Wrap original_hook call in catch_unwind to prevent nested panics
+        let hook_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            original_hook(panic_info);
+        }));
+        if hook_result.is_err() {
+            eprintln!("[Runtime] Error: original panic hook panicked");
+        }
+    }));
+
+    // Register Ctrl+C handler
+    if let Err(e) = ctrlc::set_handler(move || {
+        // Kill all simulated game child processes before exiting
+        let cleanup_games_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            game_simulator::cleanup_all_simulated_games();
+        }));
+        if cleanup_games_result.is_err() {
+            eprintln!("[Cleanup] Error: panic during game cleanup in Ctrl+C handler");
+        }
+
+        // Wrap runtime cleanup in catch_unwind to log any errors before exiting
+        let cleanup_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            runtime_identity::cleanup_on_exit();
+        }));
+        if cleanup_result.is_err() {
+            eprintln!("[Runtime] Error: panic occurred during cleanup in Ctrl+C handler");
+        }
+        std::process::exit(0);
+    }) {
+        eprintln!("Warning: Failed to register Ctrl+C handler: {}", e);
+    }
+
+    // Run main application
+    run();
+}
+
+/// WebKitGTK can create a window but render an entirely blank surface when its
+/// accelerated compositing path runs inside a VMware guest with 3D enabled.
+/// Configure the upstream-supported fallback before Tauri initializes GTK.
+#[cfg(target_os = "linux")]
+fn configure_linux_webkit_runtime() {
+    // Tauri's AppImage GTK hook currently forces GDK_BACKEND=x11. If no X11
+    // display exists but a Wayland socket was explicitly supplied, restore the
+    // only usable backend before Tauri initializes GTK.
+    if std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var_os("DISPLAY").is_none()
+        && std::env::var_os("GDK_BACKEND").as_deref() == Some(std::ffi::OsStr::new("x11"))
+    {
+        std::env::set_var("GDK_BACKEND", "wayland");
+    }
+
+    if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_some()
+        || std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_some()
+    {
+        return;
+    }
+
+    let product_name =
+        std::fs::read_to_string("/sys/class/dmi/id/product_name").unwrap_or_default();
+    let system_vendor = std::fs::read_to_string("/sys/class/dmi/id/sys_vendor").unwrap_or_default();
+
+    if linux_webkit_needs_software_compositing(&product_name, &system_vendor) {
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+        println!("[WebKit] Disabled accelerated compositing for VMware compatibility");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn configure_linux_webkit_runtime() {}
+
+#[cfg(target_os = "linux")]
+fn linux_webkit_needs_software_compositing(product_name: &str, system_vendor: &str) -> bool {
+    product_name.to_ascii_lowercase().contains("vmware")
+        || system_vendor.to_ascii_lowercase().contains("vmware")
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_webkit_runtime_tests {
+    use super::linux_webkit_needs_software_compositing;
+
+    #[test]
+    fn detects_vmware_without_matching_physical_hosts() {
+        assert!(linux_webkit_needs_software_compositing(
+            "VMware Virtual Platform",
+            "VMware, Inc."
+        ));
+        assert!(!linux_webkit_needs_software_compositing(
+            "Precision 7680",
+            "Dell Inc."
+        ));
+    }
+}
+
+fn create_main_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let window_config = app
+        .config()
+        .app
+        .windows
+        .first()
+        .cloned()
+        .ok_or("missing window configuration")?;
+
+    let mut builder = WebviewWindowBuilder::from_config(app.handle(), &window_config)?;
+
+    if runtime_identity::uses_temporary_runtime() {
+        let title = runtime_identity::runtime_window_title();
+        builder = builder.title(&title);
+        if let Some(user_data) = runtime_identity::webview_user_data_dir()? {
+            std::fs::create_dir_all(&user_data)?;
+            builder = builder.data_directory(user_data);
+        }
+    }
+
+    builder.build()?;
+    Ok(())
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_dialog::init())
+        .manage(AppState {
+            client: Mutex::new(None),
+            authenticated_user: Mutex::new(None),
+            quest_tasks: Mutex::new(Vec::new()),
+            manual_cdp_game: tokio::sync::Mutex::new(ManualCdpGameSessionState::default()),
+            game_idle: std::sync::Arc::new(game_idle::GameIdleManager::default()),
+            simulation_history: std::sync::Arc::new(
+                simulation_history::SimulationHistory::default(),
+            ),
+            activity_gate: tokio::sync::Mutex::new(()),
+        })
+        .setup(|app| {
+            // `pnpm tauri:dev` rebuilds the bundled launcher before Tauri
+            // starts. If a Linux launcher entry was created previously,
+            // refresh its binary, desktop entry, and icon on every dev start
+            // so developers always test the current launcher build.
+            #[cfg(all(debug_assertions, target_os = "linux"))]
+            if let Some((port, channel, client, installation)) =
+                linux_existing_cdp_launcher_options()
+            {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    match create_discord_cdp_launcher_shortcut_internal(
+                        &app_handle,
+                        port,
+                        channel,
+                        client,
+                        installation,
+                    )
+                    .await
+                    {
+                        Ok(path) => {
+                            println!("[cdp-launcher-dev] Refreshed existing Linux launcher: {path}")
+                        }
+                        Err(error) => eprintln!(
+                            "[cdp-launcher-dev] Failed to refresh existing Linux launcher: {error}"
+                        ),
+                    }
+                });
+            }
+
+            create_main_window(app)?;
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            auto_detect_token,
+            set_token,
+            auto_login_via_cdp,
+            get_quests,
+            get_quests_full,
+            start_video_quest,
+            start_stream_quest,
+            start_game_heartbeat_quest,
+            start_play_activity_quest,
+            start_cdp_quest,
+            stop_quest,
+            get_quest_task_statuses,
+            create_simulated_game,
+            run_simulated_game,
+            stop_simulated_game,
+            get_running_simulated_games,
+            start_manual_cdp_game_simulation,
+            stop_manual_cdp_game_simulation,
+            get_manual_cdp_game_simulation,
+            start_game_idle,
+            get_game_idle_status,
+            remove_game_idle_queue_item,
+            stop_game_idle,
+            get_game_simulation_history,
+            start_game_simulation_usage,
+            stop_game_simulation_usage,
+            get_game_simulation_usage_status,
+            stop_all_game_simulations,
+            fetch_detectable_games,
+            accept_quest,
+            get_virtual_currency_balance,
+            get_billing_subscriptions,
+            get_program_rewards,
+            get_quest_decision_debug,
+            get_quest_decisions_debug,
+            claim_quest_reward,
+            connect_to_discord_rpc,
+            disconnect_from_discord_rpc,
+            open_in_explorer,
+            force_video_progress,
+            export_logs,
+            get_debug_info,
+            get_runner_info,
+            check_cdp_status,
+            fetch_super_properties_cdp,
+            fetch_running_games_cdp,
+            discord_cdp_commands::is_discord_running,
+            discord_cdp_commands::get_desktop_client_state,
+            discord_cdp_commands::get_cdp_diagnostic_snapshot,
+            discord_cdp_commands::add_desktop_client_installation,
+            discord_cdp_commands::remove_desktop_client_installation,
+            discord_cdp_commands::set_desktop_client_selection,
+            discord_cdp_commands::launch_desktop_client_cdp,
+            discord_cdp_commands::list_desktop_clients,
+            discord_cdp_commands::list_running_discord_cdp_sessions,
+            discord_cdp_commands::list_running_desktop_cdp_sessions,
+            discord_cdp_commands::restore_desktop_client_session,
+            discord_cdp_commands::launch_discord_cdp,
+            discord_cdp_commands::restart_discord_cdp,
+            create_discord_cdp_launcher_shortcut,
+            create_discord_debug_shortcut,
+            start_discord_normal_restore_helper,
+            prepare_app_exit,
+            exit_app_now,
+            get_super_properties_mode,
+            auto_fetch_super_properties,
+            retry_super_properties,
+            capture_discord_headers_cdp,
+            navigate_discord_spa,
+            platform_capabilities::get_platform_capabilities,
+            runtime_identity::get_runtime_identity_status,
+            runtime_identity::get_runtime_identity_audit
+        ])
+        .on_window_event(|_window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                prepare_app_exit_fallback();
+            }
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
+
+#[tauri::command]
+async fn prepare_app_exit(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<(), String> {
+    prepare_active_work_and_local_cleanup(&state, &app).await
+}
+
+/// End the main process after the frontend has completed its best-effort
+/// cleanup.  This must not go through Tauri's window-close machinery: that
+/// machinery is intentionally intercepted to show the CDP warning dialog,
+/// and routing the confirmed action back through it can leave the window
+/// alive with the frontend's close guard latched.
+#[tauri::command]
+async fn exit_app_now(state: State<'_, AppState>, app: tauri::AppHandle) -> Result<(), String> {
+    // The close UI fail-opens after a short prepare deadline so a hung Discord
+    // evaluation cannot trap the window. This command is the last chance to
+    // finish or retry CDP rollback before the process disappears.
+    match tokio::time::timeout(
+        APP_EXIT_FINAL_CLEANUP_TIMEOUT,
+        prepare_active_work_and_local_cleanup(&state, &app),
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            eprintln!("Active-work cleanup failed during process exit: {error}");
+            prepare_app_exit_fallback();
+        }
+        Err(_) => {
+            eprintln!(
+                "Final exit cleanup timed out after {APP_EXIT_FINAL_CLEANUP_TIMEOUT:?}; terminating anyway"
+            );
+            prepare_app_exit_fallback();
+        }
+    }
+    std::process::exit(0);
+}
+
+async fn prepare_active_work_and_local_cleanup(
+    state: &State<'_, AppState>,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    if APP_EXIT_CLEANUP.is_prepared() {
+        return Ok(());
+    }
+
+    let _gate = state.activity_gate.lock().await;
+    if APP_EXIT_CLEANUP.is_prepared() {
+        return Ok(());
+    }
+
+    // Manual CDP injections must be removed while the Discord targets are
+    // still reachable. Preserve any error until the remaining local cleanup
+    // has run so an RPC/game cleanup failure cannot strand another resource.
+    // Do not mark exit prepared until this cleanup succeeds; otherwise a
+    // later prepare_app_exit (or a retried close) would skip rollback.
+    //
+    let idle_error = state
+        .game_idle
+        .stop(std::sync::Arc::clone(&state.simulation_history), app)
+        .await
+        .err();
+    let active_work_error = stop_active_work_internal(state).await.err();
+    let history_error = state
+        .simulation_history
+        .finish_active(Some(app))
+        .await
+        .err();
+    cleanup_local_resources_on_exit().await;
+    match idle_error.or(active_work_error).or(history_error) {
+        Some(error) => Err(error),
+        None => {
+            APP_EXIT_CLEANUP.mark_prepared();
+            Ok(())
+        }
+    }
+}
+
+fn prepare_app_exit_fallback() {
+    if APP_EXIT_CLEANUP.is_prepared() {
+        return;
+    }
+    // Fallback cannot reach Discord via CDP (no AppState). Still run the
+    // one-shot local cleanup if prepare_app_exit has not claimed it yet.
+    cleanup_local_resources_on_exit_sync();
+}
+
+fn take_discord_rpc_client_for_exit() -> Option<rpc::Client> {
+    match get_discord_rpc_client().lock() {
+        Ok(mut guard) => guard.take(),
+        Err(_) => {
+            eprintln!("Discord RPC state lock is poisoned during app exit");
+            None
+        }
+    }
+}
+
+async fn cleanup_local_resources_on_exit() {
+    if !APP_EXIT_CLEANUP.claim_local_cleanup() {
+        return;
+    }
+    game_simulator::cleanup_all_simulated_games();
+    if let Some(client) = take_discord_rpc_client_for_exit() {
+        if tokio::time::timeout(APP_EXIT_RPC_DISCONNECT_TIMEOUT, client.discord.disconnect())
+            .await
+            .is_err()
+        {
+            eprintln!("Discord RPC disconnect timed out during app exit");
+        }
+    }
+    runtime_identity::cleanup_on_exit();
+}
+
+fn cleanup_local_resources_on_exit_sync() {
+    if !APP_EXIT_CLEANUP.claim_local_cleanup() {
+        return;
+    }
+    game_simulator::cleanup_all_simulated_games();
+    if let Some(client) = take_discord_rpc_client_for_exit() {
+        tauri::async_runtime::spawn(async move {
+            client.discord.disconnect().await;
+        });
+    }
+    runtime_identity::cleanup_on_exit();
+}
+
+#[tauri::command]
+async fn start_discord_normal_restore_helper(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let launcher = find_bundled_cdp_launcher(&app_handle)?;
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    match runtime_bridge::verify_bundled_for_execution(&launcher) {
+        Ok(()) => runtime_identity::record_helper_identity(Ok(())),
+        Err(error) => {
+            runtime_identity::record_helper_identity(Err(error.clone()));
+            return Err(error);
+        }
+    }
+    tauri::async_runtime::spawn_blocking(move || spawn_restore_helper(&launcher))
+        .await
+        .map_err(|error| format!("Discord restore helper task failed: {error}"))?
+}
+
+fn spawn_restore_helper(launcher: &std::path::Path) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+
+    let mut command = Command::new(launcher);
+    command
+        .arg("--restore-normal-all")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Failed to start Discord restore helper: {error}"))
+}
+
+/// Force update video progress (used for ensuring final progress is saved on stop)
+#[tauri::command]
+async fn force_video_progress(
+    quest_id: String,
+    timestamp: f64,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let client = {
+        let guard = state.client.lock().unwrap();
+        guard
+            .as_ref()
+            .ok_or_else(|| "Not logged in".to_string())?
+            .clone()
+    };
+
+    client
+        .update_video_progress(&quest_id, timestamp)
+        .await
+        .map_err(|e| format!("Failed to force video progress: {}", e))?;
+
+    Ok(())
+}
+
+/// Export application logs as JSON
+#[tauri::command]
+async fn export_logs() -> Result<String, String> {
+    logger::export_logs().map_err(|e| format!("Failed to export logs: {}", e))
+}
+
+/// Get debug info including X-Super-Properties
+#[tauri::command]
+async fn get_debug_info() -> Result<super_properties::DebugInfo, String> {
+    let manager = SUPER_PROPERTIES_MANAGER.lock().map_err(|e| e.to_string())?;
+    Ok(manager.get_debug_info())
+}
+
+/// Get embedded runner version information
+#[tauri::command]
+async fn get_runner_info() -> game_simulator::RunnerInfo {
+    game_simulator::get_runner_info()
+}
+
+/// Check CDP status
+#[tauri::command]
+async fn check_cdp_status(port: Option<u16>) -> cdp_client::CdpStatus {
+    let port = port.unwrap_or(cdp_client::DEFAULT_CDP_PORT);
+    cdp_client::check_cdp_available(port).await
+}
+
+/// Fetch SuperProperties via CDP
+#[tauri::command]
+async fn fetch_super_properties_cdp(
+    port: Option<u16>,
+) -> Result<cdp_client::CdpSuperProperties, String> {
+    let port = port.unwrap_or(cdp_client::DEFAULT_CDP_PORT);
+    let result = cdp_client::fetch_super_properties_via_cdp(port)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Update global SuperProperties Manager
+    if let Ok(mut manager) = SUPER_PROPERTIES_MANAGER.lock() {
+        manager.set_from_cdp(&result.base64, &result.decoded);
+    }
+
+    Ok(result)
+}
+
+/// Read Discord's currently loaded game detector state via CDP.
+#[tauri::command]
+async fn fetch_running_games_cdp(
+    port: Option<u16>,
+) -> Result<cdp_client::CdpRunningGamesSnapshot, String> {
+    let port = port.unwrap_or(cdp_client::DEFAULT_CDP_PORT);
+    cdp_client::fetch_running_games_via_cdp(port)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Capture Discord API request headers via CDP Network interception
+#[tauri::command]
+async fn capture_discord_headers_cdp(
+    port: Option<u16>,
+    duration_secs: Option<u64>,
+) -> Result<cdp_client::CdpCapturedHeaders, String> {
+    let port = port.unwrap_or(cdp_client::DEFAULT_CDP_PORT);
+    let duration = duration_secs.unwrap_or(30);
+    let captured = cdp_client::capture_discord_headers_via_cdp(port, duration)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut manager = SUPER_PROPERTIES_MANAGER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    for request in &captured.requests {
+        manager.update_header_profile_from_headers(&request.headers);
+    }
+
+    Ok(captured)
+}
+
+/// Get current SuperProperties source mode and build number
+#[tauri::command]
+fn get_super_properties_mode() -> serde_json::Value {
+    let manager = SUPER_PROPERTIES_MANAGER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    serde_json::json!({
+        "mode": manager.get_mode().as_str(),
+        "mode_display": manager.get_mode().display_name(),
+        "build_number": manager.get_build_number()
+    })
+}
+
+/// Auto-fetch SuperProperties with fallback: CDP -> Remote JS -> Default
+#[tauri::command]
+async fn auto_fetch_super_properties(cdp_port: Option<u16>) -> serde_json::Value {
+    use crate::logger::{log, LogCategory, LogLevel};
+
+    let port = cdp_port.unwrap_or(cdp_client::DEFAULT_CDP_PORT);
+
+    // Priority 1: Try CDP
+    log(
+        LogLevel::Info,
+        LogCategory::TokenExtraction,
+        &format!("Auto-fetching SuperProperties, trying CDP on port {}", port),
+        None,
+    );
+
+    if let Ok(cdp_result) = cdp_client::fetch_super_properties_via_cdp(port).await {
+        if let Ok(mut manager) = SUPER_PROPERTIES_MANAGER.lock() {
+            manager.set_from_cdp(&cdp_result.base64, &cdp_result.decoded);
+            log(
+                LogLevel::Info,
+                LogCategory::TokenExtraction,
+                &format!(
+                    "SuperProperties obtained via CDP. Build: {:?}",
+                    manager.get_build_number()
+                ),
+                None,
+            );
+            return serde_json::json!({
+                "success": true,
+                "mode": "cdp",
+                "build_number": manager.get_build_number()
+            });
+        }
+    }
+
+    log(
+        LogLevel::Debug,
+        LogCategory::TokenExtraction,
+        "CDP failed, falling back to Remote JS",
+        None,
+    );
+
+    // Priority 2: Try Remote JS
+    if let Ok(build_number) = token_extractor::fetch_build_number_from_discord().await {
+        if let Ok(mut manager) = SUPER_PROPERTIES_MANAGER.lock() {
+            manager.set_from_remote_js(build_number);
+            log(
+                LogLevel::Info,
+                LogCategory::TokenExtraction,
+                &format!(
+                    "SuperProperties obtained via Remote JS. Build: {}",
+                    build_number
+                ),
+                None,
+            );
+            return serde_json::json!({
+                "success": true,
+                "mode": "remote_js",
+                "build_number": build_number
+            });
+        }
+    }
+
+    log(
+        LogLevel::Warn,
+        LogCategory::TokenExtraction,
+        "All fetch methods failed, using default values",
+        None,
+    );
+
+    // Priority 3: Use default values
+    let build_number = if let Ok(manager) = SUPER_PROPERTIES_MANAGER.lock() {
+        manager.get_build_number()
+    } else {
+        None
+    };
+
+    serde_json::json!({
+        "success": false,
+        "mode": "default",
+        "build_number": build_number
+    })
+}
+
+/// Retry fetching SuperProperties (resets and tries again)
+#[tauri::command]
+async fn retry_super_properties(cdp_port: Option<u16>) -> serde_json::Value {
+    // Reset state
+    reset_super_properties_session();
+
+    // Retry fetch
+    auto_fetch_super_properties(cdp_port).await
+}
+
+#[tauri::command]
+async fn create_discord_cdp_launcher_shortcut(
+    app_handle: tauri::AppHandle,
+    port: Option<u16>,
+    channel: Option<String>,
+    client: Option<String>,
+    installation_path: Option<String>,
+) -> Result<String, String> {
+    let channel = discord_cdp_launch_core::parse_discord_channel(channel.as_deref())
+        .map_err(|error| error.to_string())?;
+    let port = port.unwrap_or(cdp_client::DEFAULT_CDP_PORT);
+    let client = discord_cdp_launch_core::parse_desktop_client_preference(client.as_deref())
+        .map_err(|error| error.to_string())?;
+    create_discord_cdp_launcher_shortcut_internal(
+        &app_handle,
+        port,
+        channel,
+        client,
+        installation_path.map(std::path::PathBuf::from),
+    )
+    .await
+}
+
+/// Backward compatible command name. It now creates a long-lived CDP launcher shortcut.
+#[tauri::command]
+async fn create_discord_debug_shortcut(
+    app_handle: tauri::AppHandle,
+    port: Option<u16>,
+) -> Result<String, String> {
+    create_discord_cdp_launcher_shortcut_internal(
+        &app_handle,
+        port.unwrap_or(cdp_client::DEFAULT_CDP_PORT),
+        None,
+        discord_cdp_launch_core::DesktopClientPreference::Auto,
+        None,
+    )
+    .await
+}
+
+async fn install_discord_cdp_launcher_internal(
+    app_handle: &tauri::AppHandle,
+) -> Result<std::path::PathBuf, String> {
+    let app_handle = app_handle.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        install_discord_cdp_launcher_impl(&app_handle)
+    })
+    .await
+    .map_err(|error| format!("Runtime bridge installation task failed: {error}"))?;
+    match &result {
+        Ok((_, Some(warning))) => runtime_identity::record_helper_degraded(warning.clone()),
+        Ok((_, None)) => runtime_identity::record_helper_identity(Ok(())),
+        Err(error) => runtime_identity::record_helper_identity(Err(error.clone())),
+    }
+    result.map(|(path, _)| path)
+}
+
+fn install_discord_cdp_launcher_impl(
+    app_handle: &tauri::AppHandle,
+) -> Result<(std::path::PathBuf, Option<String>), String> {
+    let source = find_bundled_cdp_launcher(app_handle)?;
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let data_root = unix_runtime_data_root()?;
+        let legacy = legacy_unix_cdp_launcher_path()?;
+        let report = runtime_bridge::install(&source, &data_root, &legacy)?;
+        Ok((report.executable, report.legacy_cleanup_warning))
+    }
+
+    #[cfg(windows)]
+    {
+        use std::fs;
+        let target = stable_cdp_launcher_path()?;
+
+        let source_size = fs::metadata(&source).map(|m| m.len()).unwrap_or(0);
+        if cfg!(debug_assertions) {
+            println!("[Runtime] Installing bridge payload ({source_size} bytes)");
+        }
+
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create CDP launcher directory: {}", e))?;
+        }
+
+        if source != target {
+            fs::copy(&source, &target)
+                .map_err(|e| format!("Failed to install runtime bridge: {e}"))?;
+        }
+
+        runtime_identity::strip_zone_identifier(&target);
+
+        if let (Some(file_name), Some(stem)) = (
+            target.file_name().and_then(|n| n.to_str()),
+            target.file_stem().and_then(|n| n.to_str()),
+        ) {
+            if let Err(err) = stealth_pe::rewrite_copy_identity(&target, file_name, stem) {
+                eprintln!("[Runtime] Failed to rewrite bridge version info: {err}");
+            }
+        }
+        if let Some(local_appdata) = std::env::var_os("LOCALAPPDATA") {
+            migrate_legacy_windows_cdp_launcher_at(std::path::Path::new(&local_appdata), &target);
+        }
+        Ok((target, None))
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        let _ = source;
+        Err("CDP launcher installation is unsupported on this platform".into())
+    }
+}
+
+#[cfg(windows)]
+fn stable_cdp_launcher_path() -> Result<std::path::PathBuf, String> {
+    let local_appdata =
+        std::env::var_os("LOCALAPPDATA").ok_or_else(|| "Could not get LOCALAPPDATA".to_string())?;
+    let pointer = windows_cdp_runtime_pointer_path()?;
+    Ok(resolve_windows_cdp_runtime_path(
+        std::path::Path::new(&local_appdata),
+        &pointer,
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn unix_runtime_data_root() -> Result<std::path::PathBuf, String> {
+    let home = std::env::var_os("HOME").ok_or_else(|| "Could not get HOME".to_string())?;
+    Ok(std::path::PathBuf::from(home)
+        .join("Library")
+        .join("Application Support"))
+}
+
+#[cfg(target_os = "linux")]
+fn unix_runtime_data_root() -> Result<std::path::PathBuf, String> {
+    linux_xdg_data_home()
+}
+
+#[cfg(target_os = "macos")]
+fn legacy_unix_cdp_launcher_path() -> Result<std::path::PathBuf, String> {
+    Ok(unix_runtime_data_root()?
+        .join("Discord Quest Helper")
+        .join("discord-cdp-launcher"))
+}
+
+#[cfg(target_os = "linux")]
+fn legacy_unix_cdp_launcher_path() -> Result<std::path::PathBuf, String> {
+    Ok(unix_runtime_data_root()?
+        .join("discord-quest-helper")
+        .join("bin")
+        .join("discord-cdp-launcher"))
+}
+
+#[cfg(any(windows, test))]
+const WINDOWS_CDP_APP_CONFIG_DIR: &str = "com.masterain.discord-quest-helper";
+#[cfg(any(windows, test))]
+const WINDOWS_CDP_RUNTIME_POINTER: &str = "cdp-runtime-exe.txt";
+#[cfg(any(windows, test))]
+const WINDOWS_LEGACY_CDP_DIR: &str = "DiscordQuestHelper";
+#[cfg(any(windows, test))]
+const WINDOWS_LEGACY_CDP_EXE: &str = "DiscordCdpLauncher.exe";
+
+#[cfg(any(windows, test))]
+fn windows_cdp_runtime_pointer_path_from(appdata: &std::path::Path) -> std::path::PathBuf {
+    appdata
+        .join(WINDOWS_CDP_APP_CONFIG_DIR)
+        .join(WINDOWS_CDP_RUNTIME_POINTER)
+}
+
+#[cfg(windows)]
+fn windows_cdp_runtime_pointer_path() -> Result<std::path::PathBuf, String> {
+    let appdata = std::env::var_os("APPDATA").ok_or_else(|| "Could not get APPDATA".to_string())?;
+    Ok(windows_cdp_runtime_pointer_path_from(std::path::Path::new(
+        &appdata,
+    )))
+}
+
+/// `%LOCALAPPDATA%/<16 hex>/<12 hex>.exe` — layout only, not a full-path
+/// substring scan (user profile names can contain product tokens).
+#[cfg(any(windows, test))]
+fn is_windows_bland_runtime_exe(path: &std::path::Path, local_appdata: &std::path::Path) -> bool {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("exe") => {}
+        _ => return false,
+    }
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    if !runtime_identity::is_hex_str(stem, runtime_identity::FILE_HEX_LEN) {
+        return false;
+    }
+    let parent = match path.parent() {
+        Some(dir) => dir,
+        None => return false,
+    };
+    let parent_name = parent.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    if !runtime_identity::is_hex_str(parent_name, runtime_identity::DIR_HEX_LEN) {
+        return false;
+    }
+    let Some(grandparent) = parent.parent() else {
+        return false;
+    };
+    runtime_identity::paths_eq(grandparent, local_appdata)
+}
+
+#[cfg(any(windows, test))]
+fn allocate_windows_bland_runtime_exe(local_appdata: &std::path::Path) -> std::path::PathBuf {
+    local_appdata
+        .join(runtime_identity::generate_random_suffix(
+            runtime_identity::DIR_HEX_LEN,
+        ))
+        .join(format!(
+            "{}.exe",
+            runtime_identity::generate_random_suffix(runtime_identity::FILE_HEX_LEN)
+        ))
+}
+
+#[cfg(any(windows, test))]
+fn resolve_windows_cdp_runtime_path(
+    local_appdata: &std::path::Path,
+    pointer_file: &std::path::Path,
+) -> std::path::PathBuf {
+    if let Ok(stored) = std::fs::read_to_string(pointer_file) {
+        let stored = std::path::PathBuf::from(stored.trim());
+        if is_windows_bland_runtime_exe(&stored, local_appdata) && stored.is_file() {
+            return stored;
+        }
+    }
+    let next = allocate_windows_bland_runtime_exe(local_appdata);
+    if let Some(parent) = pointer_file.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(pointer_file, next.to_string_lossy().as_bytes());
+    next
+}
+
+#[cfg(any(windows, test))]
+fn migrate_legacy_windows_cdp_launcher_at(
+    local_appdata: &std::path::Path,
+    new_target: &std::path::Path,
+) {
+    let old_dir = local_appdata.join(WINDOWS_LEGACY_CDP_DIR);
+    let old_exe = old_dir.join(WINDOWS_LEGACY_CDP_EXE);
+    if old_exe.is_file() && !new_target.exists() {
+        if let Some(parent) = new_target.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::copy(&old_exe, new_target);
+    }
+    if old_dir.exists() {
+        let _ = std::fs::remove_dir_all(&old_dir);
+    }
+}
+
+#[cfg(any(windows, test))]
+fn windows_shortcut_temp_ps1_name() -> String {
+    format!(
+        "{}.ps1",
+        runtime_identity::generate_random_suffix(runtime_identity::DIR_HEX_LEN)
+    )
+}
+
+#[cfg(test)]
+fn runtime_name_has_product_tokens(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.contains("discord")
+        || lower.contains("quest")
+        || lower.contains("cdp")
+        || lower.contains("helper")
+}
+
+#[cfg(target_os = "linux")]
+fn linux_xdg_data_home() -> Result<std::path::PathBuf, String> {
+    std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(|home| std::path::PathBuf::from(home).join(".local").join("share"))
+        })
+        .ok_or_else(|| "Could not determine XDG data home".to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_cdp_launcher_desktop_path() -> Result<std::path::PathBuf, String> {
+    Ok(linux_xdg_data_home()?
+        .join("applications")
+        .join("com.masterain.discord-quest-helper.cdp.desktop"))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_existing_cdp_launcher_options() -> Option<(
+    u16,
+    Option<discord_cdp_launch_core::DiscordChannel>,
+    discord_cdp_launch_core::DesktopClientPreference,
+    Option<std::path::PathBuf>,
+)> {
+    let desktop_path = linux_cdp_launcher_desktop_path().ok()?;
+    if !desktop_path.exists() {
+        return None;
+    }
+
+    let contents = std::fs::read_to_string(desktop_path).unwrap_or_default();
+    Some(linux_cdp_launcher_options_from_desktop(&contents))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_cdp_launcher_options_from_desktop(
+    contents: &str,
+) -> (
+    u16,
+    Option<discord_cdp_launch_core::DiscordChannel>,
+    discord_cdp_launch_core::DesktopClientPreference,
+    Option<std::path::PathBuf>,
+) {
+    let mut port = cdp_client::DEFAULT_CDP_PORT;
+    let mut channel = None;
+    let mut client = discord_cdp_launch_core::DesktopClientPreference::Auto;
+    let mut installation = None;
+    let Some(exec) = contents.lines().find_map(|line| line.strip_prefix("Exec=")) else {
+        return (port, channel, client, installation);
+    };
+    let args = discord_cdp_launch_core::parse_desktop_exec_arguments(exec);
+
+    for pair in args.windows(2) {
+        match pair[0].as_str() {
+            "--port" => {
+                if let Ok(value) = pair[1].parse::<u16>() {
+                    if value != 0 {
+                        port = value;
+                    }
+                }
+            }
+            "--channel" => {
+                if let Ok(value) =
+                    discord_cdp_launch_core::parse_discord_channel(Some(pair[1].as_str()))
+                {
+                    channel = value;
+                }
+            }
+            "--client" | "--provider" => {
+                if let Ok(value) =
+                    discord_cdp_launch_core::parse_desktop_client_preference(Some(pair[1].as_str()))
+                {
+                    client = value;
+                }
+            }
+            "--installation" => installation = Some(std::path::PathBuf::from(&pair[1])),
+            _ => {}
+        }
+    }
+
+    (port, channel, client, installation)
+}
+
+fn find_bundled_cdp_launcher(app_handle: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let names = cdp_launcher_binary_names();
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
+    let mut candidate_dirs = bundled_cdp_launcher_candidate_dirs(
+        cfg!(debug_assertions),
+        std::env::current_dir().ok().as_deref(),
+        app_handle.path().resource_dir().ok().as_deref(),
+        std::env::current_exe().ok().as_deref(),
+    );
+
+    #[cfg(target_os = "windows")]
+    add_windows_cdp_launcher_install_dirs(&mut candidate_dirs);
+
+    if let Some(candidate) = find_cdp_launcher_in_dirs(&names, &candidate_dirs) {
+        return Ok(candidate);
+    }
+
+    if cfg!(debug_assertions) {
+        let searched: Vec<String> = candidate_dirs
+            .iter()
+            .map(|directory| directory.display().to_string())
+            .collect();
+        Err(format!(
+            "Runtime bridge is unavailable (names: {names:?}, searched: {searched:?}). \
+             Run `pnpm build:cdp-launcher` and try again."
+        ))
+    } else {
+        Err(
+            "The packaged runtime bridge is unavailable or invalid. Reinstall the application."
+                .to_string(),
+        )
+    }
+}
+
+fn bundled_cdp_launcher_candidate_dirs(
+    include_development_dirs: bool,
+    current_dir: Option<&std::path::Path>,
+    resource_dir: Option<&std::path::Path>,
+    current_exe: Option<&std::path::Path>,
+) -> Vec<std::path::PathBuf> {
+    let mut candidate_dirs = Vec::new();
+
+    // Dev mode: cwd-based paths (cwd is typically the repo root during `tauri dev`).
+    // This also covers Windows portable/install layouts where the sidecar is
+    // placed at the install root.
+    if include_development_dirs {
+        if let Some(cwd) = current_dir {
+            candidate_dirs.push(cwd.to_path_buf());
+            candidate_dirs.push(cwd.join("src-tauri").join("binaries"));
+            candidate_dirs.push(cwd.join("binaries"));
+        }
+    }
+
+    if let Some(resource_dir) = resource_dir {
+        candidate_dirs.push(resource_dir.to_path_buf());
+        candidate_dirs.push(resource_dir.join("binaries"));
+    }
+
+    // Tauri puts external binaries next to the main executable in macOS app
+    // bundles, Linux packages/AppImages, and installed Windows applications.
+    if let Some(parent) = current_exe.and_then(std::path::Path::parent) {
+        candidate_dirs.push(parent.to_path_buf());
+        candidate_dirs.push(parent.join("binaries"));
+        #[cfg(target_os = "macos")]
+        candidate_dirs.push(parent.join("../Resources"));
+    }
+
+    candidate_dirs
+}
+
+fn find_cdp_launcher_in_dirs(
+    names: &[&str],
+    candidate_dirs: &[std::path::PathBuf],
+) -> Option<std::path::PathBuf> {
+    candidate_dirs.iter().find_map(|directory| {
+        names.iter().find_map(|name| {
+            let candidate = directory.join(name);
+            // build-cdp-launcher.js creates an empty placeholder so Tauri can
+            // validate its config before the real build. Never execute it, and
+            // reject directories that happen to share the sidecar name.
+            std::fs::metadata(&candidate)
+                .ok()
+                .filter(|metadata| metadata.is_file() && metadata.len() > 0)
+                .map(|_| candidate)
+        })
+    })
+}
+
+#[cfg(test)]
+mod bundled_cdp_launcher_tests {
+    use super::{bundled_cdp_launcher_candidate_dirs, find_cdp_launcher_in_dirs};
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn unique_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "{label}-{}-{}",
+            std::process::id(),
+            super::runtime_identity::generate_random_suffix(8)
+        ))
+    }
+
+    #[test]
+    fn locates_external_binary_next_to_packaged_main_executable() {
+        for relative_main in [
+            "Discord Quest Helper.app/Contents/MacOS/meridian",
+            "appimage-mount/usr/bin/meridian",
+            "deb-root/usr/bin/meridian",
+        ] {
+            let root = unique_root("dqh-bundled-launcher");
+            let main = root.join(relative_main);
+            let helper = main.parent().unwrap().join("waybridge");
+            fs::create_dir_all(main.parent().unwrap()).unwrap();
+            fs::write(&main, b"main").unwrap();
+            fs::write(&helper, b"helper").unwrap();
+
+            let directories = bundled_cdp_launcher_candidate_dirs(false, None, None, Some(&main));
+            assert_eq!(
+                find_cdp_launcher_in_dirs(&["waybridge"], &directories),
+                Some(helper)
+            );
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn release_lookup_ignores_current_directory_sidecar() {
+        let root = unique_root("dqh-bundled-launcher-release");
+        let cwd = root.join("cwd");
+        let resource = root.join("resource");
+        let main = root.join("app/Contents/MacOS/meridian");
+        fs::create_dir_all(&cwd).unwrap();
+        fs::create_dir_all(&resource).unwrap();
+        fs::create_dir_all(main.parent().unwrap()).unwrap();
+        fs::write(cwd.join("waybridge"), b"untrusted cwd helper").unwrap();
+        fs::write(resource.join("waybridge"), b"packaged helper").unwrap();
+
+        let directories =
+            bundled_cdp_launcher_candidate_dirs(true, Some(&cwd), Some(&resource), Some(&main));
+        assert_eq!(
+            find_cdp_launcher_in_dirs(&["waybridge"], &directories),
+            Some(cwd.join("waybridge"))
+        );
+        let release_directories =
+            bundled_cdp_launcher_candidate_dirs(false, Some(&cwd), Some(&resource), Some(&main));
+        assert_eq!(
+            find_cdp_launcher_in_dirs(&["waybridge"], &release_directories),
+            Some(resource.join("waybridge"))
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skips_empty_placeholders_and_non_files() {
+        let root = unique_root("dqh-bundled-launcher-invalid");
+        let empty_dir = root.join("empty");
+        let directory_dir = root.join("directory");
+        let valid_dir = root.join("valid");
+        fs::create_dir_all(&empty_dir).unwrap();
+        fs::create_dir_all(directory_dir.join("waybridge")).unwrap();
+        fs::create_dir_all(&valid_dir).unwrap();
+        fs::write(empty_dir.join("waybridge"), []).unwrap();
+        fs::write(valid_dir.join("waybridge"), b"helper").unwrap();
+
+        assert_eq!(
+            find_cdp_launcher_in_dirs(
+                &["waybridge"],
+                &[empty_dir, directory_dir, valid_dir.clone()]
+            ),
+            Some(valid_dir.join("waybridge"))
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn add_windows_cdp_launcher_install_dirs(candidate_dirs: &mut Vec<std::path::PathBuf>) {
+    const PRODUCT_DIR: &str = "Discord Quest Helper";
+
+    for var_name in ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"] {
+        if let Some(root) = std::env::var_os(var_name) {
+            candidate_dirs.push(std::path::PathBuf::from(root).join(PRODUCT_DIR));
+        }
+    }
+
+    if let Some(local_appdata) = std::env::var_os("LOCALAPPDATA") {
+        let local_appdata = std::path::PathBuf::from(local_appdata);
+        candidate_dirs.push(local_appdata.join("Programs").join(PRODUCT_DIR));
+        candidate_dirs.push(local_appdata.join(PRODUCT_DIR));
+    }
+}
+
+fn cdp_launcher_binary_names() -> Vec<&'static str> {
+    #[cfg(target_os = "windows")]
+    {
+        vec![
+            // Tauri bundles externalBin sidecars under the base name in installed apps.
+            "waybridge.exe",
+            // Dev/build trees keep the target triple because Tauri validates this input name.
+            "waybridge-x86_64-pc-windows-msvc.exe",
+        ]
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        #[cfg(target_arch = "aarch64")]
+        {
+            vec!["waybridge", "waybridge-aarch64-apple-darwin"]
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            vec!["waybridge", "waybridge-x86_64-apple-darwin"]
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        #[cfg(target_arch = "aarch64")]
+        {
+            vec!["waybridge", "waybridge-aarch64-unknown-linux-gnu"]
+        }
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            vec!["waybridge", "waybridge-x86_64-unknown-linux-gnu"]
+        }
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        Vec::new()
+    }
+}
+
+async fn create_discord_cdp_launcher_shortcut_internal(
+    app_handle: &tauri::AppHandle,
+    port: u16,
+    channel: Option<discord_cdp_launch_core::DiscordChannel>,
+    client: discord_cdp_launch_core::DesktopClientPreference,
+    installation_path: Option<std::path::PathBuf>,
+) -> Result<String, String> {
+    let launcher_path = install_discord_cdp_launcher_internal(app_handle).await?;
+    let arguments = cdp_launcher_shortcut_arguments(port, channel, client, installation_path)?;
+    create_platform_cdp_launcher_shortcut(&launcher_path, &arguments)
+}
+
+fn cdp_launcher_shortcut_arguments(
+    port: u16,
+    channel: Option<discord_cdp_launch_core::DiscordChannel>,
+    client: discord_cdp_launch_core::DesktopClientPreference,
+    installation_path: Option<std::path::PathBuf>,
+) -> Result<Vec<String>, String> {
+    if port == 0 {
+        return Err("CDP port must be between 1 and 65535.".to_string());
+    }
+    if installation_path.is_some()
+        && client == discord_cdp_launch_core::DesktopClientPreference::Auto
+    {
+        return Err("An exact installation requires an explicit desktop client.".to_string());
+    }
+    let mut arguments = vec![
+        "--port".to_string(),
+        port.to_string(),
+        "--channel".to_string(),
+        channel
+            .map(|value| value.as_str())
+            .unwrap_or("auto")
+            .to_string(),
+        "--client".to_string(),
+        client.as_str().to_string(),
+    ];
+    if let Some(path) = installation_path {
+        let path = path.to_string_lossy().into_owned();
+        if path.contains(char::is_control) || path.contains('"') {
+            return Err("Installation path contains unsupported characters.".to_string());
+        }
+        arguments.push("--installation".to_string());
+        arguments.push(path);
+    }
+    Ok(arguments)
+}
+
+#[cfg(target_os = "windows")]
+fn create_platform_cdp_launcher_shortcut(
+    launcher_path: &std::path::Path,
+    arguments: &[String],
+) -> Result<String, String> {
+    use std::process::Command;
+
+    let launcher_dir = launcher_path
+        .parent()
+        .ok_or_else(|| "Could not get launcher directory".to_string())?;
+    let args = arguments
+        .iter()
+        .map(|argument| windows_command_line_argument(argument))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let launcher_path_ps = ps_single_quote(&launcher_path.to_string_lossy());
+    let launcher_dir_ps = ps_single_quote(&launcher_dir.to_string_lossy());
+    let args_ps = ps_single_quote(&args);
+
+    let ps_script = windows_cdp_shortcut_script(&launcher_path_ps, &launcher_dir_ps, &args_ps);
+
+    let script_path = std::env::temp_dir().join(windows_shortcut_temp_ps1_name());
+    std::fs::write(&script_path, &ps_script)
+        .map_err(|e| format!("Failed to write temporary PowerShell script: {}", e))?;
+
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            &script_path.to_string_lossy(),
+        ])
+        .output();
+
+    let _ = std::fs::remove_file(&script_path);
+    let output = output.map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "Failed to create desktop shortcut: {}",
+            stderr.trim()
+        ));
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .map(|line| line.trim().to_string())
+        .ok_or_else(|| "Desktop shortcut was created but its path was not returned.".to_string())
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_command_line_argument(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| !byte.is_ascii_whitespace() && byte != b'"')
+    {
+        return value.to_string();
+    }
+
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('"');
+    let mut backslashes = 0;
+    for character in value.chars() {
+        match character {
+            '\\' => backslashes += 1,
+            '"' => {
+                for _ in 0..(backslashes * 2 + 1) {
+                    quoted.push('\\');
+                }
+                quoted.push('"');
+                backslashes = 0;
+            }
+            character => {
+                for _ in 0..backslashes {
+                    quoted.push('\\');
+                }
+                quoted.push(character);
+                backslashes = 0;
+            }
+        }
+    }
+    for _ in 0..(backslashes * 2) {
+        quoted.push('\\');
+    }
+    quoted.push('"');
+    quoted
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_cdp_shortcut_script(
+    launcher_path_ps: &str,
+    launcher_dir_ps: &str,
+    args_ps: &str,
+) -> String {
+    format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+$Desktop = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory)
+if ([string]::IsNullOrWhiteSpace($Desktop)) {{ throw 'Windows did not provide a Desktop directory.' }}
+$ShortcutPath = Join-Path -Path $Desktop -ChildPath 'Discord CDP Launcher.lnk'
+$WshShell = New-Object -ComObject WScript.Shell
+$Shortcut = $WshShell.CreateShortcut($ShortcutPath)
+$Shortcut.TargetPath = '{launcher_path}'
+$Shortcut.Arguments = '{args}'
+$Shortcut.WorkingDirectory = '{launcher_dir}'
+$Shortcut.Description = 'Launch Discord with CDP enabled for Discord Quest Helper'
+$Shortcut.IconLocation = '{launcher_path},0'
+$Shortcut.Save()
+[Console]::Out.WriteLine($ShortcutPath)
+"#,
+        launcher_path = launcher_path_ps,
+        args = args_ps,
+        launcher_dir = launcher_dir_ps,
+    )
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn ps_single_quote(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+#[cfg(target_os = "macos")]
+fn create_platform_cdp_launcher_shortcut(
+    launcher_path: &std::path::Path,
+    arguments: &[String],
+) -> Result<String, String> {
+    let home = std::env::var_os("HOME").ok_or_else(|| "Could not get HOME".to_string())?;
+    let desktop = std::path::PathBuf::from(home).join("Desktop");
+    create_macos_cdp_launcher_shortcut_at(&desktop, launcher_path, arguments)
+}
+
+#[cfg(target_os = "macos")]
+fn create_macos_cdp_launcher_shortcut_at(
+    desktop: &std::path::Path,
+    launcher_path: &std::path::Path,
+    arguments: &[String],
+) -> Result<String, String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !desktop.is_dir() {
+        return Err("Could not get desktop path".to_string());
+    }
+    let script_path = desktop.join("Discord CDP Launcher.command");
+
+    // Use single quotes to prevent shell metacharacter expansion ($, `, \, ")
+    fn shell_single_quote(value: &str) -> String {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+
+    let arguments = arguments
+        .iter()
+        .map(|argument| shell_single_quote(argument))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let script_content = format!(
+        "#!/bin/bash\n{} {}\n",
+        shell_single_quote(&launcher_path.to_string_lossy()),
+        arguments
+    );
+
+    std::fs::write(&script_path, &script_content)
+        .map_err(|e| format!("Failed to write launcher command: {}", e))?;
+    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| format!("Failed to mark launcher command executable: {}", e))?;
+
+    Ok(script_path.to_string_lossy().to_string())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_cdp_shortcut_tests {
+    use super::create_macos_cdp_launcher_shortcut_at;
+    use discord_cdp_launch_core::DiscordChannel;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn creates_executable_script_with_shell_quoted_launcher_path() {
+        let root = std::env::temp_dir().join(format!(
+            "dqh-macos-shortcut-{}-{}",
+            std::process::id(),
+            super::runtime_identity::generate_random_suffix(8)
+        ));
+        let desktop = root.join("Desktop");
+        fs::create_dir_all(&desktop).unwrap();
+        let launcher = root.join("it'works/waybridge");
+
+        let created = create_macos_cdp_launcher_shortcut_at(
+            &desktop,
+            &launcher,
+            &[
+                "--port".into(),
+                "9444".into(),
+                "--channel".into(),
+                DiscordChannel::Canary.as_str().into(),
+                "--client".into(),
+                "vesktop".into(),
+            ],
+        )
+        .unwrap();
+        let created = std::path::PathBuf::from(created);
+        let contents = fs::read_to_string(&created).unwrap();
+        assert!(contents.contains(
+            "it'\\''works/waybridge' '--port' '9444' '--channel' 'canary' '--client' 'vesktop'"
+        ));
+        assert_ne!(
+            fs::metadata(&created).unwrap().permissions().mode() & 0o111,
+            0
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn create_platform_cdp_launcher_shortcut(
+    launcher_path: &std::path::Path,
+    arguments: &[String],
+) -> Result<String, String> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    let data_home = linux_xdg_data_home()?;
+
+    let applications_dir = data_home.join("applications");
+    std::fs::create_dir_all(&applications_dir)
+        .map_err(|e| format!("Failed to create applications directory: {}", e))?;
+
+    // Desktop Entry icon names resolve through the freedesktop icon theme, not
+    // through Tauri's bundled resources. Install the launcher's dedicated icon
+    // alongside the .desktop entry so GNOME/KDE do not fall back to a generic
+    // executable icon (especially in dev builds where the main app is not
+    // installed system-wide).
+    const ICON_NAME: &str = "com.masterain.discord-quest-helper.cdp";
+    const ICON_BYTES: &[u8] = include_bytes!("../../public/icons/launcher-logo.png");
+    let icon_theme_dir = data_home.join("icons").join("hicolor");
+    let icon_dir = icon_theme_dir.join("512x512").join("apps");
+    std::fs::create_dir_all(&icon_dir)
+        .map_err(|e| format!("Failed to create launcher icon directory: {}", e))?;
+    let icon_path = icon_dir.join(format!("{ICON_NAME}.png"));
+    std::fs::write(&icon_path, ICON_BYTES)
+        .map_err(|e| format!("Failed to install CDP launcher icon: {}", e))?;
+
+    let desktop_path = linux_cdp_launcher_desktop_path()?;
+
+    let launcher_display = launcher_path.to_string_lossy();
+    // A newline anywhere in the path would close the `Exec=`/`TryExec=` value
+    // and let the rest be parsed as further Desktop Entry keys. Quoting cannot
+    // express control characters, so reject them outright rather than emit a
+    // file whose meaning depends on the reader's leniency.
+    if launcher_display.contains(char::is_control) {
+        return Err(
+            "Launcher path contains control characters; refusing to write a desktop entry."
+                .to_string(),
+        );
+    }
+    let exec_program = desktop_entry_exec_quote(&launcher_display);
+    let exec_arguments = arguments
+        .iter()
+        .map(|argument| desktop_entry_exec_quote(argument))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let contents = format!(
+        "[Desktop Entry]\n\
+         Type=Application\n\
+         Name=Discord CDP Launcher\n\
+         Comment=Launch Discord with CDP enabled\n\
+         Exec={exec} {arguments}\n\
+         TryExec={tryexec}\n\
+         Icon={icon}\n\
+         Terminal=false\n\
+         Categories=Utility;\n\
+         StartupNotify=true\n",
+        exec = exec_program,
+        arguments = exec_arguments,
+        tryexec = launcher_display,
+        // Use the absolute path in the desktop entry. GNOME Shell can retain a
+        // generic fallback cached before a newly installed themed icon exists;
+        // a direct path avoids that stale theme lookup entirely.
+        icon = icon_path.to_string_lossy(),
+    );
+
+    // Write to a temp file in the same directory, then atomically replace any
+    // existing desktop entry. `rename` replaces the destination on Linux.
+    let tmp_path = applications_dir.join(format!(
+        ".com.masterain.discord-quest-helper.cdp.desktop.{}.tmp",
+        std::process::id()
+    ));
+    {
+        let mut file = std::fs::File::create(&tmp_path)
+            .map_err(|e| format!("Failed to write desktop entry: {}", e))?;
+        file.write_all(contents.as_bytes())
+            .map_err(|e| format!("Failed to write desktop entry: {}", e))?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o644))
+            .map_err(|e| format!("Failed to set desktop entry permissions: {}", e))?;
+    }
+    std::fs::rename(&tmp_path, &desktop_path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp_path);
+        format!("Failed to install desktop entry: {}", e)
+    })?;
+
+    // Best-effort refresh of the desktop database; failure is non-fatal.
+    let _ = std::process::Command::new("update-desktop-database")
+        .arg(&applications_dir)
+        .status();
+    let _ = std::process::Command::new("gtk-update-icon-cache")
+        .args(["-f", "-t"])
+        .arg(&icon_theme_dir)
+        .status();
+
+    Ok(desktop_path.to_string_lossy().to_string())
+}
+
+/// Escape a value for use inside a double-quoted Desktop Entry `Exec` argument.
+/// Reserved characters are escaped with a backslash; backslash is escaped first.
+/// Field codes (`%f`, `%u`, …) are expanded before quoting is undone, so a
+/// literal percent sign must be written as `%%` even inside quotes.
+#[cfg(target_os = "linux")]
+fn desktop_entry_exec_quote(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('`', "\\`")
+        .replace('$', "\\$")
+        .replace('%', "%%");
+    format!("\"{}\"", escaped)
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn create_platform_cdp_launcher_shortcut(
+    _launcher_path: &std::path::Path,
+    _arguments: &[String],
+) -> Result<String, String> {
+    Err("Shortcut creation is only supported on Windows, macOS and Linux.".to_string())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod desktop_entry_tests {
+    use super::{desktop_entry_exec_quote, linux_cdp_launcher_options_from_desktop};
+    use discord_cdp_launch_core::{DesktopClientPreference, DiscordChannel};
+
+    #[test]
+    fn quotes_plain_paths() {
+        assert_eq!(
+            desktop_entry_exec_quote("/usr/bin/discord-cdp-launcher"),
+            "\"/usr/bin/discord-cdp-launcher\""
+        );
+    }
+
+    #[test]
+    fn escapes_reserved_shell_characters() {
+        assert_eq!(
+            desktop_entry_exec_quote(r#"/tmp/we"ir$d`\path"#),
+            r#""/tmp/we\"ir\$d\`\\path""#
+        );
+    }
+
+    #[test]
+    fn doubles_literal_percent_so_it_is_not_read_as_a_field_code() {
+        // `%f`/`%u` are expanded before quoting is undone, so a path containing
+        // a percent sign must be written `%%` or the entry silently mangles it.
+        assert_eq!(
+            desktop_entry_exec_quote("/opt/My %f App/launcher"),
+            "\"/opt/My %%f App/launcher\""
+        );
+    }
+
+    #[test]
+    fn keeps_existing_launcher_port_and_channel_during_dev_refresh() {
+        let desktop = r#"[Desktop Entry]
+Exec="/opt/Discord Quest Helper/discord-cdp-launcher" --port 9444 --channel canary
+"#;
+        assert_eq!(
+            linux_cdp_launcher_options_from_desktop(desktop),
+            (
+                9444,
+                Some(DiscordChannel::Canary),
+                DesktopClientPreference::Auto,
+                None,
+            )
+        );
+    }
+
+    #[test]
+    fn invalid_existing_launcher_options_fall_back_to_defaults() {
+        let desktop = "Exec=/tmp/launcher --port 0 --channel unsupported\n";
+        assert_eq!(
+            linux_cdp_launcher_options_from_desktop(desktop),
+            (
+                super::cdp_client::DEFAULT_CDP_PORT,
+                None,
+                DesktopClientPreference::Auto,
+                None,
+            )
+        );
+    }
+
+    #[test]
+    fn preserves_quoted_installation_paths_with_spaces() {
+        let desktop = r#"Exec="/tmp/launcher" --provider vesktop --installation "/opt/Vesktop Portable/vesktop" --port 9555
+"#;
+        assert_eq!(
+            linux_cdp_launcher_options_from_desktop(desktop),
+            (
+                9555,
+                None,
+                DesktopClientPreference::Vesktop,
+                Some(std::path::PathBuf::from("/opt/Vesktop Portable/vesktop")),
+            )
+        );
+    }
+}
+
+#[cfg(test)]
+mod windows_cdp_runtime_path_tests {
+    use super::*;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    fn unique_root() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "dqh-cdp-runtime-{}",
+            runtime_identity::generate_random_suffix(8)
+        ))
+    }
+
+    fn assert_bland_leaves(path: &Path) {
+        let file = path.file_stem().and_then(|s| s.to_str()).unwrap();
+        let dir = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str())
+            .unwrap();
+        assert!(
+            runtime_identity::is_hex_str(dir, runtime_identity::DIR_HEX_LEN),
+            "{dir}"
+        );
+        assert!(
+            runtime_identity::is_hex_str(file, runtime_identity::FILE_HEX_LEN),
+            "{file}"
+        );
+        assert!(!runtime_name_has_product_tokens(dir));
+        assert!(!runtime_name_has_product_tokens(file));
+        assert!(!runtime_name_has_product_tokens(&format!("{file}.exe")));
+    }
+
+    #[test]
+    fn pointer_file_uses_app_config_dir() {
+        let pointer = windows_cdp_runtime_pointer_path_from(Path::new("/roaming"));
+        assert_eq!(
+            pointer.file_name().and_then(|n| n.to_str()),
+            Some(WINDOWS_CDP_RUNTIME_POINTER)
+        );
+        assert_eq!(
+            pointer
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str()),
+            Some(WINDOWS_CDP_APP_CONFIG_DIR)
+        );
+    }
+
+    #[test]
+    fn allocates_hex_layout_without_product_names() {
+        let root = unique_root();
+        let local = root.join("Local");
+        let pointer = windows_cdp_runtime_pointer_path_from(&root.join("Roaming"));
+        fs::create_dir_all(&local).unwrap();
+        let path = resolve_windows_cdp_runtime_path(&local, &pointer);
+        assert_bland_leaves(&path);
+        assert_eq!(
+            path.parent().and_then(|p| p.parent()),
+            Some(local.as_path())
+        );
+        let stored = fs::read_to_string(&pointer).unwrap();
+        assert_eq!(PathBuf::from(stored.trim()), path);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn reuses_pointer_when_file_still_exists() {
+        let root = unique_root();
+        let local = root.join("Local");
+        let pointer = windows_cdp_runtime_pointer_path_from(&root.join("Roaming"));
+        fs::create_dir_all(&local).unwrap();
+        let first = resolve_windows_cdp_runtime_path(&local, &pointer);
+        fs::create_dir_all(first.parent().unwrap()).unwrap();
+        fs::write(&first, b"exe").unwrap();
+        let second = resolve_windows_cdp_runtime_path(&local, &pointer);
+        assert_eq!(first, second);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn reallocates_when_pointer_target_is_missing() {
+        let root = unique_root();
+        let local = root.join("Local");
+        let pointer = windows_cdp_runtime_pointer_path_from(&root.join("Roaming"));
+        fs::create_dir_all(&local).unwrap();
+        let first = resolve_windows_cdp_runtime_path(&local, &pointer);
+        let second = resolve_windows_cdp_runtime_path(&local, &pointer);
+        assert_ne!(first, second);
+        assert_bland_leaves(&second);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ignores_legacy_product_path_in_pointer() {
+        let root = unique_root();
+        let local = root.join("Local");
+        let pointer = windows_cdp_runtime_pointer_path_from(&root.join("Roaming"));
+        fs::create_dir_all(pointer.parent().unwrap()).unwrap();
+        fs::create_dir_all(&local).unwrap();
+        let legacy = local
+            .join(WINDOWS_LEGACY_CDP_DIR)
+            .join(WINDOWS_LEGACY_CDP_EXE);
+        fs::write(&pointer, legacy.to_string_lossy().as_bytes()).unwrap();
+        let path = resolve_windows_cdp_runtime_path(&local, &pointer);
+        assert!(is_windows_bland_runtime_exe(&path, &local));
+        assert_bland_leaves(&path);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn migrates_legacy_discord_quest_helper_dir() {
+        let root = unique_root();
+        let local = root.join("Local");
+        let old_dir = local.join(WINDOWS_LEGACY_CDP_DIR);
+        fs::create_dir_all(&old_dir).unwrap();
+        fs::write(old_dir.join(WINDOWS_LEGACY_CDP_EXE), b"old").unwrap();
+        let new_target = allocate_windows_bland_runtime_exe(&local);
+        migrate_legacy_windows_cdp_launcher_at(&local, &new_target);
+        assert!(!old_dir.exists());
+        assert!(new_target.is_file());
+        assert_eq!(fs::read(&new_target).unwrap(), b"old");
+        assert_bland_leaves(&new_target);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn migrate_does_not_overwrite_existing_target() {
+        let root = unique_root();
+        let local = root.join("Local");
+        let old_dir = local.join(WINDOWS_LEGACY_CDP_DIR);
+        fs::create_dir_all(&old_dir).unwrap();
+        fs::write(old_dir.join(WINDOWS_LEGACY_CDP_EXE), b"old").unwrap();
+        let new_target = allocate_windows_bland_runtime_exe(&local);
+        fs::create_dir_all(new_target.parent().unwrap()).unwrap();
+        fs::write(&new_target, b"new").unwrap();
+        migrate_legacy_windows_cdp_launcher_at(&local, &new_target);
+        assert!(!old_dir.exists());
+        assert_eq!(fs::read(&new_target).unwrap(), b"new");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn shortcut_temp_script_is_hex_named() {
+        let name = windows_shortcut_temp_ps1_name();
+        let stem = name.strip_suffix(".ps1").unwrap();
+        assert!(runtime_identity::is_hex_str(
+            stem,
+            runtime_identity::DIR_HEX_LEN
+        ));
+        assert!(!runtime_name_has_product_tokens(&name));
+        assert!(!name.to_ascii_lowercase().contains("discord"));
+    }
+
+    #[test]
+    fn windows_shortcut_uses_the_redirectable_desktop_known_folder() {
+        let script = windows_cdp_shortcut_script(
+            &ps_single_quote(r"C:\Program Files\waybridge.exe"),
+            &ps_single_quote(r"C:\Program Files"),
+            &ps_single_quote("--port 9223 --channel auto"),
+        );
+        assert!(script.contains("[Environment+SpecialFolder]::DesktopDirectory"));
+        assert!(!script.contains("USERPROFILE"));
+        assert!(script.contains("$Shortcut = $WshShell.CreateShortcut($ShortcutPath)"));
+    }
+
+    #[test]
+    fn windows_shortcut_quotes_spaced_paths_without_doubling_regular_backslashes() {
+        assert_eq!(
+            windows_command_line_argument(r"C:\Portable Apps\Vesktop\vesktop.exe"),
+            r#""C:\Portable Apps\Vesktop\vesktop.exe""#
+        );
+        assert_eq!(windows_command_line_argument("--client"), "--client");
+    }
+}

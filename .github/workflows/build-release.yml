@@ -1,0 +1,523 @@
+name: 'publish'
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'public/version.txt'
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+jobs:
+  release_policy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      should_release: ${{ steps.policy.outputs.should_release }}
+      version: ${{ steps.policy.outputs.version }}
+      prerelease: ${{ steps.policy.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check release channel
+        id: policy
+        shell: bash
+        run: |
+          version=$(tr -d '\r\n' < public/version.txt)
+          ref="${GITHUB_REF}"
+          should_release=false
+          prerelease=false
+
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$ ]]; then
+            echo "::error::Invalid release version: $version"
+            exit 1
+          fi
+
+          if [[ "$ref" == "refs/heads/main" ]]; then
+            should_release=true
+            [[ "$version" =~ -rc[0-9]+$ ]] && prerelease=true
+          elif [[ "$ref" == "refs/heads/develop" && "$version" =~ -rc[0-9]+$ ]]; then
+            # Develop may publish release candidates only. A stable version on
+            # develop must never create or update a formal release.
+            should_release=true
+            prerelease=true
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "Release policy: ref=$ref version=$version should_release=$should_release prerelease=$prerelease"
+
+  build-tauri:
+    needs: release_policy
+    if: needs.release_policy.outputs.should_release == 'true'
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'windows-latest'
+            args: ''
+            x-target: 'win32-x64'
+            cdp_target: 'x86_64-pc-windows-msvc'
+            runner-ext: '.exe'
+          - platform: 'macos-14'  # Apple Silicon M1/M2 runner
+            args: '--no-sign --target aarch64-apple-darwin'
+            x-target: 'darwin-arm64'
+            cdp_target: 'aarch64-apple-darwin'
+            runner-ext: ''
+          - platform: 'ubuntu-22.04'  # AppImage baseline (WebKitGTK 4.1)
+            args: '--bundles deb,appimage'
+            x-target: 'linux-x64'
+            cdp_target: 'x86_64-unknown-linux-gnu'
+            runner-ext: ''
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        name: Install pnpm
+        with:
+          run_install: false
+      
+      - name: setup node
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: 'pnpm'
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.platform == 'macos-14' && 'aarch64-apple-darwin' || '' }}
+
+      # Tauri 2 build dependencies for Debian/Ubuntu (WebKitGTK 4.1 baseline).
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            pkg-config \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xdg-utils \
+            desktop-file-utils \
+            xvfb \
+            xdotool \
+            x11-utils \
+            weston \
+            dbus-x11 \
+            libfuse2
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+      
+      - name: Cache Cargo index
+        uses: actions/cache@v5
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-index-
+
+      - name: Get version
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.release_policy.outputs.version }}
+        run: |
+          printf 'version=%s\n' "$RELEASE_VERSION" >> "$GITHUB_ENV"
+      
+
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+    
+      - name: install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Patch package.json / src-tauri/Cargo.toml / tauri.conf.json from
+      # public/version.txt before the Rust checks, so clippy, the tests and the
+      # bundle all see the version this release actually ships with.
+      - name: Sync version from public/version.txt
+        run: pnpm run sync-version
+
+      - name: Validate i18n
+        run: node scripts/i18n-validate.mjs
+
+      - name: Run frontend tests
+        run: pnpm test
+
+      - name: Validate runtime identity policy and audit tools
+        run: |
+          pnpm run check:runtime-identity
+          pnpm run test:identity-audit
+          pnpm run test:packaged-identity
+
+      # `tauri::generate_context!` resolves `frontendDist` (../dist) at
+      # compile time, so the bundle must exist before Cargo touches src-tauri.
+      - name: Build frontend
+        run: pnpm run build
+
+      - name: Rust format
+        run: |
+          cargo fmt --package discord-cdp-launch-core --package discord-cdp-launcher -- --check
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Rust clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --workspace
+
+      - name: Verify CDP core dependency boundary
+        run: pnpm run check:cdp-core-deps
+
+      # Version sync intentionally happens above, before the Rust checks; the
+      # sidecar and bundle steps below consume the already-synced manifests.
+      - name: Build runner sidecar
+        env:
+          TAURI_TARGET_TRIPLE: ${{ matrix.cdp_target }}
+        run: pnpm run build:runner
+
+      - name: Build Discord CDP launcher sidecar
+        env:
+          TAURI_TARGET_TRIPLE: ${{ matrix.cdp_target }}
+        run: pnpm run build:cdp-launcher
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: ${{ matrix.args }}
+
+      - name: Verify unsigned macOS bundle identity and integrity
+        if: matrix.platform == 'macos-14'
+        shell: bash
+        run: |
+          app="$(find target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -type d | head -n 1)"
+          if [ -z "$app" ]; then
+            echo "::error::No macOS application bundle was produced"
+            exit 1
+          fi
+          scripts/verify-macos-bundle.sh "$app"
+          node scripts/audit-packaged-identity.mjs \
+            --platform macos \
+            --artifact "$app" \
+            --output target/aarch64-apple-darwin/release/bundle/identity-manifest.json
+
+      - name: Audit Linux release packages
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          deb="$(find target/release/bundle/deb -maxdepth 1 -name '*.deb' -type f | head -n 1)"
+          appimage="$(find target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' -type f | head -n 1)"
+          test -n "$deb"
+          test -n "$appimage"
+          node scripts/audit-packaged-identity.mjs \
+            --platform linux --artifact "$deb" \
+            --output target/release/bundle/identity-manifest-linux-deb.json
+          node scripts/audit-packaged-identity.mjs \
+            --platform linux --artifact "$appimage" \
+            --output target/release/bundle/identity-manifest-linux-appimage.json
+          mkdir -p "$RUNNER_TEMP/deb-root"
+          dpkg-deb -x "$deb" "$RUNNER_TEMP/deb-root"
+          main_binary="$(node -p 'JSON.parse(require("fs").readFileSync("scripts/runtime-identity-tokens.json", "utf8")).identity.mainBinary')"
+          binary="$RUNNER_TEMP/deb-root/usr/bin/$main_binary"
+          dbus-run-session -- xvfb-run -a scripts/smoke-linux-runtime-identity.sh \
+            x11 --kind binary "$binary" \
+            target/release/bundle/identity-smoke-linux-deb-x11.json
+          dbus-run-session -- scripts/smoke-linux-runtime-identity.sh \
+            wayland --kind binary "$binary" \
+            target/release/bundle/identity-smoke-linux-deb-wayland.json
+          dbus-run-session -- xvfb-run -a scripts/smoke-linux-runtime-identity.sh \
+            x11 --kind appimage "$appimage" \
+            target/release/bundle/identity-smoke-linux-appimage-x11.json
+          dbus-run-session -- scripts/smoke-linux-runtime-identity.sh \
+            wayland --kind appimage "$appimage" \
+            target/release/bundle/identity-smoke-linux-appimage-wayland.json
+
+      - name: Stage Windows portable artifact
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          CDP_TARGET: ${{ matrix.cdp_target }}
+        run: |
+          $portableDir = 'build/windows-portable'
+          New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+          Copy-Item 'target/release/discord-quest-helper.exe' "$portableDir/discord-quest-helper.exe"
+          Copy-Item "src-tauri/binaries/waybridge-$env:CDP_TARGET.exe" "$portableDir/waybridge.exe"
+      
+      # Upload Windows artifact (portable)
+      # Runner binary is embedded in the main executable via include_bytes!
+      # CDP launcher sidecar must be included alongside the main exe for
+      # the "Create CDP Launcher Shortcut" feature to work in portable mode.
+      - name: Upload Windows artifact (portable)
+        if: matrix.platform == 'windows-latest'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tauri-win-portable
+          path: build/windows-portable/*
+
+      # Upload Windows artifact (MSI installer)
+      - name: Upload Windows artifact (MSI)
+        if: matrix.platform == 'windows-latest'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tauri-win-msi
+          path: target/release/bundle/msi/*.msi
+
+      # Upload macOS artifact
+      - name: Upload macOS artifact
+        if: matrix.platform == 'macos-14'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tauri-macos-arm64-release
+          path: |
+            target/aarch64-apple-darwin/release/bundle/
+
+      # Upload Linux artifacts (AppImage + DEB)
+      - name: Upload Linux artifacts
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tauri-linux-x64-release
+          path: |
+            target/release/bundle/deb/*.deb
+            target/release/bundle/appimage/*.AppImage
+            target/release/bundle/identity-manifest-linux-*.json
+            target/release/bundle/identity-smoke-linux-*.json
+
+  release:
+    needs:
+      - release_policy
+      - build-tauri
+    if: >-
+      needs.release_policy.outputs.should_release == 'true' &&
+      needs.build-tauri.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: get version
+        id: extract_version
+        env:
+          RELEASE_VERSION: ${{ needs.release_policy.outputs.version }}
+          RELEASE_PRERELEASE: ${{ needs.release_policy.outputs.prerelease }}
+        run: |
+          printf 'version=%s\n' "$RELEASE_VERSION" >> "$GITHUB_ENV"
+          printf 'PRERELEASE=%s\n' "$RELEASE_PRERELEASE" >> "$GITHUB_ENV"
+        shell: bash
+
+      - name: Download Windows artifact (portable)
+        uses: actions/download-artifact@v8
+        with:
+          name: tauri-win-portable
+          path: tauri-win-portable
+
+      - name: Download Windows artifact (MSI)
+        uses: actions/download-artifact@v8
+        with:
+          name: tauri-win-msi
+          path: tauri-win-msi
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: tauri-macos-arm64-release
+          path: tauri-macos-arm64-release
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: tauri-linux-x64-release
+          path: tauri-linux-x64-release
+
+      - name: prepare files
+        env:
+          VERSION: ${{ env.version }}
+        run: |
+          version="$VERSION"
+          # Create output directory
+          mkdir -p ./build
+          
+          # Package Windows portable build
+          cd tauri-win-portable
+          zip -r "../build/discord-quest-helper-Windows-x64-$version-portable.zip" .
+          cd ..
+          
+          # Copy Windows MSI installer
+          cp tauri-win-msi/*.msi "./build/discord-quest-helper-Windows-x64-$version-setup.msi"
+          
+          # Package macOS build (find the .dmg file).
+          # softprops/action-gh-release skips missing `files:` entries silently,
+          # so every platform validates its own artifact here instead.
+          cd tauri-macos-arm64-release
+          if [ -d "dmg" ]; then
+            cp dmg/*.dmg "../build/discord-quest-helper-MacOS-arm64-$version.dmg"
+          elif [ -d "macos" ]; then
+            zip -r "../build/discord-quest-helper-MacOS-arm64-$version.zip" macos/
+          else
+            echo "::error::No macOS dmg/ or macos/ output in tauri-macos-arm64-release"
+            exit 1
+          fi
+          cd ..
+
+          # Copy Linux AppImage + DEB (paths are flattened by upload-artifact)
+          appimage=$(find tauri-linux-x64-release -name '*.AppImage' | head -n 1)
+          deb=$(find tauri-linux-x64-release -name '*.deb' | head -n 1)
+          if [ -z "$appimage" ]; then
+            echo "::error::No Linux AppImage found in tauri-linux-x64-release"
+            exit 1
+          fi
+          cp "$appimage" ./build/discord-quest-helper-Linux-x86_64-$version.AppImage
+          if [ -z "$deb" ]; then
+            echo "::error::No Linux .deb found in tauri-linux-x64-release"
+            exit 1
+          fi
+          cp "$deb" ./build/discord-quest-helper-Linux-x86_64-$version.deb
+
+          echo "win_portable=discord-quest-helper-Windows-x64-$version-portable" >> $GITHUB_ENV
+          echo "win_msi=discord-quest-helper-Windows-x64-$version-setup" >> $GITHUB_ENV
+          echo "macos_build_release=discord-quest-helper-MacOS-arm64-$version" >> $GITHUB_ENV
+          echo "linux_build_release=discord-quest-helper-Linux-x86_64-$version" >> $GITHUB_ENV
+
+      - name: Create and Upload Release
+        id: create_release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.version }}
+          name: ${{ env.version }}
+          body_path: ./public/version-desc.txt
+          files: |
+            ./build/${{ env.win_portable }}.zip
+            ./build/${{ env.win_msi }}.msi
+            ./build/${{ env.macos_build_release }}.dmg
+            ./build/${{ env.macos_build_release }}.zip
+            ./build/${{ env.linux_build_release }}.AppImage
+            ./build/${{ env.linux_build_release }}.deb
+          prerelease: ${{ env.PRERELEASE }}
+          draft: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish Release
+        run: gh release edit "${{ env.version }}" --draft=false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
+  reset-develop:
+    name: Reset develop after stable release
+    needs:
+      - release_policy
+      - build-tauri
+      - release
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      needs.release_policy.outputs.should_release == 'true' &&
+      needs.release_policy.outputs.prerelease == 'false' &&
+      needs.build-tauri.result == 'success' &&
+      needs.release.result == 'success'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: reset-develop
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_VERSION: ${{ needs.release_policy.outputs.version }}
+      RELEASE_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Backup and rebuild develop
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          backup_tag="develop-before-${RELEASE_VERSION}"
+          main_sha="${RELEASE_SHA}"
+          backup_tag_needs_push=false
+          develop_sha="$(git ls-remote --heads origin develop | awk 'NR == 1 { print $1 }')"
+
+          # Annotated tags need an identity even when the job only updates refs.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [[ -z "${develop_sha}" ]]; then
+            echo "::error::The develop branch does not exist; refusing to rebuild it without a backup."
+            exit 1
+          fi
+
+          existing_backup_sha="$(git rev-parse --verify --quiet "refs/tags/${backup_tag}^{commit}" || true)"
+          if [[ -n "${existing_backup_sha}" ]]; then
+            if [[ "${develop_sha}" == "${main_sha}" ]]; then
+              echo "::notice::develop already points to ${main_sha}; ${backup_tag} is already present."
+              exit 0
+            fi
+
+            if [[ "${existing_backup_sha}" != "${develop_sha}" ]]; then
+              echo "::error::Backup tag ${backup_tag} already points to ${existing_backup_sha}, but develop is now ${develop_sha}."
+              echo "::error::Refusing to overwrite an existing backup or reset a changed develop branch."
+              exit 1
+            fi
+
+            echo "Backup tag ${backup_tag} already points to the current develop commit."
+          else
+            git tag --annotate "${backup_tag}" "${develop_sha}" \
+              --message "Backup develop before stable release ${RELEASE_VERSION}"
+            backup_tag_needs_push=true
+          fi
+
+          if [[ "${develop_sha}" == "${main_sha}" ]]; then
+            echo "develop already points to the stable release commit ${main_sha}; nothing to reset."
+            exit 0
+          fi
+
+          # This is the safe equivalent of deleting and recreating develop:
+          # update the branch ref in one operation while refusing to overwrite
+          # a concurrent develop push. When the backup tag is new, --atomic
+          # keeps the tag and branch update together.
+          if [[ "${backup_tag_needs_push}" == "true" ]]; then
+            git push --atomic origin \
+              "--force-with-lease=refs/heads/develop:${develop_sha}" \
+              "refs/tags/${backup_tag}" \
+              "${main_sha}:refs/heads/develop"
+            echo "Created backup tag ${backup_tag} at ${develop_sha}."
+          else
+            git push origin \
+              "--force-with-lease=refs/heads/develop:${develop_sha}" \
+              "${main_sha}:refs/heads/develop"
+          fi
+          echo "Rebuilt develop at stable release commit ${main_sha}."

@@ -1,0 +1,377 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type {
+  AuthProgress,
+  CdpStatus,
+  DesktopClientInventory,
+  DesktopClientState,
+  RunningDesktopCdpSession,
+} from '@/api/tauri'
+import {
+  canBeginLogin,
+  classifyCdpAvailability,
+  cdpLoginEndpointError,
+  findCurrentCdpOwnerSession,
+  hasUnchanneledOfficialMacInstallation,
+  installedCdpLaunchTargets,
+  presentAuthProgress,
+  selectionForCdpLaunchTarget,
+  selectionForCurrentCdpOwner,
+  shouldAskCdpLaunchTarget,
+  shouldPollCdp,
+  startCdpPolling,
+  usesVesktopForCdpLogin,
+} from './loginFlow'
+
+function inventory(overrides: Partial<DesktopClientInventory> = {}): DesktopClientInventory {
+  return {
+    officialInstalled: true,
+    vesktopInstalled: true,
+    officialRunning: false,
+    vesktopRunning: false,
+    cdpOwner: 'none',
+    stableInstalled: true,
+    ptbInstalled: false,
+    canaryInstalled: false,
+    stableRunning: false,
+    ptbRunning: false,
+    canaryRunning: false,
+    ...overrides,
+  }
+}
+
+function progress(overrides: Partial<AuthProgress>): AuthProgress {
+  return {
+    phase: 'extracting_tokens',
+    current: null,
+    total: null,
+    valid_accounts: null,
+    ...overrides,
+  }
+}
+
+const offline: CdpStatus = {
+  available: false,
+  connected: false,
+  target_title: null,
+  error: 'connection refused',
+}
+
+describe('login progress presentation', () => {
+  it('preserves real token validation counts', () => {
+    expect(presentAuthProgress(progress({
+      phase: 'validating_tokens',
+      current: 3,
+      total: 7,
+    }))).toEqual({
+      key: 'auth.progress.validating_tokens',
+      params: { current: 3, total: 7 },
+      state: 'running',
+    })
+  })
+
+  it('marks account discovery and completion as successful terminal states', () => {
+    expect(presentAuthProgress(progress({
+      phase: 'accounts_found',
+      current: 4,
+      total: 4,
+      valid_accounts: 2,
+    })).state).toBe('success')
+    expect(presentAuthProgress(progress({ phase: 'complete' })).state).toBe('success')
+  })
+
+  it('marks an empty scan as an error state', () => {
+    expect(presentAuthProgress(progress({
+      phase: 'accounts_found',
+      current: 0,
+      total: 0,
+      valid_accounts: 0,
+    })).state).toBe('error')
+  })
+})
+
+describe('CDP status and polling', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('distinguishes ready, starting, offline, and probe failure states', () => {
+    expect(classifyCdpAvailability(true, null, false)).toBe('checking')
+    expect(classifyCdpAvailability(false, { ...offline, available: true }, false)).toBe('starting')
+    expect(classifyCdpAvailability(false, { ...offline, available: true, connected: true }, false)).toBe('ready')
+    expect(classifyCdpAvailability(false, offline, false)).toBe('offline')
+    expect(classifyCdpAvailability(false, null, true)).toBe('error')
+  })
+
+  it('separates loading and runtime failures from an offline debug endpoint', () => {
+    const runtime = { runtimeStatus: 'loading' as const, webSocketReachable: true, appRootPresent: true,
+      moduleLoaderPresent: false, nativeBridgePresent: false, focused: false, failureStage: null, reasonCode: null }
+    expect(classifyCdpAvailability(false, { ...offline, available: true, runtime }, false)).toBe('starting')
+    for (const runtimeStatus of ['probeFailed', 'unsupported'] as const) {
+      expect(classifyCdpAvailability(false, { ...offline, available: true, runtime: { ...runtime, runtimeStatus } }, false)).toBe('error')
+    }
+  })
+
+  it.each([
+    { description: 'empty target list', target_title: null },
+    { description: 'unrelated Chromium endpoint', target_title: 'Chromium' },
+  ])('reports $description as unavailable instead of loading', ({ target_title }) => {
+    expect(classifyCdpAvailability(false, {
+      available: true,
+      connected: false,
+      target_title,
+      error: 'cdpWithoutDiscordTarget',
+      runtime: {
+        runtimeStatus: 'noCandidate', webSocketReachable: false,
+        appRootPresent: false, moduleLoaderPresent: false, nativeBridgePresent: false,
+        focused: false, failureStage: null, reasonCode: null,
+      },
+    }, false)).toBe('error')
+  })
+
+  it('pauses polling while busy, authenticated, or hidden', () => {
+    expect(shouldPollCdp({ busy: false, authenticated: false, visible: true })).toBe(true)
+    expect(shouldPollCdp({ busy: true, authenticated: false, visible: true })).toBe(false)
+    expect(shouldPollCdp({ busy: false, authenticated: true, visible: true })).toBe(false)
+    expect(shouldPollCdp({ busy: false, authenticated: false, visible: false })).toBe(false)
+  })
+
+  it('runs every five seconds and can be disposed', () => {
+    vi.useFakeTimers()
+    const callback = vi.fn()
+    const stop = startCdpPolling(callback)
+
+    vi.advanceTimersByTime(15_000)
+    expect(callback).toHaveBeenCalledTimes(3)
+
+    stop()
+    vi.advanceTimersByTime(5_000)
+    expect(callback).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('CDP login client copy', () => {
+  it('uses Discord copy unless Vesktop is connected or the only available client', () => {
+    expect(usesVesktopForCdpLogin(null)).toBe(false)
+    expect(usesVesktopForCdpLogin(inventory())).toBe(false)
+    expect(usesVesktopForCdpLogin(inventory({ officialRunning: true, vesktopRunning: true }))).toBe(false)
+    expect(usesVesktopForCdpLogin(inventory({ officialInstalled: false, stableInstalled: false }))).toBe(true)
+    expect(usesVesktopForCdpLogin(inventory({ vesktopRunning: true }))).toBe(false)
+    expect(usesVesktopForCdpLogin(inventory({ officialInstalled: false, stableInstalled: false, vesktopRunning: true }))).toBe(true)
+    expect(usesVesktopForCdpLogin(inventory({ cdpOwner: 'vesktop' }))).toBe(true)
+  })
+})
+
+describe('CDP launch target selection', () => {
+  it('lists only installed official channels and Vesktop', () => {
+    expect(installedCdpLaunchTargets(null)).toEqual([])
+    expect(installedCdpLaunchTargets(inventory())).toEqual(['stable', 'vesktop'])
+    expect(installedCdpLaunchTargets(inventory({
+      ptbInstalled: true,
+      canaryInstalled: true,
+    }))).toEqual(['stable', 'ptb', 'canary', 'vesktop'])
+  })
+
+  it('keeps a valid unchanneled custom macOS Discord installation launchable', () => {
+    const installation = {
+      id: 'discord.official:custom-mac',
+      providerId: 'discord.official',
+      variantId: null,
+      displayName: 'Discord (custom)',
+      source: 'user',
+      launchTarget: {
+        kind: 'macBundle',
+        bundlePath: '/Applications/My Discord.app',
+        executablePath: '/Applications/My Discord.app/Contents/MacOS/Discord',
+      },
+      capabilities: { cdp: true, localToken: true, restoreNormal: true },
+      validation: 'valid',
+    } as DesktopClientState['installations'][number]
+    const snapshot = {
+      installations: [installation],
+    } as DesktopClientState
+
+    expect(hasUnchanneledOfficialMacInstallation(snapshot.installations)).toBe(true)
+    expect(selectionForCdpLaunchTarget(snapshot, 'stable')).toEqual({
+      kind: 'installation',
+      installationId: installation.id,
+    })
+  })
+
+  it('prefers the standard Stable installation when it coexists with a custom bundle', () => {
+    const snapshot = {
+      installations: [
+        {
+          id: 'discord.official:stable',
+          providerId: 'discord.official',
+          variantId: 'stable',
+          displayName: 'Discord',
+          source: 'standardPath',
+          launchTarget: {
+            kind: 'executable',
+            path: '/Applications/Discord.app/Contents/MacOS/Discord',
+            workingDir: '/Applications/Discord.app/Contents/MacOS',
+            prefixArgs: [],
+          },
+          capabilities: { cdp: true, localToken: true, restoreNormal: true },
+          validation: 'valid',
+        },
+        {
+          id: 'discord.official:custom-mac',
+          providerId: 'discord.official',
+          variantId: null,
+          displayName: 'Discord (custom)',
+          source: 'user',
+          launchTarget: {
+            kind: 'macBundle',
+            bundlePath: '/Applications/My Discord.app',
+            executablePath: '/Applications/My Discord.app/Contents/MacOS/Discord',
+          },
+          capabilities: { cdp: true, localToken: true, restoreNormal: true },
+          validation: 'valid',
+        },
+      ],
+    } as DesktopClientState
+
+    expect(selectionForCdpLaunchTarget(snapshot, 'stable')).toEqual({
+      kind: 'provider',
+      providerId: 'discord.official',
+      variantId: 'stable',
+    })
+  })
+
+  it('ignores user-added Stable executables when choosing the custom bundle fallback', () => {
+    const snapshot = {
+      installations: [
+        {
+          id: 'discord.official:user-stable',
+          providerId: 'discord.official',
+          variantId: 'stable',
+          source: 'user',
+          validation: 'valid',
+        },
+        {
+          id: 'discord.official:custom-mac',
+          providerId: 'discord.official',
+          variantId: null,
+          launchTarget: { kind: 'macBundle' },
+          source: 'user',
+          validation: 'valid',
+        },
+      ],
+    } as DesktopClientState
+
+    expect(selectionForCdpLaunchTarget(snapshot, 'stable')).toEqual({
+      kind: 'installation',
+      installationId: 'discord.official:custom-mac',
+    })
+  })
+
+  it('preserves the exact installation for the current CDP owner', () => {
+    const installation = {
+      id: 'discord.official:custom-ptb',
+    } as DesktopClientState['installations'][number]
+    const snapshot = {
+      installations: [installation],
+      processes: [{
+        providerId: 'discord.official',
+        installationId: installation.id,
+        variantId: 'ptb',
+        executablePath: '/Applications/Discord PTB.app/Contents/MacOS/Discord PTB',
+        running: true,
+      }],
+    } as DesktopClientState
+
+    expect(selectionForCurrentCdpOwner(snapshot, {
+      providerId: 'discord.official',
+      installationId: installation.id,
+      variantId: 'ptb',
+    })).toEqual({
+      kind: 'installation',
+      installationId: installation.id,
+    })
+  })
+
+  it('does not choose an owner when multiple sessions claim the same port', () => {
+    const sessions = [
+      {
+        providerId: 'discord.official',
+        installationId: 'discord.official:stable',
+        variantId: 'stable',
+        port: 9223,
+        ownership: 'externalAttached',
+        executablePath: '/Applications/Discord.app/Contents/MacOS/Discord',
+      },
+      {
+        providerId: 'discord.official',
+        installationId: 'discord.official:ptb',
+        variantId: 'ptb',
+        port: 9223,
+        ownership: 'externalAttached',
+        executablePath: '/Applications/Discord PTB.app/Contents/MacOS/Discord PTB',
+      },
+    ] as RunningDesktopCdpSession[]
+
+    expect(findCurrentCdpOwnerSession(sessions, 9223, 'discord.official')).toBeNull()
+  })
+
+  it('asks only when CDP is down and more than one client is installed', () => {
+    expect(shouldAskCdpLaunchTarget(true, ['stable', 'vesktop'])).toBe(false)
+    expect(shouldAskCdpLaunchTarget(false, ['stable'])).toBe(false)
+    expect(shouldAskCdpLaunchTarget(false, ['stable', 'canary', 'vesktop'])).toBe(true)
+  })
+
+})
+
+describe('CDP endpoint recovery', () => {
+  function snapshot(): DesktopClientState {
+    return {
+      endpoint: { port: 9223, status: 'cdpWithoutDiscordTarget', owner: 'official',
+        ownerProviderId: 'discord.official', targetTitle: 'Discord',
+        runtime: { runtimeStatus: 'loading' } },
+      processes: [{ providerId: 'discord.official', installationId: 'stable', running: true }],
+      installations: [{ id: 'stable', providerId: 'discord.official', validation: 'valid',
+        capabilities: { cdp: true } }],
+    } as DesktopClientState
+  }
+
+  it('allows an identified loading client to reach manual recovery', () => {
+    expect(cdpLoginEndpointError(snapshot())).toBeNull()
+  })
+
+  it('keeps unknown, stopped and mismatched loading clients unavailable', () => {
+    const unknown = snapshot()
+    unknown.endpoint.ownerProviderId = null
+    expect(cdpLoginEndpointError(unknown)).toBe('auth.cdp_runtime_loading')
+    const stopped = snapshot()
+    stopped.processes[0].running = false
+    expect(cdpLoginEndpointError(stopped)).toBe('auth.cdp_runtime_loading')
+    const mismatched = snapshot()
+    mismatched.processes[0].installationId = 'unknown'
+    expect(cdpLoginEndpointError(mismatched)).toBe('auth.cdp_runtime_loading')
+  })
+
+  it('does not recover empty or unrelated CDP endpoints even with a known process', () => {
+    const state = snapshot()
+    state.endpoint.runtime!.runtimeStatus = 'noCandidate'
+    expect(cdpLoginEndpointError(state)).toBe('auth.cdp_runtime_unavailable')
+  })
+
+  it('reports a port conflict regardless of runtime and process state', () => {
+    const state = snapshot()
+    state.endpoint.status = 'occupiedNonCdp'
+    expect(cdpLoginEndpointError(state)).toBe('auth.cdp_port_occupied')
+  })
+
+  it.each(['discordReady', 'unreachable'] as const)('allows existing %s handling', status => {
+    const state = snapshot()
+    state.endpoint.status = status
+    expect(cdpLoginEndpointError(state)).toBeNull()
+  })
+})
+
+describe('login operation gate', () => {
+  it('rejects repeated actions until the active operation is released', () => {
+    expect(canBeginLogin(null, false)).toBe(true)
+    expect(canBeginLogin('local', false)).toBe(false)
+    expect(canBeginLogin(null, true)).toBe(false)
+    expect(canBeginLogin(null, false)).toBe(true)
+  })
+})

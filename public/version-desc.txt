@@ -1,0 +1,11 @@
+## ✨ What's Changed
+
+1. Improved Discord compatibility and CDP connection reliability, with more accurate client detection and clearer login and connection errors.
+2. Reduced waiting when starting game quests, with fewer unnecessary page switches in Discord.
+3. Fixed quest cards disappearing when starting a quest or refreshing the list, and added smoother status transitions.
+4. Quests now stop cleanly if the Discord page they use closes or reloads, and returning Discord to normal mode is more reliable.
+5. Bumped default client config:
+    - client version to `1.0.9260`
+    - Electron version to `42.11.8`
+    - default client build number to `625378`
+    - native build number to `92473`
