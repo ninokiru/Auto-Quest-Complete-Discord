@@ -7,14 +7,14 @@
 | Latest  | :white_check_mark: |
 | < Latest | :x:               |
 
-Only the latest release receives security updates. Please keep your installation up to date by downloading the newest version from [GitHub Releases](https://github.com/Masterain98/discord-quest-helper/releases).
+Only the latest release receives security updates. Please keep your installation up to date by downloading the newest version from [GitHub Releases](https://github.com/ninokiru/Auto-Quest-Complete-Discord/releases).
 
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability in Discord Quest Helper, please report it responsibly:
 
 1. **Do NOT** create a public GitHub issue
-2. Use GitHub's [private vulnerability reporting](https://github.com/Masterain98/discord-quest-helper/security/advisories/new) feature
+2. Use GitHub's [private vulnerability reporting](https://github.com/ninokiru/Auto-Quest-Complete-Discord/security/advisories/new) feature
 3. Include detailed steps to reproduce the vulnerability
 4. Allow reasonable time for a fix before public disclosure
 

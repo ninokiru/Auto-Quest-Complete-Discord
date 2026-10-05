@@ -175,7 +175,7 @@ function removeBubble(id: number) {
 
         <a
           href="#"
-          @click.prevent="openExternal('https://github.com/Masterain98/discord-quest-helper')"
+          @click.prevent="openExternal('https://github.com/ninokiru/Auto-Quest-Complete-Discord')"
           class="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2 transition-colors hover:bg-muted/60"
         >
           <span class="flex min-w-0 items-center gap-2">
@@ -191,7 +191,7 @@ function removeBubble(id: number) {
             variant="outline"
             size="sm"
             :class="settingToneClass.info.buttonSoft"
-            @click="openExternal('https://github.com/Masterain98/discord-quest-helper/issues/new/choose')"
+            @click="openExternal('https://github.com/ninokiru/Auto-Quest-Complete-Discord/issues/new/choose')"
           >
             {{ t('settings.feedback') }}
           </Button>

@@ -1,7 +1,9 @@
 name: CI
 
 # Continuous integration checks for every pull request and develop push.
-# Release bundling stays in build-release.yml.
+# Pushes to `main` are covered by verify.yml (fast, single runner): the release
+# workflow only fires when public/version.txt changes, so main commits would
+# otherwise reach no gate at all. Release bundling stays in build-release.yml.
 on:
   pull_request:
     branches:
@@ -10,6 +12,7 @@ on:
   push:
     branches:
       - develop
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -26,6 +29,8 @@ env:
 
 jobs:
   checks:
+    # A hung apt step used to be able to burn the full 6-hour runner limit.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

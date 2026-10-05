@@ -1,0 +1,115 @@
+name: Verify
+
+# Fast gate for `main`. The release workflow only triggers when
+# public/version.txt changes and CI's full matrix runs on develop and pull
+# requests, so a fix pushed straight to main used to reach no gate at all — a
+# formatting diff was first visible three platform builds later.
+#
+# One Linux runner, no bundling, no macOS minutes: it fails in minutes with the
+# exact rustfmt/clippy output.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to main supersedes the previous verification.
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+jobs:
+  quality:
+    name: Format, lint and tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - name: Setup node
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: 'pnpm'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      # src-tauri links against WebKitGTK, so clippy and cargo test need the same
+      # Tauri 2 build dependencies the release build installs.
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            desktop-file-utils \
+            xdg-utils
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Patch package.json / src-tauri/Cargo.toml / tauri.conf.json from
+      # public/version.txt before any Rust step, so the checks see the version
+      # the branch would actually ship.
+      - name: Sync version from public/version.txt
+        run: pnpm run sync-version
+
+      - name: Validate i18n
+        run: pnpm run i18n:check
+
+      - name: Run frontend tests
+        run: pnpm test
+
+      - name: Validate runtime identity policy and audit tools
+        run: |
+          pnpm run check:runtime-identity
+          pnpm run test:identity-audit
+          pnpm run test:packaged-identity
+
+      # `tauri::generate_context!` resolves `frontendDist` (../dist) at compile
+      # time, so the bundle must exist before any cargo step touches src-tauri.
+      - name: Build frontend
+        run: pnpm run build
+
+      - name: Rust format
+        run: |
+          cargo fmt --package discord-cdp-launch-core --package discord-cdp-launcher -- --check
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Rust clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --workspace
+
+      - name: Verify CDP core dependency boundary
+        run: pnpm run check:cdp-core-deps

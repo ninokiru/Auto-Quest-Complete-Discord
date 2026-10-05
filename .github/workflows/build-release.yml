@@ -13,6 +13,12 @@ permissions:
   contents: write
   packages: write
 
+# Two releases racing on the same branch would overwrite each other's GitHub
+# Release, so in-flight publishes queue instead of being cancelled.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_TARGET_DIR: ${{ github.workspace }}/target
@@ -20,6 +26,7 @@ env:
 jobs:
   release_policy:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     outputs:
@@ -58,8 +65,102 @@ jobs:
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
           echo "Release policy: ref=$ref version=$version should_release=$should_release prerelease=$prerelease"
 
-  build-tauri:
+  # Every release-blocking check runs once here instead of three times in the
+  # platform matrix: a single `cargo fmt --check` diff used to cost 3 x (node +
+  # rust + pnpm install + vite build) before any artifact was produced.
+  # Deliberately not gated on should_release, so dispatching this workflow is a
+  # way to validate a branch without bumping public/version.txt.
+  quality:
     needs: release_policy
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - name: Setup node
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: 'pnpm'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      # Tauri 2 build dependencies for Debian/Ubuntu (WebKitGTK 4.1 baseline).
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            desktop-file-utils \
+            xdg-utils
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Patch package.json / src-tauri/Cargo.toml / tauri.conf.json from
+      # public/version.txt before the Rust checks, so clippy, the tests and the
+      # bundle all see the version this release actually ships with.
+      - name: Sync version from public/version.txt
+        run: pnpm run sync-version
+
+      - name: Validate i18n
+        run: pnpm run i18n:check
+
+      - name: Run frontend tests
+        run: pnpm test
+
+      - name: Validate runtime identity policy and audit tools
+        run: |
+          pnpm run check:runtime-identity
+          pnpm run test:identity-audit
+          pnpm run test:packaged-identity
+
+      # `tauri::generate_context!` resolves `frontendDist` (../dist) at compile
+      # time, so the bundle has to exist before any cargo step touches src-tauri.
+      - name: Build frontend
+        run: pnpm run build
+
+      - name: Rust format
+        run: |
+          cargo fmt --package discord-cdp-launch-core --package discord-cdp-launcher -- --check
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Rust clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --workspace
+
+      - name: Verify CDP core dependency boundary
+        run: pnpm run check:cdp-core-deps
+
+  build-tauri:
+    needs:
+      - release_policy
+      - quality
     if: needs.release_policy.outputs.should_release == 'true'
     permissions:
       contents: write
@@ -84,6 +185,7 @@ jobs:
             runner-ext: ''
 
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v6
 
@@ -162,44 +264,18 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # Patch package.json / src-tauri/Cargo.toml / tauri.conf.json from
-      # public/version.txt before the Rust checks, so clippy, the tests and the
-      # bundle all see the version this release actually ships with.
+      # public/version.txt so the bundle ships the version this release names.
+      # fmt, clippy, cargo test, i18n, vitest and the identity audits run once in
+      # the `quality` job above; ci.yml still covers them per platform on push.
       - name: Sync version from public/version.txt
         run: pnpm run sync-version
-
-      - name: Validate i18n
-        run: node scripts/i18n-validate.mjs
-
-      - name: Run frontend tests
-        run: pnpm test
-
-      - name: Validate runtime identity policy and audit tools
-        run: |
-          pnpm run check:runtime-identity
-          pnpm run test:identity-audit
-          pnpm run test:packaged-identity
 
       # `tauri::generate_context!` resolves `frontendDist` (../dist) at
       # compile time, so the bundle must exist before Cargo touches src-tauri.
       - name: Build frontend
         run: pnpm run build
 
-      - name: Rust format
-        run: |
-          cargo fmt --package discord-cdp-launch-core --package discord-cdp-launcher -- --check
-          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-
-      - name: Rust clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-
-      - name: Rust tests
-        run: cargo test --workspace
-
-      - name: Verify CDP core dependency boundary
-        run: pnpm run check:cdp-core-deps
-
-      # Version sync intentionally happens above, before the Rust checks; the
-      # sidecar and bundle steps below consume the already-synced manifests.
+      # The sidecar and bundle steps below consume the already-synced manifests.
       - name: Build runner sidecar
         env:
           TAURI_TARGET_TRIPLE: ${{ matrix.cdp_target }}
@@ -314,13 +390,14 @@ jobs:
             target/release/bundle/identity-smoke-linux-*.json
 
   release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs:
       - release_policy
       - build-tauri
     if: >-
       needs.release_policy.outputs.should_release == 'true' &&
       needs.build-tauri.result == 'success'
-    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
