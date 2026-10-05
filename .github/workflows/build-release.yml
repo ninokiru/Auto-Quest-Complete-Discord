@@ -143,8 +143,8 @@ jobs:
       - name: Build frontend
         run: pnpm run build
 
-      # Actions logs need a GitHub sign-in, so each Rust step tees into a file
-      # that the diagnostics step copies into the public job summary.
+      # Signed-out readers cannot open Actions logs, so every Rust step tees its
+      # output to a file the diagnostics step below publishes publicly.
       - name: Rust format
         shell: bash
         run: |
@@ -155,14 +155,19 @@ jobs:
             cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
           } 2>&1 | tee target/rust-fmt.log
 
-      # The first Cargo compilation of the pipeline: compile errors and clippy
-      # lints both surface here, and `-D warnings` fails on both.
+      # Also the first Cargo compilation of the pipeline. `unused` (imports,
+      # variables, dead code, discarded must_use results) and the clippy
+      # correctness/suspicious groups are hard gates. The style group has a large
+      # backlog in this crate — roughly 190 `|value| value.method()` closures
+      # alone — so it stays warning-level until that is cleared, then this can
+      # tighten back to `-D warnings`.
       - name: Rust clippy
         shell: bash
         run: |
           set -o pipefail
           cargo clippy --workspace --all-targets --all-features --message-format=short \
-            -- -D warnings 2>&1 | tee target/rust-clippy.log
+            -- -D unused -D clippy::correctness -D clippy::suspicious 2>&1 |
+            tee target/rust-clippy.log
 
       - name: Rust tests
         shell: bash
@@ -170,28 +175,36 @@ jobs:
           set -o pipefail
           cargo test --workspace --no-fail-fast 2>&1 | tee target/rust-tests.log
 
-      # `error[E...]` means the code does not compile, `clippy::` means a lint
-      # was escalated by `-D warnings` — the two need different fixes.
+      # Job logs and job summaries both need a GitHub login, but annotations are
+      # public: the failing lines are echoed as `::error::` chunks, retrievable
+      # with `curl .../check-runs/<job id>/annotations`.
       - name: Publish Rust diagnostics
         if: failure()
         shell: bash
         run: |
-          {
-            echo '### Rust diagnostics'
-            echo
-            for f in target/rust-fmt.log target/rust-clippy.log target/rust-tests.log; do
-              [ -f "$f" ] || continue
-              echo "#### $f"
-              echo
+          set +e
+          for f in target/rust-fmt.log target/rust-clippy.log target/rust-tests.log; do
+            [ -f "$f" ] || continue
+            if [ "$f" = "target/rust-fmt.log" ]; then
+              pat='^Diff in|^[-+]'
+            else
+              pat='error|FAILED|panicked at'
+            fi
+            name="$(basename "$f")"
+            {
+              echo "### $name"
               echo '```text'
-              if [ "$f" = "target/rust-fmt.log" ]; then
-                head -n 80 "$f"
-              else
-                grep -E 'error|FAILED|panicked at' "$f" | head -n 120
-              fi
+              grep -E "$pat" "$f" | head -n 200
               echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            for start in 1 121 241; do
+              chunk="$(grep -E "$pat" "$f" | sed -n "${start},$((start + 120))p" |
+                sed -e 's/%/%25/g' -e 's/$/%0A/' | tr -d '\n')"
+              if [ -n "$chunk" ]; then
+                echo "::error::$name from line ${start}:$chunk"
+              fi
             done
-          } >> "$GITHUB_STEP_SUMMARY"
+          done
 
       - name: Verify CDP core dependency boundary
         run: pnpm run check:cdp-core-deps

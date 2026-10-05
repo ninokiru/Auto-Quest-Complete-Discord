@@ -621,6 +621,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("dqh-game-history-{}.json", uuid::Uuid::new_v4()));
         let first = SimulationHistory::default();
+        let game = "Game A";
         first.ensure_loaded(&path).await.unwrap();
         {
             let mut runtime = first.runtime.lock().await;
@@ -631,9 +632,7 @@ mod tests {
                 "Game A",
                 path.clone(),
             ));
-            let _ = SimulationHistory::add_elapsed(
-                &mut runtime, "account-a", "app-a", "Game A", 125,
-            );
+            let _ = SimulationHistory::add_elapsed(&mut runtime, "account-a", "app-a", game, 125);
             runtime.active.clear();
             SimulationHistory::save_locked(&runtime, &path).unwrap();
         }
