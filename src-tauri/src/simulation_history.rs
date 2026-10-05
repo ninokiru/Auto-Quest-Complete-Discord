@@ -604,8 +604,8 @@ mod tests {
     #[test]
     fn elapsed_time_is_isolated_by_account_and_app() {
         let mut runtime = HistoryRuntime::default();
-        SimulationHistory::add_elapsed(&mut runtime, "account-a", "app-a", "Game A", 65);
-        SimulationHistory::add_elapsed(&mut runtime, "account-b", "app-a", "Game A", 30);
+        let _ = SimulationHistory::add_elapsed(&mut runtime, "account-a", "app-a", "Game A", 65);
+        let _ = SimulationHistory::add_elapsed(&mut runtime, "account-b", "app-a", "Game A", 30);
         assert_eq!(
             runtime.data.accounts["account-a"]["app-a"].total_seconds,
             65
@@ -631,7 +631,9 @@ mod tests {
                 "Game A",
                 path.clone(),
             ));
-            SimulationHistory::add_elapsed(&mut runtime, "account-a", "app-a", "Game A", 125);
+            let _ = SimulationHistory::add_elapsed(
+                &mut runtime, "account-a", "app-a", "Game A", 125,
+            );
             runtime.active.clear();
             SimulationHistory::save_locked(&runtime, &path).unwrap();
         }
