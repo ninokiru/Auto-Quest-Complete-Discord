@@ -521,7 +521,7 @@ impl DiscordApiClient {
             };
 
             let retry_after = serde_json::from_str::<serde_json::Value>(&last_body)
-                .ok
+                .ok()
                 .and_then(|value| value.get("retry_after").and_then(|value| value.as_f64()))
                 .unwrap_or(1.0 + attempt as f64)
                 .clamp(0.0, 60.0);
