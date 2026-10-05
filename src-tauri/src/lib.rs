@@ -1609,7 +1609,9 @@ fn ensure_simulated_game_can_start(executable_name: &str) -> Result<(), String> 
     let running = game_simulator::running_simulated_game_names();
     let limit = game_simulator::MAX_PARALLEL_SIMULATED_GAMES;
     if running.len() >= limit {
-        return Err(format!("At most {limit} simulated games can run at the same time"));
+        return Err(format!(
+            "At most {limit} simulated games can run at the same time"
+        ));
     }
     Ok(())
 }

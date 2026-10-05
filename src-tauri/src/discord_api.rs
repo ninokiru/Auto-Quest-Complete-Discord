@@ -515,7 +515,9 @@ impl DiscordApiClient {
 
             last_body = response.text().await.unwrap_or_default();
             let Some(next_builder) = retry_builder else {
-                anyhow::bail!("Discord rate limited (429) and request is not retryable: {last_body}");
+                anyhow::bail!(
+                    "Discord rate limited (429) and request is not retryable: {last_body}"
+                );
             };
 
             let retry_after = serde_json::from_str::<serde_json::Value>(&last_body)

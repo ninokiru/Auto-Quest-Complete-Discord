@@ -724,7 +724,9 @@ pub fn is_simulated_game_running(executable_name: &str) -> bool {
         .rsplit(['/', '\\'])
         .next()
         .unwrap_or(executable_name);
-    running_simulated_game_names().iter().any(|name| name == key)
+    running_simulated_game_names()
+        .iter()
+        .any(|name| name == key)
 }
 
 /// Stop **all** tracked simulated game processes.

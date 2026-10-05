@@ -606,8 +606,14 @@ mod tests {
         let mut runtime = HistoryRuntime::default();
         SimulationHistory::add_elapsed(&mut runtime, "account-a", "app-a", "Game A", 65);
         SimulationHistory::add_elapsed(&mut runtime, "account-b", "app-a", "Game A", 30);
-        assert_eq!(runtime.data.accounts["account-a"]["app-a"].total_seconds, 65);
-        assert_eq!(runtime.data.accounts["account-b"]["app-a"].total_seconds, 30);
+        assert_eq!(
+            runtime.data.accounts["account-a"]["app-a"].total_seconds,
+            65
+        );
+        assert_eq!(
+            runtime.data.accounts["account-b"]["app-a"].total_seconds,
+            30
+        );
     }
 
     #[tokio::test]
@@ -618,9 +624,13 @@ mod tests {
         first.ensure_loaded(&path).await.unwrap();
         {
             let mut runtime = first.runtime.lock().await;
-            runtime
-                .active
-                .push(active_usage(1, "account-a", "app-a", "Game A", path.clone()));
+            runtime.active.push(active_usage(
+                1,
+                "account-a",
+                "app-a",
+                "Game A",
+                path.clone(),
+            ));
             SimulationHistory::add_elapsed(&mut runtime, "account-a", "app-a", "Game A", 125);
             runtime.active.clear();
             SimulationHistory::save_locked(&runtime, &path).unwrap();
@@ -629,7 +639,10 @@ mod tests {
         let recovered = SimulationHistory::default();
         recovered.ensure_loaded(&path).await.unwrap();
         let runtime = recovered.runtime.lock().await;
-        assert_eq!(runtime.data.accounts["account-a"]["app-a"].total_seconds, 125);
+        assert_eq!(
+            runtime.data.accounts["account-a"]["app-a"].total_seconds,
+            125
+        );
         drop(runtime);
 
         let _ = std::fs::remove_file(&path);
@@ -784,8 +797,7 @@ mod tests {
 
     #[tokio::test]
     async fn finish_one_records_only_the_selected_segment() {
-        let path =
-            std::env::temp_dir().join(format!("dqh-parallel-{}.json", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("dqh-parallel-{}.json", uuid::Uuid::new_v4()));
         let history = SimulationHistory::default();
         history.ensure_loaded(&path).await.unwrap();
         {
