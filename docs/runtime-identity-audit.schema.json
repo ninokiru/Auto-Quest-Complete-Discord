@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Masterain98/discord-quest-helper/schemas/runtime-identity-audit.schema.json",
+  "$id": "https://github.com/ninokiru/Auto-Quest-Complete-Discord/schemas/runtime-identity-audit.schema.json",
   "title": "RuntimeIdentityCliAudit",
   "description": "Output contract for scripts/audit-runtime-identity.sh. Interactive debug exports use runtime-identity-debug-audit.schema.json.",
   "type": "object",

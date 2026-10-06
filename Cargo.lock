@@ -999,8 +999,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "discord-quest-helper"
-version = "0.10.4"
+name = "auto-quest-complete-discord"
+version = "0.0.1"
 dependencies = [
  "aes",
  "aes-gcm",

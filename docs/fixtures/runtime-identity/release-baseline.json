@@ -5,7 +5,7 @@
   "runtimeNamespace": "blueorbit",
   "linux": {
     "comm": "meridian",
-    "desktopFileId": "com.masterain.discord-quest-helper.desktop",
+    "desktopFileId": "com.ninokiru.auto-quest-complete-discord.desktop",
     "windowIdentity": {
       "x11WmClass": "meridian",
       "waylandAppId": "meridian"
@@ -13,8 +13,8 @@
   },
   "macos": {
     "bundleExecutable": "meridian",
-    "bundleDisplayName": "Discord Quest Helper",
-    "bundleIdentifier": "com.masterain.discord-quest-helper"
+    "bundleDisplayName": "Auto Quest Complete Discord",
+    "bundleIdentifier": "com.ninokiru.auto-quest-complete-discord"
   },
   "fingerprintFields": [
     "browser",

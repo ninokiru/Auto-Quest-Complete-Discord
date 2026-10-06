@@ -33,13 +33,13 @@ test('configured artifact identities satisfy the stable naming policy', () => {
 });
 
 test('product names and random-looking hex names fail internal validation', () => {
-  assert.equal(validateInternalName('discord-quest-helper', 'discord-quest-helper'), false);
+  assert.equal(validateInternalName('auto-quest-complete-discord', 'auto-quest-complete-discord'), false);
   assert.equal(validateInternalName('abcdef123456', 'abcdef123456'), false);
   assert.equal(validateInternalName('deadbeef', 'deadbeef'), false);
 });
 
 test('public identity remains allowed outside internal executable metadata', () => {
-  assert.equal(IDENTITY.publicName, 'Discord Quest Helper');
+  assert.equal(IDENTITY.publicName, 'Auto Quest Complete Discord');
   assert.equal(containsProductToken(IDENTITY.publicName), true);
 });
 
@@ -64,11 +64,11 @@ test('Linux AppDir audit requires desktop integration with the neutral runtime',
   Buffer.from('89504e470d0a1a0a', 'hex').copy(pngHeader);
   pngHeader.writeUInt32BE(64, 16);
   pngHeader.writeUInt32BE(64, 20);
-  writeFileSync(join(iconDir, 'com.masterain.discord-quest-helper.png'), pngHeader);
+  writeFileSync(join(iconDir, 'com.ninokiru.auto-quest-complete-discord.png'), pngHeader);
   writeFileSync(join(desktopDir, 'public.desktop'), `[Desktop Entry]
-Name=Discord Quest Helper
+Name=Auto Quest Complete Discord
 Exec=meridian
-Icon=com.masterain.discord-quest-helper
+Icon=com.ninokiru.auto-quest-complete-discord
 StartupWMClass=meridian
 Terminal=false
 Type=Application

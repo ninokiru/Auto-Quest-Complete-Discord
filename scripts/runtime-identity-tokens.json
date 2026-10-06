@@ -4,15 +4,19 @@
     "macosSigningEnabled": false
   },
   "identity": {
-    "publicName": "Discord Quest Helper",
-    "publicBinary": "discord-quest-helper",
-    "bundleIdentifier": "com.masterain.discord-quest-helper",
+    "publicName": "Auto Quest Complete Discord",
+    "publicBinary": "auto-quest-complete-discord",
+    "bundleIdentifier": "com.ninokiru.auto-quest-complete-discord",
     "mainBinary": "meridian",
     "bridgeBinary": "waybridge",
     "runnerBuildBinary": "stagecraft",
     "runtimeNamespace": "blueorbit"
   },
   "tokens": [
+    "auto-quest-complete-discord",
+    "auto_quest_complete_discord",
+    "auto quest complete discord",
+    "aqcd",
     "discord-quest-helper",
     "discord_quest_helper",
     "discord quest helper",

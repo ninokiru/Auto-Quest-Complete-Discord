@@ -41,7 +41,7 @@ export function validateConfiguration() {
     `Linux mainBinaryName must be ${expected.main}`, failures);
   requireMatch(linux.app?.enableGTKAppId === false,
     'Linux must not expose the product identifier as the GTK app ID', failures);
-  requireMatch(linux.bundle?.linux?.deb?.desktopTemplate === 'linux/discord-quest-helper.desktop.hbs',
+  requireMatch(linux.bundle?.linux?.deb?.desktopTemplate === 'linux/auto-quest-complete-discord.desktop.hbs',
     'Linux DEB must use the audited desktop entry template', failures);
   requireMatch(macos.mainBinaryName === expected.main,
     `macOS mainBinaryName must be ${expected.main}`, failures);

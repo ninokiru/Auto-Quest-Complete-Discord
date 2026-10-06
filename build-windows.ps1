@@ -1,4 +1,4 @@
-# Discord Quest Helper - Build Script
+# Auto Quest Complete Discord - Build Script
 # This script builds and packages the portable version of the application
 
 param(
@@ -13,7 +13,7 @@ $ProjectRoot = $PSScriptRoot
 Set-Location $ProjectRoot
 
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  Discord Quest Helper Build Script" -ForegroundColor Cyan
+Write-Host "  Auto Quest Complete Discord Build Script" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -30,7 +30,7 @@ Write-Host ""
 # Define paths
 $SrcTauri = Join-Path $ProjectRoot "src-tauri"
 $ReleaseDir = Join-Path $ProjectRoot "target\release"
-$OutputZip = Join-Path $ProjectRoot "discord-quest-helper-v$Version.zip"
+$OutputZip = Join-Path $ProjectRoot "auto-quest-complete-discord-v$Version.zip"
 $TempDir = Join-Path $ProjectRoot "build-temp"
 
 # Step 1: Build src-runner
@@ -66,11 +66,11 @@ if (Test-Path $TempDir) {
 }
 
 # Create directory structure
-$PackageDir = Join-Path $TempDir "discord-quest-helper"
+$PackageDir = Join-Path $TempDir "auto-quest-complete-discord"
 New-Item -ItemType Directory -Force -Path $PackageDir | Out-Null
 
 # Copy files (runner is embedded in the main executable via include_bytes!)
-$MainExe = Join-Path $ReleaseDir "discord-quest-helper.exe"
+$MainExe = Join-Path $ReleaseDir "auto-quest-complete-discord.exe"
 $CdpLauncher = Join-Path $SrcTauri "binaries\waybridge-x86_64-pc-windows-msvc.exe"
 
 if (-not (Test-Path $MainExe)) {
@@ -80,7 +80,7 @@ if (-not (Test-Path $CdpLauncher)) {
     throw "Runtime bridge sidecar not found: $CdpLauncher"
 }
 
-Write-Host "  Copying discord-quest-helper.exe..." -ForegroundColor DarkGray
+Write-Host "  Copying auto-quest-complete-discord.exe..." -ForegroundColor DarkGray
 Copy-Item $MainExe -Destination $PackageDir
 # Installed and portable runs look the bridge up under its base name
 # (see cdp_launcher_binary_names() in src-tauri/src/lib.rs).

@@ -1,4 +1,4 @@
-# Contributing to Discord Quest Helper
+# Contributing to Auto Quest Complete Discord
 
 Thank you for your interest in contributing! This guide will help you get started.
 
@@ -15,8 +15,8 @@ Thank you for your interest in contributing! This guide will help you get starte
 
 ```bash
 # Clone repository
-git clone https://github.com/Masterain98/discord-quest-helper.git
-cd discord-quest-helper
+git clone https://github.com/ninokiru/Auto-Quest-Complete-Discord.git
+cd auto-quest-complete-discord
 
 # Install dependencies
 pnpm install
@@ -64,7 +64,7 @@ Output location: `target/release/bundle/`
 ## 🏗️ Project Structure
 
 ```
-discord-quest-helper/
+auto-quest-complete-discord/
 ├── src/                              # Vue.js frontend
 │   ├── api/tauri.ts                  # Tauri IPC bridge & TypeScript interfaces
 │   ├── components/                   # Reusable UI components

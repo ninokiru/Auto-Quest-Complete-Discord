@@ -680,7 +680,7 @@ mod tests {
         assert_eq!(first, second);
         assert!(!contains_product_token(&first.to_string_lossy()));
 
-        let product_named_parent = Path::new(r"C:\Users\discord-quest-helper\AppData\Local");
+        let product_named_parent = Path::new(r"C:\Users\auto-quest-complete-discord\AppData\Local");
         assert_eq!(
             persistent_webview_data_dir_for(product_named_parent).unwrap(),
             product_named_parent
@@ -691,7 +691,7 @@ mod tests {
 
     #[test]
     fn rejects_product_exe_name() {
-        let exe = env::temp_dir().join("discord-quest-helper.exe");
+        let exe = env::temp_dir().join("auto-quest-complete-discord.exe");
         assert!(!is_stealth_copy_path(&exe));
     }
 

@@ -302,7 +302,7 @@ fn fingerprint_audit(raw: Option<String>) -> FingerprintAudit {
 fn platform_details() -> Value {
     let argv0 = std::env::args_os().next().map(PathBuf::from);
     let proc_exe = fs::read_link("/proc/self/exe").ok();
-    let desktop_id = "com.masterain.discord-quest-helper.desktop";
+    let desktop_id = "com.ninokiru.auto-quest-complete-discord.desktop";
     let desktop_installed = runtime_data_root()
         .is_some_and(|root| root.join("applications").join(desktop_id).is_file())
         || Path::new("/usr/share/applications")
@@ -793,7 +793,7 @@ mod tests {
     #[test]
     fn observed_window_identity_mismatch_fails_comparison() {
         let (_, observed, unavailable, differences) = compare_linux_window_identity(
-            &window_identity_details(json!("discord-quest-helper"), json!("meridian")),
+            &window_identity_details(json!("auto-quest-complete-discord"), json!("meridian")),
             &window_identity_baseline(),
         );
         assert_eq!(observed, Some(false));

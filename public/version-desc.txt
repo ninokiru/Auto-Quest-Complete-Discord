@@ -1,11 +1,40 @@
-## ✨ What's Changed
+## 🎮 Auto Quest Complete Discord
 
-1. Improved Discord compatibility and CDP connection reliability, with more accurate client detection and clearer login and connection errors.
-2. Reduced waiting when starting game quests, with fewer unnecessary page switches in Discord.
-3. Fixed quest cards disappearing when starting a quest or refreshing the list, and added smoother status transitions.
-4. Quests now stop cleanly if the Discord page they use closes or reloads, and returning Discord to normal mode is more reliable.
-5. Bumped default client config:
-    - client version to `1.0.9260`
-    - Electron version to `42.11.8`
-    - default client build number to `625378`
-    - native build number to `92473`
+Auto-complete Discord **video, stream and game quests** from one window. Tauri 2 + Rust behind the scenes, Vue 3 on the surface, and no cloud service in between: everything runs on your machine.
+
+### What it does
+
+- **Three ways to sign in** — auto-detect the Discord profiles on your computer, connect over CDP to Discord or Vesktop, or paste a token yourself.
+- **Video & stream quests** — press start once; progress keeps updating in the background while you keep using Discord.
+- **Game quests without the game** — the built-in simulator pretends to be the game client, so nothing has to be downloaded or installed.
+- **Up to 5 quests in parallel** — start several at once and stop any single one of them without touching the others.
+- **Multi-account** — switch between Discord accounts, each with its own quest list and history.
+- **Filters & diagnostics** — filter by reward type and completion state, then use the built-in connection diagnostics when something refuses to start.
+- **16 interface languages** — English, Vietnamese, Chinese (Simplified and Traditional), Japanese, Korean, Russian, Spanish, German, French, Indonesian, Polish, Portuguese (Brazil and Portugal), Thai, Turkish.
+
+### About this release
+
+Version numbers restart at **0.0.1**. This build is a renamed continuation of `discord-quest-helper` (MIT licensed), rebranded to **Auto Quest Complete Discord** and maintained at [ninokiru/Auto-Quest-Complete-Discord](https://github.com/ninokiru/Auto-Quest-Complete-Discord) — the old numbering does not carry over.
+
+- Application name, window title, executable, installers and data directory all use the new name.
+- Update checks and issue links now point at this repository.
+- Settings are stored under the new identifier, so sign in once again after upgrading.
+
+### Windows SmartScreen / Defender
+
+These binaries are **not code-signed**. The app rewrites its own process identity and reads locally stored Discord credentials, which is exactly what heuristic scanners flag, so Defender may quarantine the download and SmartScreen may block the first launch. Confirm the file came from this repository, choose **More info → Run anyway**, and add the app folder to Defender's exclusions if it keeps deleting the file.
+
+### Assets
+
+| File | Use |
+| --- | --- |
+| `auto-quest-complete-discord-Windows-x64-0.0.1-setup.exe` | Windows installer (NSIS) |
+| `auto-quest-complete-discord-Windows-x64-0.0.1-setup.msi` | Windows installer (MSI) |
+| `auto-quest-complete-discord-Windows-x64-0.0.1-portable.zip` | Windows portable, no installation |
+| `auto-quest-complete-discord-MacOS-arm64-0.0.1.dmg` | macOS Apple Silicon installer |
+| `auto-quest-complete-discord-MacOS-arm64-0.0.1.zip` | macOS Apple Silicon portable app |
+| `auto-quest-complete-discord-Linux-x86_64-0.0.1.deb` | Debian / Ubuntu package |
+| `auto-quest-complete-discord-Linux-x86_64-0.0.1.AppImage` | Any other x86_64 Linux distribution |
+
+> [!WARNING]
+> Automating Discord quests can violate Discord's Terms of Service and may put your account at risk. Use it on an account you are prepared to lose.

@@ -1,9 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2.0.0",
-  "productName": "Discord Quest Helper",
-  "mainBinaryName": "discord-quest-helper",
-  "version": "0.10.4",
-  "identifier": "com.masterain.discord-quest-helper",
+  "productName": "Auto Quest Complete Discord",
+  "mainBinaryName": "auto-quest-complete-discord",
+  "version": "0.0.1",
+  "identifier": "com.ninokiru.auto-quest-complete-discord",
   "build": {
     "beforeDevCommand": "pnpm run dev",
     "devUrl": "http://localhost:1420",
@@ -15,7 +15,7 @@
       {
         "label": "main",
         "create": false,
-        "title": "Discord Quest Helper",
+        "title": "Auto Quest Complete Discord",
         "width": 1200,
         "height": 800,
         "minWidth": 800,

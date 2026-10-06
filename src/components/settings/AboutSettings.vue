@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { AlertTriangle, CheckCircle2, ExternalLink, Info, Link2, XCircle } from 'lucide-vue-next'
+import { computed, ref } from 'vue'
+import { AlertTriangle, CheckCircle2, ExternalLink, Info, Link2, ShieldAlert, Sparkles, XCircle } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { open } from '@tauri-apps/plugin-shell'
 import {
@@ -26,6 +26,15 @@ import { isDebugModeEnabled, persistDebugMode } from '@/utils/debugMode'
 
 const { t } = useI18n()
 const versionStore = useVersionStore()
+
+const aboutFeatures = computed(() => [
+  t('settings.about_feature_login'),
+  t('settings.about_feature_video'),
+  t('settings.about_feature_game'),
+  t('settings.about_feature_parallel'),
+  t('settings.about_feature_accounts'),
+  t('settings.about_feature_diagnostics'),
+])
 
 const emit = defineEmits<{
   debugUnlocked: []
@@ -141,7 +150,7 @@ function removeBubble(id: number) {
             @click="handleVersionTapWithBubble"
             title="Version Info"
           >
-            Discord Quest Helper v{{ versionStore.currentVersion }}
+            Auto Quest Complete Discord v{{ versionStore.currentVersion }}
             <img
               v-for="bubble in logoBubbles"
               :key="bubble.id"
@@ -173,6 +182,22 @@ function removeBubble(id: number) {
 
         <p>{{ t('settings.about_desc') }}</p>
 
+        <div class="space-y-2">
+          <p class="font-medium text-foreground">{{ t('settings.about_features_title') }}</p>
+          <ul class="space-y-1.5">
+            <li v-for="feature in aboutFeatures" :key="feature" class="flex items-start gap-2">
+              <Sparkles class="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+              <span>{{ feature }}</span>
+            </li>
+          </ul>
+        </div>
+
+        <p>{{ t('settings.about_fork') }}</p>
+
+        <SettingsStatusPanel tone="info" :icon="ShieldAlert">
+          {{ t('settings.about_defender') }}
+        </SettingsStatusPanel>
+
         <a
           href="#"
           @click.prevent="openExternal('https://github.com/ninokiru/Auto-Quest-Complete-Discord')"
@@ -181,7 +206,7 @@ function removeBubble(id: number) {
           <span class="flex min-w-0 items-center gap-2">
             <img src="/icons/github-mark.svg" alt="GitHub" class="h-5 w-5 shrink-0 dark:hidden" />
             <img src="/icons/github-mark-white.svg" alt="GitHub" class="hidden h-5 w-5 shrink-0 dark:block" />
-            <span class="truncate text-primary">Masterain98/discord-quest-helper</span>
+            <span class="truncate text-primary">ninokiru/Auto-Quest-Complete-Discord</span>
           </span>
           <ExternalLink class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         </a>

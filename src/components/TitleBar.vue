@@ -57,7 +57,7 @@ async function handleDragStart(e: MouseEvent) {
     >
         <img src="/icons/logo.png" alt="logo" class="w-4 h-4 pointer-events-none" />
         <span class="text-xs font-medium text-muted-foreground pointer-events-none">
-          Discord Quest Helper <span class="opacity-70 ml-1">v{{ versionStore.currentVersion }}</span>
+          Auto Quest Complete Discord <span class="opacity-70 ml-1">v{{ versionStore.currentVersion }}</span>
         </span>
     </div>
 

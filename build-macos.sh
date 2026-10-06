@@ -1,5 +1,5 @@
 #!/bin/bash
-# Discord Quest Helper - macOS Build Script
+# Auto Quest Complete Discord - macOS Build Script
 # This script builds and packages the application for macOS
 
 set -Eeuo pipefail
@@ -18,7 +18,7 @@ GRAY='\033[0;90m'
 NC='\033[0m' # No Color
 
 echo -e "${CYAN}========================================${NC}"
-echo -e "${CYAN}  Discord Quest Helper Build Script${NC}"
+echo -e "${CYAN}  Auto Quest Complete Discord Build Script${NC}"
 echo -e "${CYAN}  (macOS)${NC}"
 echo -e "${CYAN}========================================${NC}"
 echo ""
@@ -137,14 +137,14 @@ if [ "$SKIP_TAURI_BUILD" = false ]; then
         --artifact "$APP_FILE" \
         --output "$RELEASE_DIR/identity-manifest.json"
 
-    SYMBOL_ARCHIVE="$RELEASE_DIR/discord-quest-helper-macos-symbols-$VERSION.zip"
+    SYMBOL_ARCHIVE="$RELEASE_DIR/auto-quest-complete-discord-macos-symbols-$VERSION.zip"
     symbol_paths=()
     # Only the application binary can emit debug symbols: `[profile.release]`
     # packs dSYMs, while `[profile.sidecar-release]` sets `strip = "symbols"`,
     # so the runtime bridge and the runner never produce a *.dSYM bundle.
     while IFS= read -r path; do symbol_paths+=("$path"); done < <(
         find "$PROJECT_ROOT/target" -type d \
-            \( -name 'meridian*.dSYM' -o -name 'discord_quest_helper-*.dSYM' \) \
+            \( -name 'meridian*.dSYM' -o -name 'auto-quest-complete-discord-*.dSYM' -o -name 'auto_quest_complete_discord-*.dSYM' \) \
             -prune
     )
     if [ ${#symbol_paths[@]} -gt 0 ]; then

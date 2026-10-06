@@ -9,6 +9,10 @@ pub const RUNTIME_RUNNER_BUILD_NAME: &str = "stagecraft";
 pub const MACOS_SIGNING_ENABLED: bool = false;
 
 pub const PRODUCT_TOKENS: &[&str] = &[
+    "auto-quest-complete-discord",
+    "auto_quest_complete_discord",
+    "auto quest complete discord",
+    "aqcd",
     "discord-quest-helper",
     "discord_quest_helper",
     "discord quest helper",

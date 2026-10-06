@@ -156,7 +156,7 @@ pub fn runtime_window_title() -> String {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        "Discord Quest Helper".into()
+        "Auto Quest Complete Discord".into()
     }
 }
 

@@ -35,7 +35,7 @@ pub(crate) fn enable_dpi_awareness() {}
 use std::process::Command;
 
 #[cfg(target_os = "linux")]
-const LINUX_ICON_NAME: &str = "com.masterain.discord-quest-helper.cdp";
+const LINUX_ICON_NAME: &str = "com.ninokiru.auto-quest-complete-discord.cdp";
 
 #[cfg(target_os = "linux")]
 fn zenity_icon_flag() -> &'static str {

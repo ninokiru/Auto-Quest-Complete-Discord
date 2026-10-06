@@ -1,9 +1,9 @@
 <div align="center">
 
-<h1>Discord Quest Helper</h1>
+<h1>Auto Quest Complete Discord</h1>
 
 <p align="center">
-  <img src="src-tauri/icons/icon.png" alt="Discord Quest Helper logo" width="150">
+  <img src="src-tauri/icons/icon.png" alt="Auto Quest Complete Discord logo" width="150">
 </p>
 
 <p><strong>🎮 Automate your Discord Quests with one click</strong></p>
@@ -13,11 +13,11 @@
 <p>⭐ <strong>If you find this helpful, please give it a star!</strong> ⭐</p>
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue.svg)](https://github.com/Masterain98/discord-quest-helper/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue.svg)](https://github.com/ninokiru/Auto-Quest-Complete-Discord/releases)
 [![Tauri](https://img.shields.io/badge/tauri-2-blue.svg)](https://tauri.app/)
 [![Vue](https://img.shields.io/badge/vue-3.5-green.svg)](https://vuejs.org/)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
-[![GitHub Release](https://img.shields.io/github/v/release/Masterain98/discord-quest-helper?label=latest%20release&color=41b883)](https://github.com/Masterain98/discord-quest-helper/releases/latest)
+[![GitHub Release](https://img.shields.io/github/v/release/ninokiru/Auto-Quest-Complete-Discord?label=latest%20release&color=41b883)](https://github.com/ninokiru/Auto-Quest-Complete-Discord/releases/latest)
 
 <br>
 
@@ -32,33 +32,45 @@
 
 ### Download & Run
 
-Download the latest build from [GitHub Releases](https://github.com/Masterain98/discord-quest-helper/releases/latest).
+Download the latest build from [GitHub Releases](https://github.com/ninokiru/Auto-Quest-Complete-Discord/releases/latest).
 
 | Platform | Release file | Instructions |
 | --- | --- | --- |
-| Windows x64 Installer | `discord-quest-helper-Windows-x64-<version>-setup.msi` | Open the MSI installer. |
-| Windows x64 Portable | `discord-quest-helper-Windows-x64-<version>-portable.zip` | Extract the ZIP and run `discord-quest-helper.exe`. |
-| macOS Apple Silicon Installer | `discord-quest-helper-MacOS-arm64-<version>.dmg` | Open the DMG and drag the app to Applications. If macOS blocks it, run the quarantine-removal command below. |
-| Linux x86_64 Installer | `discord-quest-helper-Linux-x86_64-<version>.deb` | Install the Debian package with the command below. |
-| Linux x86_64 Portable | `discord-quest-helper-Linux-x86_64-<version>.AppImage` | Make the AppImage executable and run it with the commands below. |
+| Windows x64 Installer | `auto-quest-complete-discord-Windows-x64-<version>-setup.exe` | Run the NSIS installer. |
+| Windows x64 Installer (MSI) | `auto-quest-complete-discord-Windows-x64-<version>-setup.msi` | Open the MSI installer, e.g. for scripted deployment with `msiexec`. |
+| Windows x64 Portable | `auto-quest-complete-discord-Windows-x64-<version>-portable.zip` | Extract the ZIP and run `auto-quest-complete-discord.exe`; keep `waybridge.exe` beside it. |
+| macOS Apple Silicon Installer | `auto-quest-complete-discord-MacOS-arm64-<version>.dmg` | Open the DMG and drag the app to Applications. If macOS blocks it, run the quarantine-removal command below. |
+| macOS Apple Silicon Portable | `auto-quest-complete-discord-MacOS-arm64-<version>.zip` | Unzip and move `Auto Quest Complete Discord.app` to Applications. |
+| Linux x86_64 Installer | `auto-quest-complete-discord-Linux-x86_64-<version>.deb` | Install the Debian package with the command below. |
+| Linux x86_64 Portable | `auto-quest-complete-discord-Linux-x86_64-<version>.AppImage` | Make the AppImage executable and run it with the commands below. |
 
 On macOS, remove the quarantine attribute if needed:
 
 ```bash
-xattr -cr "/Applications/Discord Quest Helper.app"
+xattr -cr "/Applications/Auto Quest Complete Discord.app"
 ```
+
+### Windows Defender and SmartScreen
+
+Releases are **not code-signed** — signing certificates cost money and this project stays free. An unsigned binary that also rewrites its own process identity and reads locally stored credentials looks exactly like malware to heuristic scanners, so Defender may quarantine the download and SmartScreen may show "Windows protected your PC". That is a false positive, not a detected infection.
+
+1. Confirm the file came from this repository's Releases page.
+2. On the SmartScreen dialog choose **More info → Run anyway**.
+3. If Defender removed the file, restore it from quarantine and add its folder to **Virus & threat protection → Exclusions** before launching again.
+
+Every published build comes from the commit tagged with that version, and the GitHub Actions log for the run is public, so the binary can be traced back to this source tree.
 
 On Linux, install the Debian package like this:
 
 ```bash
-sudo apt install ./discord-quest-helper-Linux-x86_64-<version>.deb
+sudo apt install ./auto-quest-complete-discord-Linux-x86_64-<version>.deb
 ```
 
 Or run the portable AppImage like this:
 
 ```bash
-chmod +x discord-quest-helper-Linux-x86_64-<version>.AppImage
-./discord-quest-helper-Linux-x86_64-<version>.AppImage
+chmod +x auto-quest-complete-discord-Linux-x86_64-<version>.AppImage
+./auto-quest-complete-discord-Linux-x86_64-<version>.AppImage
 ```
 
 > [!NOTE]
@@ -85,9 +97,10 @@ chmod +x discord-quest-helper-Linux-x86_64-<version>.AppImage
 - 🐧 **Linux Desktop Support** — Available as an x86_64 AppImage or Debian package.
 - 🎮 **Zero-Download Game Simulation** — Complete game quests without downloading or installing the actual game.
 - 📺 **Video & Stream Automation** — Start once and let quest progress update in the background.
+- 🔀 **Parallel Quests** — Run up to five quests at the same time and stop any single one of them.
 - 🔍 **Advanced Quest Filters** — Filter by reward type, completion status, and more.
 - 👥 **Multi-Account Support** — Manage multiple Discord accounts in one app.
-- 🌏 **Multi-language** — English, Simplified Chinese, Traditional Chinese, Japanese, Korean, Russian, Spanish, German, French, Indonesian, Polish, Portuguese, Thai, Turkish, and Vietnamese.
+- 🌏 **Multi-language** — English, Vietnamese, Simplified Chinese, Traditional Chinese, Japanese, Korean, Russian, Spanish, German, French, Indonesian, Polish, Brazilian Portuguese, European Portuguese, Thai, and Turkish.
 
 ## 📸 Screenshots
 
@@ -106,7 +119,7 @@ chmod +x discord-quest-helper-Linux-x86_64-<version>.AppImage
 ## 🏗️ Architecture
 
 ```text
-Discord Quest Helper
+Auto Quest Complete Discord
 ├─ Vue 3 + Vite frontend
 │  ├─ Views: Home, Game Simulator, Settings, Debug
 │  ├─ Pinia stores and composables for auth, quests, settings, and UI state
@@ -133,7 +146,7 @@ Discord Quest Helper
 
 The frontend communicates with the Rust backend through Tauri IPC. The backend owns Discord networking, local credential extraction, CDP sessions, quest execution, process cleanup, and platform-specific integration.
 
-Explore the codebase with [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Masterain98/discord-quest-helper)
+Explore the codebase with [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ninokiru/Auto-Quest-Complete-Discord)
 
 ## 🔒 Security
 
@@ -158,6 +171,10 @@ MIT License — see the [LICENSE](LICENSE) file.
 
 
 ## 🙏 Credits
+
+**Forked from**
+
+- `discord-quest-helper` by Masterain (MIT licensed) — this repository is a renamed continuation of that project, starting again at `0.0.1`. The original copyright stays in [LICENSE](LICENSE).
 
 **Inspiration & Resources**
 - [markterence/discord-quest-completer](https://github.com/markterence/discord-quest-completer)

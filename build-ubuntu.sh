@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Discord Quest Helper - Ubuntu Build Script
+# Auto Quest Complete Discord - Ubuntu Build Script
 # This script builds and packages the application for Ubuntu/Linux.
 
 set -Eeuo pipefail
@@ -58,7 +58,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 printf '%b========================================%b\n' "$CYAN" "$NC"
-printf '%b  Discord Quest Helper Build Script%b\n' "$CYAN" "$NC"
+printf '%b  Auto Quest Complete Discord Build Script%b\n' "$CYAN" "$NC"
 printf '%b  (Ubuntu x86_64)%b\n' "$CYAN" "$NC"
 printf '%b========================================%b\n\n' "$CYAN" "$NC"
 

@@ -11,7 +11,7 @@ Only the latest release receives security updates. Please keep your installation
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in Discord Quest Helper, please report it responsibly:
+If you discover a security vulnerability in Auto Quest Complete Discord, please report it responsibly:
 
 1. **Do NOT** create a public GitHub issue
 2. Use GitHub's [private vulnerability reporting](https://github.com/ninokiru/Auto-Quest-Complete-Discord/security/advisories/new) feature

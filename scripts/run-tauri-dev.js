@@ -51,8 +51,8 @@ if (process.platform === 'linux' && hasSnapRuntime) {
 
 const tauriCommand = process.platform === 'win32' ? (env.ComSpec || 'cmd.exe') : 'tauri'
 const tauriArgs = process.platform === 'win32'
-  ? ['/d', '/s', '/c', 'tauri.cmd dev -- --bin discord-quest-helper']
-  : ['dev', '--', '--bin', 'discord-quest-helper']
+  ? ['/d', '/s', '/c', 'tauri.cmd dev -- --bin auto-quest-complete-discord']
+  : ['dev', '--', '--bin', 'auto-quest-complete-discord']
 
 const result = spawnSync(tauriCommand, tauriArgs, { stdio: 'inherit', env })
 

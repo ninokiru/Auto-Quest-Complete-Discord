@@ -46,7 +46,7 @@ src-tauri/gen/schemas/*
 !src-tauri/capabilities/*.json
 !package.json
 *.har
-discord-quest-helper-v*.zip
+auto-quest-complete-discord-v*.zip
 *.code-workspace
 *.exe
 *.msi

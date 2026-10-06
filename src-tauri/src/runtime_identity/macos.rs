@@ -7,10 +7,10 @@ use std::os::unix::{ffi::OsStringExt, fs::PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-const PUBLIC_APP_DISPLAY_NAME: &str = "Discord Quest Helper";
+const PUBLIC_APP_DISPLAY_NAME: &str = "Auto Quest Complete Discord";
 const LEGACY_DIR_HEX_LEN: usize = 16;
 const LEGACY_EXE_HEX_LEN: usize = 12;
-const BUNDLE_IDENTIFIER: &str = "com.masterain.discord-quest-helper";
+const BUNDLE_IDENTIFIER: &str = "com.ninokiru.auto-quest-complete-discord";
 
 static VERIFIED_CURRENT_APP_IDENTITY: OnceCell<Result<MacCodeIdentity, String>> = OnceCell::new();
 
@@ -421,13 +421,13 @@ mod tests {
     fn bundle_executable_is_checked_independently_from_public_app_name() {
         assert_eq!(
             status_for_executable(Some(Path::new(
-                "/Applications/Discord Quest Helper.app/Contents/MacOS/meridian"
+                "/Applications/Auto Quest Complete Discord.app/Contents/MacOS/meridian"
             )))
             .level,
             RuntimeIdentityLevel::Full
         );
         let status = status_for_executable(Some(Path::new(
-            "/Applications/Discord Quest Helper.app/Contents/MacOS/wrong-name",
+            "/Applications/Auto Quest Complete Discord.app/Contents/MacOS/wrong-name",
         )));
         assert_eq!(
             status.reasons,
@@ -446,10 +446,10 @@ mod tests {
 
     #[test]
     fn bundle_path_accepts_a_renamed_app_but_rejects_a_bare_executable() {
-        let bundled = Path::new("/Applications/Discord Quest Helper.app/Contents/MacOS/meridian");
+        let bundled = Path::new("/Applications/Auto Quest Complete Discord.app/Contents/MacOS/meridian");
         assert_eq!(
             app_bundle_for_executable(bundled),
-            Some(PathBuf::from("/Applications/Discord Quest Helper.app"))
+            Some(PathBuf::from("/Applications/Auto Quest Complete Discord.app"))
         );
         let renamed = Path::new("/Applications/DQH.app/Contents/MacOS/meridian");
         assert_eq!(
@@ -467,14 +467,14 @@ mod tests {
     fn renamed_bundle_still_requires_the_canonical_internal_metadata() {
         assert!(validate_bundle_metadata(
             Some("meridian"),
-            Some("com.masterain.discord-quest-helper"),
-            Some("Discord Quest Helper")
+            Some("com.ninokiru.auto-quest-complete-discord"),
+            Some("Auto Quest Complete Discord")
         )
         .is_ok());
         assert!(validate_bundle_metadata(
             Some("meridian"),
             Some("com.example.renamed"),
-            Some("Discord Quest Helper")
+            Some("Auto Quest Complete Discord")
         )
         .is_err());
     }

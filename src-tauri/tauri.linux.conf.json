@@ -7,7 +7,7 @@
   "bundle": {
     "linux": {
       "deb": {
-        "desktopTemplate": "linux/discord-quest-helper.desktop.hbs"
+        "desktopTemplate": "linux/auto-quest-complete-discord.desktop.hbs"
       }
     }
   }

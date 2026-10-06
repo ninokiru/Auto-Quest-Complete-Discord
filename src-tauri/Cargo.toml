@@ -1,11 +1,11 @@
 [package]
-name = "discord-quest-helper"
-version = "0.10.4"
+name = "auto-quest-complete-discord"
+version = "0.0.1"
 edition = "2021"
-default-run = "discord-quest-helper"
+default-run = "auto-quest-complete-discord"
 
 [lib]
-name = "discord_quest_helper_lib"
+name = "auto_quest_complete_discord_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

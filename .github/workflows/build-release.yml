@@ -442,9 +442,19 @@ jobs:
           CDP_TARGET: ${{ matrix.cdp_target }}
         run: |
           $portableDir = 'build/windows-portable'
+          $mainExe = 'target/release/auto-quest-complete-discord.exe'
+          $bridgeExe = "src-tauri/binaries/waybridge-$env:CDP_TARGET.exe"
+          # A missing file here used to surface as a bare Copy-Item error several
+          # minutes into the only Windows job of the release.
+          foreach ($source in @($mainExe, $bridgeExe)) {
+            if (-not (Test-Path $source)) {
+              Write-Error "Expected build output '$source' is missing"
+              exit 1
+            }
+          }
           New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
-          Copy-Item 'target/release/discord-quest-helper.exe' "$portableDir/discord-quest-helper.exe"
-          Copy-Item "src-tauri/binaries/waybridge-$env:CDP_TARGET.exe" "$portableDir/waybridge.exe"
+          Copy-Item $mainExe "$portableDir/auto-quest-complete-discord.exe"
+          Copy-Item $bridgeExe "$portableDir/waybridge.exe"
       
       # Upload Windows artifact (portable)
       # Runner binary is embedded in the main executable via include_bytes!
@@ -464,6 +474,18 @@ jobs:
         with:
           name: tauri-win-msi
           path: target/release/bundle/msi/*.msi
+
+      # Upload Windows artifact (NSIS installer executable)
+      # `bundle.targets: all` produces both the WiX .msi and the NSIS .exe, so a
+      # missing match here means the bundler changed behaviour, not a transient
+      # glitch: fail in the build job instead of shipping a release without it.
+      - name: Upload Windows artifact (EXE)
+        if: matrix.platform == 'windows-latest'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tauri-win-nsis
+          path: target/release/bundle/nsis/*.exe
+          if-no-files-found: error
 
       # Upload macOS artifact
       - name: Upload macOS artifact
@@ -519,6 +541,12 @@ jobs:
           name: tauri-win-msi
           path: tauri-win-msi
 
+      - name: Download Windows artifact (EXE)
+        uses: actions/download-artifact@v8
+        with:
+          name: tauri-win-nsis
+          path: tauri-win-nsis
+
       - name: Download macOS artifact
         uses: actions/download-artifact@v8
         with:
@@ -541,11 +569,26 @@ jobs:
           
           # Package Windows portable build
           cd tauri-win-portable
-          zip -r "../build/discord-quest-helper-Windows-x64-$version-portable.zip" .
+          zip -r "../build/auto-quest-complete-discord-Windows-x64-$version-portable.zip" .
           cd ..
           
-          # Copy Windows MSI installer
-          cp tauri-win-msi/*.msi "./build/discord-quest-helper-Windows-x64-$version-setup.msi"
+          # Copy Windows installers. Bundle file names carry the product name, so
+          # locate them with find instead of a glob: an unquoted glob would split
+          # on any space the bundler ever emits.
+          copy_one() {
+            source_dir="$1"
+            pattern="$2"
+            destination="$3"
+            found="$(find "$source_dir" -maxdepth 1 -type f -name "$pattern" | head -n 1 || true)"
+            if [ -z "$found" ]; then
+              echo "::error::No $pattern inside $source_dir"
+              find "$source_dir" -maxdepth 1 || true
+              exit 1
+            fi
+            cp "$found" "$destination"
+          }
+          copy_one tauri-win-msi '*.msi' "./build/auto-quest-complete-discord-Windows-x64-$version-setup.msi"
+          copy_one tauri-win-nsis '*.exe' "./build/auto-quest-complete-discord-Windows-x64-$version-setup.exe"
           
           # Package macOS build: `files:` below declares both a .dmg and a
           # portable .app zip, so emit whichever the build actually produced.
@@ -558,10 +601,10 @@ jobs:
             find . -maxdepth 3 | head -n 40
             exit 1
           fi
-          [ -n "$dmg" ] && cp "$dmg" "$build_dir/discord-quest-helper-MacOS-arm64-$version.dmg"
+          [ -n "$dmg" ] && cp "$dmg" "$build_dir/auto-quest-complete-discord-MacOS-arm64-$version.dmg"
           if [ -n "$app" ]; then
             # -y keeps the bundle's Versions/ symlinks instead of duplicating them.
-            (cd "$(dirname "$app")" && zip -qry "$build_dir/discord-quest-helper-MacOS-arm64-$version.zip" "$(basename "$app")")
+            (cd "$(dirname "$app")" && zip -qry "$build_dir/auto-quest-complete-discord-MacOS-arm64-$version.zip" "$(basename "$app")")
           fi
           cd ..
 
@@ -572,17 +615,18 @@ jobs:
             echo "::error::No Linux AppImage found in tauri-linux-x64-release"
             exit 1
           fi
-          cp "$appimage" ./build/discord-quest-helper-Linux-x86_64-$version.AppImage
+          cp "$appimage" ./build/auto-quest-complete-discord-Linux-x86_64-$version.AppImage
           if [ -z "$deb" ]; then
             echo "::error::No Linux .deb found in tauri-linux-x64-release"
             exit 1
           fi
-          cp "$deb" ./build/discord-quest-helper-Linux-x86_64-$version.deb
+          cp "$deb" ./build/auto-quest-complete-discord-Linux-x86_64-$version.deb
 
-          echo "win_portable=discord-quest-helper-Windows-x64-$version-portable" >> $GITHUB_ENV
-          echo "win_msi=discord-quest-helper-Windows-x64-$version-setup" >> $GITHUB_ENV
-          echo "macos_build_release=discord-quest-helper-MacOS-arm64-$version" >> $GITHUB_ENV
-          echo "linux_build_release=discord-quest-helper-Linux-x86_64-$version" >> $GITHUB_ENV
+          echo "win_portable=auto-quest-complete-discord-Windows-x64-$version-portable" >> $GITHUB_ENV
+          echo "win_msi=auto-quest-complete-discord-Windows-x64-$version-setup" >> $GITHUB_ENV
+          echo "win_exe=auto-quest-complete-discord-Windows-x64-$version-setup" >> $GITHUB_ENV
+          echo "macos_build_release=auto-quest-complete-discord-MacOS-arm64-$version" >> $GITHUB_ENV
+          echo "linux_build_release=auto-quest-complete-discord-Linux-x86_64-$version" >> $GITHUB_ENV
 
       - name: Create and Upload Release
         id: create_release
@@ -594,6 +638,7 @@ jobs:
           files: |
             ./build/${{ env.win_portable }}.zip
             ./build/${{ env.win_msi }}.msi
+            ./build/${{ env.win_exe }}.exe
             ./build/${{ env.macos_build_release }}.dmg
             ./build/${{ env.macos_build_release }}.zip
             ./build/${{ env.linux_build_release }}.AppImage

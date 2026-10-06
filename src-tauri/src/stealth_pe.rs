@@ -301,7 +301,7 @@ mod tests {
             .flat_map(|u| u.to_le_bytes())
             .collect::<Vec<_>>();
         assert!(blob.windows(product.len()).any(|w| w == product));
-        let leaked = "Discord Quest Helper"
+        let leaked = "Auto Quest Complete Discord"
             .encode_utf16()
             .flat_map(|u| u.to_le_bytes())
             .collect::<Vec<_>>();
@@ -332,7 +332,7 @@ mod tests {
         assert_eq!(original, "c0ffee12beef.exe");
         assert_eq!(product, "c0ffee12beef");
         assert_eq!(description, "c0ffee12beef");
-        assert!(!product.contains("Discord Quest Helper"));
+        assert!(!product.contains("Auto Quest Complete Discord"));
 
         let _ = fs::remove_dir_all(&dir);
     }
