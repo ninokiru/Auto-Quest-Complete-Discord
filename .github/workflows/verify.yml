@@ -126,11 +126,15 @@ jobs:
             -- -D unused -D clippy::correctness -D clippy::suspicious 2>&1 |
             tee target/rust-clippy.log
 
+      # Single-threaded on purpose: several tests mutate process env or rely on a
+      # released loopback port staying free, which only holds when no other test
+      # runs beside them. A flake here costs a full CI round trip.
       - name: Rust tests
         shell: bash
         run: |
           set -o pipefail
-          cargo test --workspace --no-fail-fast 2>&1 | tee target/rust-tests.log
+          cargo test --workspace --no-fail-fast -- --test-threads=1 2>&1 |
+            tee target/rust-tests.log
 
       # Job logs and job summaries both need a GitHub login, but annotations are
       # public: the failing lines are echoed as `::error::` chunks, retrievable
@@ -145,7 +149,10 @@ jobs:
             if [ "$f" = "target/rust-fmt.log" ]; then
               pat='^Diff in|^[-+]'
             else
-              pat='error|FAILED|panicked at'
+              # `cargo test` puts the useful part on the lines *after* the panic,
+              # so the assertion and its left/right values are matched too.
+              pat=': error|^error|error\[E|FAILED|panicked at|assertion'
+              pat="$pat|^ +(left|right):|^test result:|^---- "
             fi
             name="$(basename "$f")"
             {

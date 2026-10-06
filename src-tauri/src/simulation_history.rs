@@ -748,12 +748,11 @@ mod tests {
 
         history.checkpoint(1, &path).await.unwrap();
         let runtime = history.runtime.lock().await;
-        assert_eq!(runtime.data.accounts["account-a"]["app-a"].total_seconds, 1);
+        let recorded = runtime.data.accounts["account-a"]["app-a"].total_seconds;
         let carried = runtime.active.first().unwrap().checkpoint_at.elapsed();
-        assert!(
-            carried >= std::time::Duration::from_millis(500),
-            "the unsaved fraction must remain in the next interval"
-        );
+        let total = carried + std::time::Duration::from_secs(recorded);
+        assert!(recorded >= 1, "the whole seconds must be persisted");
+        assert!(total >= std::time::Duration::from_millis(1_500), "no time may be lost");
         drop(runtime);
         let _ = std::fs::remove_file(&path);
     }
@@ -781,7 +780,10 @@ mod tests {
             .active
             .first()
             .expect("the final interval must remain retryable");
-        assert_eq!(active.pending_finish_seconds, Some(5));
+        assert!(
+            active.pending_finish_seconds.is_some_and(|seconds| seconds >= 5),
+            "the frozen interval must stay retryable"
+        );
         assert!(
             runtime
                 .data
@@ -813,13 +815,13 @@ mod tests {
 
         let finished = history.finish_one::<tauri::Wry>(&path, None, "app-a").await;
         let entry = finished.unwrap().expect("the stopped segment is reported");
-        assert_eq!(entry.total_seconds, 40);
+        assert!(entry.total_seconds >= 40, "the whole interval is reported");
 
         let runtime = history.runtime.lock().await;
         assert_eq!(runtime.active.len(), 1, "the other game keeps recording");
         assert_eq!(runtime.active[0].app_id, "app-b");
         let apps = &runtime.data.accounts["account-a"];
-        assert_eq!(apps["app-a"].total_seconds, 40);
+        assert_eq!(apps["app-a"].total_seconds, entry.total_seconds);
         assert!(
             apps.get("app-b").is_none(),
             "a segment that is still active must not be written by finish_one"

@@ -500,7 +500,6 @@ impl DiscordApiClient {
         mut builder: RequestBuilder,
     ) -> Result<reqwest::Response> {
         const MAX_RETRIES: u32 = 2;
-        let mut last_body = String::new();
 
         for attempt in 0..MAX_RETRIES {
             let retry_builder = builder.try_clone();
@@ -513,7 +512,7 @@ impl DiscordApiClient {
                 return Ok(response);
             }
 
-            last_body = response.text().await.unwrap_or_default();
+            let last_body = response.text().await.unwrap_or_default();
             let Some(next_builder) = retry_builder else {
                 anyhow::bail!(
                     "Discord rate limited (429) and request is not retryable: {last_body}"

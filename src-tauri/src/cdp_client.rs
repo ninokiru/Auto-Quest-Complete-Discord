@@ -2559,7 +2559,7 @@ mod tests {
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
-        let result = with_pinned_discord_session(async {
+        let session = with_pinned_discord_session(async {
             TASK_TARGET.with(|slot| {
                 *slot.borrow_mut() = Some(BoundDiscordTarget {
                     port,
@@ -2576,8 +2576,11 @@ mod tests {
                 })
             });
             std::future::pending::<Result<()>>().await
-        })
-        .await;
+        });
+        // Unbounded waiting would burn the whole CI job timeout if the released
+        // port were ever re-bound by a parallel test.
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(30), session).await;
+        let result = outcome.expect("the monitor must notice the closed target");
         assert!(error_is_target_invalidated(&result.unwrap_err()));
     }
 }

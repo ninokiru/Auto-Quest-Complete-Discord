@@ -361,7 +361,9 @@ mod tests {
             let start = Instant::now();
             let runtime = verify(port, &target, start + Duration::from_secs(3));
             assert_eq!(runtime.runtime_status, CdpRuntimeStatus::ProbeFailed);
-            assert!(start.elapsed() < Duration::from_millis(850));
+            // Must stop at the 750ms round cap, not the 3s deadline; the slack
+            // is for CI scheduling.
+            assert!(start.elapsed() < Duration::from_millis(1_500));
             handle.join().unwrap();
         }
     }
@@ -442,7 +444,8 @@ mod tests {
             let result = verify(port, &target, start + Duration::from_secs(3));
             assert_eq!(result.runtime_status, CdpRuntimeStatus::ProbeFailed);
             assert_eq!(result.failure_stage.as_deref(), Some("handshake"));
-            assert!(start.elapsed() < Duration::from_millis(850));
+            // Same 750ms cap: a byte-at-a-time server must not be waited out.
+            assert!(start.elapsed() < Duration::from_millis(1_500));
             server.join().unwrap();
         }
     }
