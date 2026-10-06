@@ -165,7 +165,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cargo clippy --workspace --all-targets --all-features --message-format=short \
+          cargo clippy --locked --workspace --all-targets --all-features --message-format=short \
             -- -D unused -D clippy::correctness -D clippy::suspicious 2>&1 |
             tee target/rust-clippy.log
 
@@ -176,7 +176,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cargo test --workspace --no-fail-fast -- --test-threads=1 2>&1 |
+          cargo test --locked --workspace --no-fail-fast -- --test-threads=1 2>&1 |
             tee target/rust-tests.log
 
       # Job logs and job summaries both need a GitHub login, but annotations are
@@ -272,6 +272,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad \
+            gstreamer1.0-libav \
             build-essential \
             pkg-config \
             curl \
@@ -279,9 +283,13 @@ jobs:
             file \
             libxdo-dev \
             libssl-dev \
+            libnss3 \
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
+            binutils \
+            squashfs-tools \
+            python3 \
             xdg-utils \
             desktop-file-utils \
             xvfb \
@@ -349,7 +357,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          args: ${{ matrix.args }}
+          args: ${{ matrix.args }} -- --locked
 
       - name: Verify unsigned macOS bundle identity and integrity
         if: matrix.platform == 'macos-14'
