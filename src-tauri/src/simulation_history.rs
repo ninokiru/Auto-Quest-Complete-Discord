@@ -752,7 +752,10 @@ mod tests {
         let carried = runtime.active.first().unwrap().checkpoint_at.elapsed();
         let total = carried + std::time::Duration::from_secs(recorded);
         assert!(recorded >= 1, "the whole seconds must be persisted");
-        assert!(total >= std::time::Duration::from_millis(1_500), "no time may be lost");
+        assert!(
+            total >= std::time::Duration::from_millis(1_500),
+            "no time may be lost"
+        );
         drop(runtime);
         let _ = std::fs::remove_file(&path);
     }
@@ -781,7 +784,9 @@ mod tests {
             .first()
             .expect("the final interval must remain retryable");
         assert!(
-            active.pending_finish_seconds.is_some_and(|seconds| seconds >= 5),
+            active
+                .pending_finish_seconds
+                .is_some_and(|seconds| seconds >= 5),
             "the frozen interval must stay retryable"
         );
         assert!(
