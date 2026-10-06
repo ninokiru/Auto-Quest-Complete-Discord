@@ -446,10 +446,13 @@ mod tests {
 
     #[test]
     fn bundle_path_accepts_a_renamed_app_but_rejects_a_bare_executable() {
-        let bundled = Path::new("/Applications/Auto Quest Complete Discord.app/Contents/MacOS/meridian");
+        let bundled =
+            Path::new("/Applications/Auto Quest Complete Discord.app/Contents/MacOS/meridian");
         assert_eq!(
             app_bundle_for_executable(bundled),
-            Some(PathBuf::from("/Applications/Auto Quest Complete Discord.app"))
+            Some(PathBuf::from(
+                "/Applications/Auto Quest Complete Discord.app"
+            ))
         );
         let renamed = Path::new("/Applications/DQH.app/Contents/MacOS/meridian");
         assert_eq!(

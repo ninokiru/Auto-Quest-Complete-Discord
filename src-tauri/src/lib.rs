@@ -1258,10 +1258,8 @@ async fn start_play_activity_quest(
         match result {
             Ok(()) => quest_task_finished(&outcome_writer),
             Err(error) => {
-                quest_task_failed(
-                    &outcome_writer,
-                    format!("PLAY_ACTIVITY quest failed: {}", error),
-                );
+                // Strip this spoof before releasing the slot, otherwise the next
+                // quest can inject while this rollback is still running.
                 if transport == PlayActivityTransport::Cdp {
                     cdp_quest::cdp_cleanup_after_stop(
                         cdp_port,
@@ -1270,6 +1268,10 @@ async fn start_play_activity_quest(
                     )
                     .await;
                 }
+                quest_task_failed(
+                    &outcome_writer,
+                    format!("PLAY_ACTIVITY quest failed: {}", error),
+                );
                 let _ = app_handle.emit(
                     "quest-error",
                     cdp_quest::quest_error_payload(&error, "PLAY_ACTIVITY quest failed"),
@@ -1388,13 +1390,15 @@ async fn start_cdp_quest(
         match result {
             Ok(()) => quest_task_finished(&outcome_writer),
             Err(e) => {
-                quest_task_failed(&outcome_writer, format!("CDP quest failed: {}", e));
+                // Strip this spoof before releasing the slot, otherwise the next
+                // quest can inject while this rollback is still running.
                 cdp_quest::cdp_cleanup_after_stop(
                     cdp_port,
                     "task failed or target invalidated",
                     true,
                 )
                 .await;
+                quest_task_failed(&outcome_writer, format!("CDP quest failed: {}", e));
                 let _ = app_handle.emit(
                     "quest-error",
                     cdp_quest::quest_error_payload(&e, "CDP quest failed"),
@@ -1451,6 +1455,9 @@ fn register_quest_task(
     outcome: std::sync::Arc<std::sync::Mutex<QuestTaskRecord>>,
 ) {
     let mut tasks = state.quest_tasks.lock().unwrap();
+    // A quest that finished on its own keeps its record until Stop; drop that
+    // stale record so the status poll can't end a quest that just started again.
+    tasks.retain(|task| task.quest_id != quest_id || quest_task_is_running(task));
     tasks.push(QuestTask {
         quest_id,
         exclusive,

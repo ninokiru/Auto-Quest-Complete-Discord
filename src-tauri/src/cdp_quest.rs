@@ -436,7 +436,12 @@ fn js_spoof_play_game_for(
         let selectedOs = null;
         let appDataDebug = null;
         try {{
-            const res = await dqh.api.get({{ url: "/applications/public?application_ids=" + applicationId }});
+            // Bounded below the 15s CDP timeout so a hanging lookup cannot leave
+            // this injection still patching stores after Rust declared failure.
+            const res = await Promise.race([
+                dqh.api.get({{ url: "/applications/public?application_ids=" + applicationId }}),
+                new Promise(resolve => setTimeout(() => resolve(null), 8000)),
+            ]);
             if (res && res.body && res.body[0]) {{
                 const appData = res.body[0];
                 appDataDebug = appData.name;
@@ -826,6 +831,11 @@ fn js_start_video_quest(quest_id: &str, seconds_needed: u32, initial_seconds: f6
                 }}
 
                 while (true) {{
+                    // Rust's stop and timeout paths only clear this flag, so the
+                    // loop has to read it or a cancelled quest keeps posting progress.
+                    if (!dqh._videoRunning) {{
+                        return;
+                    }}
                     const maxAllowed = Math.floor((Date.now() - enrolledAt) / 1000) + maxFuture;
                     const diff = maxAllowed - secondsDone;
                     const timestamp = secondsDone + speed;
@@ -1249,7 +1259,7 @@ const JS_VERIFY_CLEANUP_STATE: &str = r#"
                                     if (Array.isArray(games)) store = val;
                                 } catch(e) {}
                             }
-                            if (!nativeUtils && typeof val.getDiscordUtils === "function" && typeof val.setObservedGamesCallback === "function" && typeof val.setGameCandidateOverrides === "function") {
+                            if (!nativeUtils && !Object.hasOwn(val, "getRunningGames") && typeof val.getDiscordUtils === "function" && typeof val.setObservedGamesCallback === "function" && typeof val.setGameCandidateOverrides === "function") {
                                 nativeUtils = val;
                             }
                         } catch(e) {}

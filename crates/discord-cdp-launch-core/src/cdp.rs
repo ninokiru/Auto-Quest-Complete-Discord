@@ -274,7 +274,6 @@ fn detailed_probe_with_timeouts(
     connect_timeout: Duration,
     io_timeout: Duration,
 ) -> DetailedCdpProbeResult {
-    let deadline = Instant::now() + Duration::from_secs(3);
     let response = match fetch_cdp_http_response(port, connect_timeout, io_timeout) {
         Ok(response) => response,
         Err(CdpListError::Unreachable { .. }) => {
@@ -312,6 +311,10 @@ fn detailed_probe_with_timeouts(
             };
         }
     };
+    // The renderer-verification round gets its own budget, started after the
+    // /json fetch returns; a slow fetch would otherwise leave no time to probe
+    // any target and report a healthy Discord as a non-Discord endpoint.
+    let deadline = Instant::now() + Duration::from_secs(3);
     let http_status = http_status(&response);
     match parse_cdp_targets_http_response(port, &response) {
         Ok(raw_targets) => {

@@ -296,6 +296,9 @@ pub async fn with_pinned_discord_session<T, F: std::future::Future<Output = Resu
 }
 
 async fn watch_pinned_documents() -> anyhow::Error {
+    const MONITOR_PROBE_FAILURES: u32 = 3;
+    let mut probe_failures: std::collections::HashMap<String, u32> =
+        std::collections::HashMap::new();
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
         let bound = TASK_TARGET.with(|slot| slot.borrow().clone());
@@ -308,15 +311,27 @@ async fn watch_pinned_documents() -> anyhow::Error {
         let documents = TASK_DOCUMENTS.with(|slot| slot.borrow().clone());
         for (ws_url, expected) in documents {
             match execute_js_via_ws(&ws_url, "String(performance.timeOrigin)", false, 2).await {
-                Ok(actual) if actual == expected => {}
-                _ => {
-                    return anyhow::anyhow!(
-                        "cdp_target_invalidated: activity target closed or reloaded"
-                    )
+                Ok(actual) if actual == expected => {
+                    probe_failures.remove(&ws_url);
+                }
+                // A different timeOrigin is a replaced document, so it is final.
+                Ok(_) => return target_invalidated(),
+                // A busy or throttled renderer can miss one probe; the foreground
+                // path retries three times, so the monitor waits for real loss.
+                Err(_) => {
+                    let failures = probe_failures.entry(ws_url).or_insert(0);
+                    *failures += 1;
+                    if *failures >= MONITOR_PROBE_FAILURES {
+                        return target_invalidated();
+                    }
                 }
             }
         }
     }
+}
+
+fn target_invalidated() -> anyhow::Error {
+    anyhow::anyhow!("cdp_target_invalidated: activity target closed or reloaded")
 }
 
 pub(crate) struct VerifiedDiscordTarget {
