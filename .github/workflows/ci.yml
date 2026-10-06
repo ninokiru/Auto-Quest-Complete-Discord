@@ -279,23 +279,22 @@ jobs:
         if: matrix.platform == 'macos-14'
         shell: bash
         run: |
-          bundle_dir=target/${{ matrix.cdp_target }}/release/bundle/macos
-          if [ ! -d "$bundle_dir" ]; then
-            echo "::error::Missing $bundle_dir"
+          # Search all of target/: a hardcoded target/<triple>/ guess costs a
+          # whole run when cargo's layout differs, and scripts/ is mode 100644
+          # so the checks below must go through bash.
+          app="$(find target -maxdepth 8 -type d -name '*.app' 2>/dev/null | head -n 1 || true)"
+          if [ -z "$app" ]; then
+            echo "::error::No .app bundle anywhere under target/"
             find target -maxdepth 6 -type d -name bundle 2>/dev/null || true
             exit 1
           fi
-          app="$(find "$bundle_dir" -maxdepth 1 -name '*.app' -type d | head -n 1 || true)"
-          if [ -z "$app" ]; then
-            echo "::error::No .app bundle produced in $bundle_dir"
-            ls -l "$bundle_dir" || true
-            exit 1
-          fi
-          # scripts/ holds mode 100644 files, so run them through bash.
+          echo "Verified bundle: $app"
+          manifest_dir=target/${{ matrix.cdp_target }}/release/bundle
+          mkdir -p "$manifest_dir"
           bash scripts/verify-macos-bundle.sh "$app"
           node scripts/audit-packaged-identity.mjs \
             --platform macos --artifact "$app" \
-            --output target/${{ matrix.cdp_target }}/release/bundle/identity-manifest-macos-smoke.json
+            --output "$manifest_dir/identity-manifest-macos-smoke.json"
           smoke() {
             label="$1"
             shift
