@@ -174,7 +174,7 @@ MIT License — see the [LICENSE](LICENSE) file.
 
 **Forked from**
 
-- `discord-quest-helper` by Masterain (MIT licensed) — this repository is a renamed continuation of that project, starting again at `0.0.1`. The original copyright stays in [LICENSE](LICENSE).
+- `discord-quest-helper` by Masterain (MIT licensed) — this repository is a renamed continuation of that project, maintained as **Lumina** under `ninokiru/Auto-Quest-Complete-Discord` and starting again at `0.0.1`. Upstream authorship of the original project remains credited to Masterain.
 
 **Inspiration & Resources**
 - [markterence/discord-quest-completer](https://github.com/markterence/discord-quest-completer)
