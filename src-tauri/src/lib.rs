@@ -2216,11 +2216,7 @@ async fn claim_quest_reward(
 /// Raise an operating-system notification. Only the frontend knows the quest
 /// name, so the text is passed through instead of being looked up here.
 #[tauri::command]
-fn notify_quest_finished(
-    app: tauri::AppHandle,
-    title: String,
-    body: String,
-) -> Result<(), String> {
+fn notify_quest_finished(app: tauri::AppHandle, title: String, body: String) -> Result<(), String> {
     quest_notify::show(&app, &title, &body)
 }
 
@@ -2640,6 +2636,21 @@ pub fn run() {
             }
 
             create_main_window(app)?;
+
+            // A quest that ends on its own writes its outcome inside its own
+            // thread, and the page stops polling once nothing runs, so nothing
+            // else would ever notice that the machine may sleep again. The
+            // command hooks only make that release prompt, never guaranteed.
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut ticker = tokio::time::interval(std::time::Duration::from_secs(5));
+                loop {
+                    ticker.tick().await;
+                    let state = app_handle.state::<AppState>();
+                    refresh_keep_awake(&state.quest_tasks.lock().unwrap());
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

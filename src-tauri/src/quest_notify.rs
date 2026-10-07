@@ -18,9 +18,9 @@ mod platform {
     use tauri::{AppHandle, Manager};
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::Shell::{
-        NIF_ICON, NIF_INFO, NIIF_INFO, NIM_ADD, NIM_MODIFY, NOTIFYICONDATAW, Shell_NotifyIconW,
+        Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIIF_INFO, NIM_ADD, NIM_MODIFY, NOTIFYICONDATAW,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{IDI_APPLICATION, LoadIconW};
+    use windows::Win32::UI::WindowsAndMessaging::{LoadIconW, IDI_APPLICATION};
 
     const MAIN_WINDOW: &str = "main";
     /// Identifier for this process's notification-area entry. The entry is

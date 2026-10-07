@@ -34,7 +34,12 @@ pub fn hold() {
         });
 
     match spawned {
-        Ok(thread) => *slot = Some(Guard { _thread: thread, _stop: stop }),
+        Ok(thread) => {
+            *slot = Some(Guard {
+                _thread: thread,
+                _stop: stop,
+            })
+        }
         Err(error) => eprintln!("Could not start the keep-awake guard: {error}"),
     }
 }
