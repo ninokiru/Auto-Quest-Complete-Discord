@@ -30,6 +30,9 @@ const QUEST_WARMUP_RESTORE_SETTLE_MS: u64 = 800;
 const CDP_CLEANUP_ATTEMPTS: u32 = 5;
 const CDP_CLEANUP_CANCEL_ATTEMPTS: u32 = 1;
 const CDP_CLEANUP_VERIFY_TIMEOUT_SECS: u64 = 10;
+/// Wall-clock ceiling for the pre-init cleanup retries. Without it a stalled
+/// renderer turns every quest start into several minutes of silent waiting.
+const CDP_CLEANUP_BUDGET: Duration = Duration::from_secs(45);
 
 /// JavaScript: Initialize quest-related Discord webpack modules and store them in window.__dqh_cdp.
 ///
@@ -2122,8 +2125,23 @@ async fn cdp_cleanup_with_attempts(port: u16, max_attempts: u32) -> Result<()> {
     let max_attempts = max_attempts.max(1);
     let cleanup_js = with_bridge(JS_CLEANUP_SPOOF);
     let verify_js = with_bridge(JS_VERIFY_CLEANUP_STATE);
+    let budget_start = Instant::now();
 
     for attempt in 1..=max_attempts {
+        if attempt > 1 && budget_start.elapsed() >= CDP_CLEANUP_BUDGET {
+            log(
+                LogLevel::Warn,
+                LogCategory::TokenExtraction,
+                &format!(
+                    "CDP cleanup gave up after {}s at attempt {}/{max_attempts}",
+                    budget_start.elapsed().as_secs(),
+                    attempt - 1
+                ),
+                None,
+            );
+            break;
+        }
+
         let mut cleanup_success_count = 0usize;
 
         match cdp_client::execute_js_via_all_discord_targets(port, &cleanup_js, true, 15).await {
@@ -2303,7 +2321,10 @@ async fn cdp_cleanup_with_attempts(port: u16, max_attempts: u32) -> Result<()> {
         }
     }
 
-    anyhow::bail!("CDP cleanup failed after all retries — spoof may still be active in Discord")
+    anyhow::bail!(
+        "CDP cleanup failed after {}s of retries — spoof may still be active in Discord",
+        budget_start.elapsed().as_secs()
+    )
 }
 
 /// Start a persistent, user-controlled running-game spoof without binding it

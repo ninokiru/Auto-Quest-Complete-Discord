@@ -12,6 +12,11 @@ use std::time::{Duration, Instant};
 const DISCORD_API_BASE: &str = "https://discord.com/api/v9";
 const PROXY_STATE_CHECK_INTERVAL_MS: u64 = 5_000;
 const QUEST_HOME_REFERER: &str = "https://discord.com/quest-home";
+/// Discord's `QuestContentLocation.QUEST_HOME_DESKTOP`, the value the enroll request
+/// already sends. Both enroll and claim reject the request outright when it is absent.
+const QUEST_LOCATION_HOME_DESKTOP: i64 = 11;
+/// Discord's `QuestPlatformType.CROSS_PLATFORM`.
+const QUEST_PLATFORM_CROSS_PLATFORM: i64 = 0;
 
 pub(crate) fn parse_play_activity_heartbeat_response(
     body: &serde_json::Value,
@@ -828,15 +833,13 @@ impl DiscordApiClient {
     pub async fn claim_quest_reward(
         &self,
         quest_id: &str,
-        platform: Option<String>,
+        platform: Option<i64>,
     ) -> Result<serde_json::Value> {
         let url = format!("{}/quests/{}/claim-reward", DISCORD_API_BASE, quest_id);
-        let payload = match platform {
-            Some(platform) if !platform.trim().is_empty() => {
-                serde_json::json!({ "platform": platform })
-            }
-            _ => serde_json::json!({}),
-        };
+        let payload = serde_json::json!({
+            "platform": platform.unwrap_or(QUEST_PLATFORM_CROSS_PLATFORM),
+            "location": QUEST_LOCATION_HOME_DESKTOP,
+        });
 
         let response = self
             .send_respecting_rate_limit(self.request(Method::POST, &url).json(&payload))
@@ -1001,7 +1004,7 @@ impl DiscordApiClient {
 
         // POST with enrollment payload from HAR capture
         let payload = serde_json::json!({
-            "location": 11,
+            "location": QUEST_LOCATION_HOME_DESKTOP,
             "is_targeted": false,
             "metadata_raw": null
         });
@@ -1020,7 +1023,7 @@ impl DiscordApiClient {
         let first_status = response.status();
         let first_body = response.text().await.unwrap_or_default();
 
-        let minimal_payload = serde_json::json!({ "location": 11 });
+        let minimal_payload = serde_json::json!({ "location": QUEST_LOCATION_HOME_DESKTOP });
         let fallback_response = self
             .send_respecting_rate_limit(self.request(Method::POST, &url).json(&minimal_payload))
             .await

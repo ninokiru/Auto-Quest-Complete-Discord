@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import type { Quest, DetectableGame, DesktopClientArg, ExcludedQuest, GameQuestMode, PlatformCapabilities, QuestTaskStatus } from '@/api/tauri'
 import { getQuestKind, isManualStreamQuest, playActivityProgressPercentage } from '@/utils/questTasks'
 import { resolveSimulationExecutable } from '@/utils/executables'
+import { announceQuestEnd } from '@/utils/questNotifier'
 
 /** Clamp a 0..100 percentage so no consumer renders a value outside its range. */
 function clampProgressPercent(value: number): number {
@@ -687,9 +688,19 @@ export const useQuestsStore = defineStore('quests', () => {
     await finishStandaloneQuest(questId, failedWith)
   }
 
+  /** A running slot only carries the quest id, so a notification reads the name
+   *  from whichever list still holds the quest at the moment it ends. */
+  function questDisplayName(questId: string): string {
+    const quest =
+      questQueue.value.find(item => item.id === questId) ??
+      quests.value.find(item => item.id === questId)
+    return quest?.config?.messages?.quest_name ?? questId
+  }
+
   async function finishQueuedQuest(questId: string, failedWith?: string) {
     const slot = questSlot(questId)
     if (!slot || claimedCompletions.has(questId)) return
+    const questName = questDisplayName(questId)
     claimedCompletions.add(questId)
     if (failedWith !== undefined) {
       await failQuest(questId, failedWith)
@@ -712,6 +723,7 @@ export const useQuestsStore = defineStore('quests', () => {
     }
 
     releaseQuestSlot(questId)
+    announceQuestEnd(questName)
     questQueue.value = questQueue.value.filter(item => item.id !== questId)
     syncPolling()
     if (runningQuests.value.length === 0) cleanupListeners()
@@ -724,6 +736,7 @@ export const useQuestsStore = defineStore('quests', () => {
   async function finishStandaloneQuest(questId: string, failedWith?: string) {
     const slot = questSlot(questId)
     if (!slot || claimedCompletions.has(questId)) return
+    const questName = questDisplayName(questId)
     claimedCompletions.add(questId)
     if (failedWith !== undefined) {
       await failQuest(questId, failedWith)
@@ -742,6 +755,7 @@ export const useQuestsStore = defineStore('quests', () => {
       return
     }
     releaseQuestSlot(questId)
+    announceQuestEnd(questName)
     syncPolling()
     if (runningQuests.value.length === 0) cleanupListeners()
     void fetchQuests(true, true)
@@ -754,6 +768,7 @@ export const useQuestsStore = defineStore('quests', () => {
   async function failQuest(questId: string, message: string) {
     const slot = questSlot(questId)
     if (!slot) return
+    const questName = questDisplayName(questId)
     const wasQueued = isQueueRunning.value && questQueue.value.some(item => item.id === questId)
     if (slot.gameExe) {
       const executable = slot.gameExe
@@ -766,6 +781,7 @@ export const useQuestsStore = defineStore('quests', () => {
     releaseQuestSlot(questId)
     if (wasQueued) questQueue.value = questQueue.value.filter(item => item.id !== questId)
     error.value = message
+    announceQuestEnd(questName, message)
     syncPolling()
     if (runningQuests.value.length === 0) cleanupListeners()
     if (wasQueued) {

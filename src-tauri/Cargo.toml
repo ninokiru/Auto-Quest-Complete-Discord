@@ -2,6 +2,7 @@
 name = "auto-quest-complete-discord"
 version = "0.0.1"
 edition = "2021"
+license = "GPL-3.0-only"
 default-run = "auto-quest-complete-discord"
 
 [lib]
@@ -50,6 +51,7 @@ windows = { version = "0.62", features = [
     "Win32_Globalization",
     "Win32_Storage_FileSystem",
     "Win32_System_LibraryLoader",
+    "Win32_System_Power",
     "Win32_UI_HiDpi",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",

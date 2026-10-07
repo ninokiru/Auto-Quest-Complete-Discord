@@ -151,7 +151,11 @@
     "submitted": "Dikirim",
     "pending": "Lokal Tertunda",
     "stop_single": "Hentikan quest ini",
-    "running_count": "{count}/{max} berjalan"
+    "running_count": "{count}/{max} berjalan",
+    "notify_done_title": "Quest selesai",
+    "notify_done_body": "{name} sudah selesai.",
+    "notify_failed_title": "Quest gagal",
+    "notify_failed_body": "{name} berhenti: {error}"
   },
   "filter": {
     "type": "Tipe",
@@ -234,7 +238,7 @@
     "about_feature_parallel": "Jalankan hingga lima quest bersamaan dan hentikan salah satunya secara terpisah.",
     "about_feature_accounts": "Berpindah antar beberapa akun Discord dengan riwayat quest terpisah untuk tiap akun.",
     "about_feature_diagnostics": "Filter quest, diagnostik koneksi, dan antarmuka dalam 17 bahasa.",
-    "about_fork": "Auto Quest Complete Discord adalah kelanjutan mandiri berlisensi MIT dari proyek Discord Quest Helper awal, disesuaikan dengan klien Discord saat ini.",
+    "about_fork": "Auto Quest Complete Discord adalah kelanjutan mandiri berlisensi GPL-3.0 dari proyek Discord Quest Helper awal, disesuaikan dengan klien Discord saat ini.",
     "about_defender": "Build tanpa tanda tangan bisa memicu peringatan Windows Defender atau SmartScreen karena aplikasi ini menulis ulang identitas prosesnya dan membaca kredensial lokal. Pastikan berkas diunduh dari repositori ini, lalu izinkan berkas atau tambahkan pengecualian.",
     "about_warning": "Peringatan: Penggunaan alat ini mungkin melanggar Persyaratan Layanan Discord. Gunakan dengan risiko Anda sendiri.",
     "check_prerelease": "Terima Pembaruan Beta",

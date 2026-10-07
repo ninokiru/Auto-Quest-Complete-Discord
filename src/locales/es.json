@@ -151,7 +151,11 @@
     "submitted": "Enviado",
     "pending": "Pendiente",
     "stop_single": "Detener esta misión",
-    "running_count": "{count}/{max} en curso"
+    "running_count": "{count}/{max} en curso",
+    "notify_done_title": "Quest completado",
+    "notify_done_body": "{name} ha terminado.",
+    "notify_failed_title": "Quest con error",
+    "notify_failed_body": "{name} se detuvo: {error}"
   },
   "filter": {
     "type": "Tipo",
@@ -234,7 +238,7 @@
     "about_feature_parallel": "Ejecuta hasta cinco misiones a la vez y detén cualquiera de ellas por separado.",
     "about_feature_accounts": "Cambia entre varias cuentas de Discord y conserva el historial de misiones de cada una.",
     "about_feature_diagnostics": "Filtros de misiones, diagnóstico de conexión e interfaz en 17 idiomas.",
-    "about_fork": "Auto Quest Complete Discord es una continuación independiente, con licencia MIT, del proyecto original Discord Quest Helper, adaptada a los clientes actuales de Discord.",
+    "about_fork": "Auto Quest Complete Discord es una continuación independiente, con licencia GPL-3.0, del proyecto original Discord Quest Helper, adaptada a los clientes actuales de Discord.",
     "about_defender": "Las compilaciones sin firmar pueden avisar a Windows Defender o SmartScreen porque la aplicación reescribe su identidad de proceso y lee credenciales locales. Comprueba que la descarga viene de este repositorio y permite el archivo o añade una exclusión.",
     "about_warning": "Advertencia: El uso de esta herramienta puede violar los Términos de Servicio de Discord. Úsala bajo tu propio riesgo.",
     "check_prerelease": "Recibir actualizaciones beta",

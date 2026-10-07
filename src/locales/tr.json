@@ -151,7 +151,11 @@
     "submitted": "Gönderildi",
     "pending": "Yerel Beklemede",
     "stop_single": "Bu görevi durdur",
-    "running_count": "{count}/{max} çalışıyor"
+    "running_count": "{count}/{max} çalışıyor",
+    "notify_done_title": "Görev tamamlandı",
+    "notify_done_body": "{name} bitti.",
+    "notify_failed_title": "Görev başarısız",
+    "notify_failed_body": "{name} durdu: {error}"
   },
   "filter": {
     "type": "Tür",
@@ -234,7 +238,7 @@
     "about_feature_parallel": "Aynı anda beş göreve kadar çalıştırın ve istediğinizi tek tek durdurun.",
     "about_feature_accounts": "Birden çok Discord hesabı arasında geçiş yapın, her hesabın görev geçmişini ayrı tutun.",
     "about_feature_diagnostics": "Görev filtreleri, bağlantı tanılama ve 17 dilde arayüz.",
-    "about_fork": "Auto Quest Complete Discord, orijinal Discord Quest Helper projesinin MIT lisanslı bağımsız devamıdır ve güncel Discord istemcilerine uyarlanmıştır.",
+    "about_fork": "Auto Quest Complete Discord, orijinal Discord Quest Helper projesinin GPL-3.0 lisanslı bağımsız devamıdır ve güncel Discord istemcilerine uyarlanmıştır.",
     "about_defender": "İmzasız derlemeler Windows Defender veya SmartScreen uyarısı verebilir; çünkü uygulama kendi süreç kimliğini yeniden yazar ve yerel kimlik bilgilerini okur. Dosyanın bu depodan geldiğinden emin olun, ardından dosyaya izin verin veya dışlama ekleyin.",
     "about_warning": "Uyarı: Bu aracın kullanılması Discord Hizmet Şartlarını ihlal edebilir. Riski size ait olmak üzere kullanın.",
     "check_prerelease": "Beta Güncellemelerini Alın",

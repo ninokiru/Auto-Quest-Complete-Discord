@@ -151,7 +151,11 @@
     "submitted": "Soumis",
     "pending": "Local en attente",
     "stop_single": "Arrêter cette quête",
-    "running_count": "{count}/{max} en cours"
+    "running_count": "{count}/{max} en cours",
+    "notify_done_title": "Quête terminée",
+    "notify_done_body": "{name} est terminée.",
+    "notify_failed_title": "Échec de la quête",
+    "notify_failed_body": "{name} s’est arrêtée : {error}"
   },
   "filter": {
     "type": "Type",
@@ -234,7 +238,7 @@
     "about_feature_parallel": "Jusqu'à cinq quêtes en parallèle, avec arrêt individuel de chacune.",
     "about_feature_accounts": "Basculez entre plusieurs comptes Discord et gardez un historique de quêtes par compte.",
     "about_feature_diagnostics": "Filtres de quêtes, diagnostic de connexion et interface disponible en 17 langues.",
-    "about_fork": "Auto Quest Complete Discord est une suite indépendante sous licence MIT du projet d'origine Discord Quest Helper, adaptée aux clients Discord actuels.",
+    "about_fork": "Auto Quest Complete Discord est une suite indépendante sous licence GPL-3.0 du projet d'origine Discord Quest Helper, adaptée aux clients Discord actuels.",
     "about_defender": "Les versions non signées peuvent déclencher une alerte Windows Defender ou SmartScreen, car l'application réécrit son identité de processus et lit des identifiants locaux. Vérifiez que le fichier vient bien de ce dépôt, puis autorisez-le ou ajoutez une exclusion.",
     "about_warning": "Avertissement : L'utilisation de cet outil peut enfreindre les conditions d'utilisation de Discord. Utilisez à vos propres risques.",
     "check_prerelease": "Recevez les mises à jour bêta",

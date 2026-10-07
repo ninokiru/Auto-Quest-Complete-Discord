@@ -9,10 +9,12 @@ mod discord_cdp_commands;
 mod discord_gateway;
 mod game_idle;
 mod game_simulator;
+mod keep_awake;
 mod logger;
 mod models;
 mod platform_capabilities;
 mod quest_completer;
+mod quest_notify;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod runtime_bridge;
 mod runtime_identity;
@@ -979,6 +981,11 @@ async fn get_quests_full(state: State<'_, AppState>) -> Result<serde_json::Value
             .clone()
     };
 
+    // A quest that ends on its own only updates its outcome inside its own
+    // thread, so this poll is where the awake guard first sees that nothing runs
+    // anymore. Every completion path in the page refetches the quest list.
+    refresh_keep_awake(&state.quest_tasks.lock().unwrap());
+
     client
         .get_quests_raw()
         .await
@@ -1465,10 +1472,24 @@ fn register_quest_task(
         join: Some(join),
         outcome,
     });
+    refresh_keep_awake(&tasks);
 }
 
 fn quest_task_is_running(task: &QuestTask) -> bool {
     task.outcome.lock().unwrap().state == QuestTaskState::Running
+}
+
+/// Hold off system sleep for as long as any quest is running. The count has to
+/// come from the running predicate rather than the length of the registry,
+/// because a quest that finishes on its own stays listed until Stop.
+/// Callers pass the registry they already locked; the guard thread never takes
+/// that lock, so this cannot deadlock against a quest finishing concurrently.
+fn refresh_keep_awake(tasks: &[QuestTask]) {
+    if tasks.iter().any(quest_task_is_running) {
+        keep_awake::hold();
+    } else {
+        keep_awake::release();
+    }
 }
 
 fn new_quest_outcome() -> std::sync::Arc<std::sync::Mutex<QuestTaskRecord>> {
@@ -1541,6 +1562,7 @@ async fn stop_quest_tasks(
     for task in take_quest_tasks(state, should_take) {
         cancel_quest_task(task).await;
     }
+    refresh_keep_awake(&state.quest_tasks.lock().unwrap());
 }
 
 async fn stop_quest_internal(state: &State<'_, AppState>) {
@@ -1578,6 +1600,7 @@ async fn ensure_no_active_quest(state: &State<'_, AppState>) -> Result<(), Strin
             await_quest_task(join).await;
         }
     }
+    refresh_keep_awake(&state.quest_tasks.lock().unwrap());
     Ok(())
 }
 
@@ -2173,7 +2196,7 @@ async fn get_quest_decisions_debug(
 #[tauri::command]
 async fn claim_quest_reward(
     quest_id: String,
-    platform: Option<String>,
+    platform: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
     let client = {
@@ -2188,6 +2211,17 @@ async fn claim_quest_reward(
         .claim_quest_reward(&quest_id, platform)
         .await
         .map_err(|e| format!("Failed to claim quest reward: {}", e))
+}
+
+/// Raise an operating-system notification. Only the frontend knows the quest
+/// name, so the text is passed through instead of being looked up here.
+#[tauri::command]
+fn notify_quest_finished(
+    app: tauri::AppHandle,
+    title: String,
+    body: String,
+) -> Result<(), String> {
+    quest_notify::show(&app, &title, &body)
 }
 
 mod rpc;
@@ -2645,6 +2679,7 @@ pub fn run() {
             get_quest_decision_debug,
             get_quest_decisions_debug,
             claim_quest_reward,
+            notify_quest_finished,
             connect_to_discord_rpc,
             disconnect_from_discord_rpc,
             open_in_explorer,
@@ -2790,6 +2825,7 @@ async fn cleanup_local_resources_on_exit() {
     if !APP_EXIT_CLEANUP.claim_local_cleanup() {
         return;
     }
+    keep_awake::release();
     game_simulator::cleanup_all_simulated_games();
     if let Some(client) = take_discord_rpc_client_for_exit() {
         if tokio::time::timeout(APP_EXIT_RPC_DISCONNECT_TIMEOUT, client.discord.disconnect())
@@ -2806,6 +2842,9 @@ fn cleanup_local_resources_on_exit_sync() {
     if !APP_EXIT_CLEANUP.claim_local_cleanup() {
         return;
     }
+    // The fallback path has no AppState, so the awake guard is released through
+    // its own static rather than by re-reading the quest registry.
+    keep_awake::release();
     game_simulator::cleanup_all_simulated_games();
     if let Some(client) = take_discord_rpc_client_for_exit() {
         tauri::async_runtime::spawn(async move {

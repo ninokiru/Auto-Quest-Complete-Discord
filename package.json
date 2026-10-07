@@ -1,6 +1,7 @@
 {
   "name": "auto-quest-complete-discord",
   "version": "0.0.1",
+  "license": "GPL-3.0-only",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.18.0",

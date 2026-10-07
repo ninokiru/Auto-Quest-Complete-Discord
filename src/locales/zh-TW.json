@@ -151,7 +151,11 @@
     "submitted": "已提交",
     "pending": "待提交",
     "stop_single": "停止此任務",
-    "running_count": "{count}/{max} 個進行中"
+    "running_count": "{count}/{max} 個進行中",
+    "notify_done_title": "任務已完成",
+    "notify_done_body": "{name} 已完成。",
+    "notify_failed_title": "任務失敗",
+    "notify_failed_body": "{name} 已停止：{error}"
   },
   "filter": {
     "type": "類型",
@@ -234,7 +238,7 @@
     "about_feature_parallel": "最多同時執行五個任務，並可單獨停止其中任意一個。",
     "about_feature_accounts": "在多組 Discord 帳號之間切換，並為每個帳號保留獨立的任務紀錄。",
     "about_feature_diagnostics": "內建任務篩選、連線診斷，以及支援 17 種語言的介面。",
-    "about_fork": "Auto Quest Complete Discord 為原 Discord Quest Helper 專案的獨立延續，採用 MIT 授權，並已適配目前的 Discord 用戶端。",
+    "about_fork": "Auto Quest Complete Discord 為原 Discord Quest Helper 專案的獨立延續，採用 GPL-3.0 授權，並已適配目前的 Discord 用戶端。",
     "about_defender": "未簽氣的建置可能觸發 Windows Defender 或 SmartScreen 警告，因為本應用程式會覆寫自身處理序識別碼並讀取本機憑證。請確認檔案來自本倉庫，然後允許該檔案或新增排除項目。",
     "about_warning": "警告：使用此工具可能違反 Discord 服務條款。請自行承擔風險。",
     "check_prerelease": "接收測試版更新",

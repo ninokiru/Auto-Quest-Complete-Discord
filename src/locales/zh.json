@@ -153,7 +153,11 @@
     "submitted": "已提交",
     "pending": "待提交",
     "stop_single": "停止该任务",
-    "running_count": "{count}/{max} 个进行中"
+    "running_count": "{count}/{max} 个进行中",
+    "notify_done_title": "任务已完成",
+    "notify_done_body": "{name} 已完成。",
+    "notify_failed_title": "任务失败",
+    "notify_failed_body": "{name} 已停止：{error}"
   },
   "filter": {
     "type": "类型",
@@ -236,7 +240,7 @@
     "about_feature_parallel": "最多同时运行五个任务，并可单独停止其中任意一个。",
     "about_feature_accounts": "在多个 Discord 账号之间切换，并为每个账号保留独立的任务记录。",
     "about_feature_diagnostics": "内置任务筛选、连接诊断，以及支持 17 种语言的界面。",
-    "about_fork": "Auto Quest Complete Discord 是原 Discord Quest Helper 项目的独立延续，采用 MIT 许可，并已适配当前的 Discord 客户端。",
+    "about_fork": "Auto Quest Complete Discord 是原 Discord Quest Helper 项目的独立延续，采用 GPL-3.0 许可，并已适配当前的 Discord 客户端。",
     "about_defender": "未签名的构建可能触发 Windows Defender 或 SmartScreen 警告，因为本应用会重写自身进程标识并读取本机凭据。请确认文件来自本仓库，然后允许该文件或添加排除项。",
     "about_warning": "警告：使用此工具可能违反 Discord 的服务条款。请自行承担风险。",
     "check_prerelease": "接收测试版更新",

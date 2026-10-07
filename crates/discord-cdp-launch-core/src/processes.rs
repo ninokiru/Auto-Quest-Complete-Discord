@@ -105,6 +105,9 @@ pub fn restore_desktop_client_to_normal(
             });
         }
         if crate::cdp::port_is_listening(port) {
+            // The client itself is gone but the endpoint survived, so bring the
+            // user's own app back before reporting the stale port.
+            let _ = crate::launcher::flatpak_spawn(app_id, command.as_deref(), None);
             return Err(LaunchError::ProcessTermination {
                 process: installation.display_name.clone(),
                 details: format!(
@@ -137,6 +140,9 @@ pub fn restore_desktop_client_to_normal(
         });
     }
     if crate::cdp::port_is_listening(port) {
+        // Same reasoning as the Flatpak branch: the installation stopped, so
+        // reopening it in normal mode beats leaving the user no Discord window.
+        best_effort_normal_launch(installation);
         return Err(LaunchError::ProcessTermination {
             process: installation.display_name.clone(),
             details: format!("CDP endpoint on port {port} remained active after shutdown"),
@@ -152,6 +158,16 @@ pub fn restore_desktop_client_to_normal(
         });
     }
     Ok(())
+}
+
+/// Opens an installation in normal mode without failing the caller, used when a
+/// restore already errored and the user must not be left without a client.
+fn best_effort_normal_launch(installation: &crate::ClientInstallation) {
+    if let Some(official) = crate::installation_as_official(installation) {
+        let _ = SystemPlatform.spawn(&official, DiscordLaunchMode::Normal);
+    } else if let Some(vesktop) = crate::installation_as_vesktop(installation) {
+        let _ = crate::vesktop::spawn_vesktop(&vesktop, DiscordLaunchMode::Normal);
+    }
 }
 
 pub fn restore_all_discord_to_normal() -> Result<RestoreResult, LaunchError> {
@@ -246,22 +262,8 @@ fn restore_channel<P: PlatformBackend, C: CdpProbe>(
     platform: &P,
     probe: &C,
 ) -> Result<(), String> {
-    platform
-        .terminate(Some(channel))
-        .map_err(|error| error.to_string())?;
-    wait_for_running_state(platform, channel, false, SHUTDOWN_TIMEOUT)?;
-
-    for port in sessions
-        .iter()
-        .filter(|session| session.channel == channel)
-        .map(|session| session.port)
-    {
-        if !matches!(probe.probe(port), CdpProbeStatus::Unreachable) {
-            return Err(format!(
-                "Discord {} CDP endpoint on port {port} remained active after shutdown.",
-                channel.display_name()
-            ));
-        }
+    if let Err(error) = shutdown_cdp_channel(channel, install, sessions, platform, probe) {
+        return Err(relaunch_after_failed_shutdown(channel, install, platform, error));
     }
 
     platform
@@ -287,6 +289,60 @@ fn restore_channel<P: PlatformBackend, C: CdpProbe>(
         }
     }
     Ok(())
+}
+
+fn shutdown_cdp_channel<P: PlatformBackend, C: CdpProbe>(
+    channel: DiscordChannel,
+    install: &DiscordInstall,
+    sessions: &[RunningCdpSession],
+    platform: &P,
+    probe: &C,
+) -> Result<(), String> {
+    // Stopping the discovered instance by exact executable first spares a
+    // foreign install that happens to share this channel's image name; the
+    // name-based sweep stays as a fallback for processes the path missed.
+    terminate_installation_process_tree(&install.executable_path)
+        .map_err(|error| error.to_string())?;
+    if !matches!(platform.is_running(Some(channel)), Ok(false)) {
+        platform
+            .terminate(Some(channel))
+            .map_err(|error| error.to_string())?;
+    }
+    wait_for_running_state(platform, channel, false, SHUTDOWN_TIMEOUT)?;
+
+    for port in sessions
+        .iter()
+        .filter(|session| session.channel == channel)
+        .map(|session| session.port)
+    {
+        if !matches!(probe.probe(port), CdpProbeStatus::Unreachable) {
+            return Err(format!(
+                "Discord {} CDP endpoint on port {port} remained active after shutdown.",
+                channel.display_name()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A restore that failed part-way must not leave the user with no Discord window
+/// at all, so the channel is opened again in normal mode before the original
+/// shutdown error is reported.
+fn relaunch_after_failed_shutdown<P: PlatformBackend>(
+    channel: DiscordChannel,
+    install: &DiscordInstall,
+    platform: &P,
+    error: String,
+) -> String {
+    // Only when the client really is gone: relaunching over a live instance
+    // would focus the CDP-enabled window and hide the failure.
+    if !matches!(platform.is_running(Some(channel)), Ok(false)) {
+        return error;
+    }
+    match platform.spawn(install, DiscordLaunchMode::Normal) {
+        Ok(_) => format!("{error} Discord opened again in normal mode; verify it appears."),
+        Err(relaunch) => format!("{error} Normal-mode relaunch also failed: {relaunch}"),
+    }
 }
 
 fn wait_for_running_state<P: PlatformBackend>(
@@ -1031,6 +1087,60 @@ mod tests {
         assert!(result.failures[0]
             .error
             .contains("CDP endpoint on port 9223 remained active after shutdown"));
+        assert_eq!(
+            *platform.spawned.lock().unwrap(),
+            vec![(DiscordChannel::Stable, DiscordLaunchMode::Normal)]
+        );
+    }
+
+    struct SurvivingShutdownPlatform {
+        install: DiscordInstall,
+        spawned: Mutex<Vec<(DiscordChannel, DiscordLaunchMode)>>,
+    }
+
+    impl PlatformBackend for SurvivingShutdownPlatform {
+        fn find_installs(&self) -> Result<Vec<DiscordInstall>, LaunchError> {
+            Ok(vec![self.install.clone()])
+        }
+
+        // The client never disappears, so restore must not stack a second
+        // normal-mode launch on top of the instance that is still open.
+        fn is_running(&self, _channel: Option<DiscordChannel>) -> Result<bool, LaunchError> {
+            Ok(true)
+        }
+
+        fn terminate(&self, _channel: Option<DiscordChannel>) -> Result<(), LaunchError> {
+            Ok(())
+        }
+
+        fn spawn(
+            &self,
+            install: &DiscordInstall,
+            mode: DiscordLaunchMode,
+        ) -> Result<Option<u32>, LaunchError> {
+            self.spawned.lock().unwrap().push((install.channel, mode));
+            Ok(Some(1))
+        }
+    }
+
+    #[test]
+    fn live_client_is_not_relaunched_when_shutdown_verification_fails() {
+        let platform = SurvivingShutdownPlatform {
+            install: install(DiscordChannel::Canary, "C:\\DiscordCanary\\DiscordCanary.exe"),
+            spawned: Mutex::new(Vec::new()),
+        };
+        let sessions = vec![RunningCdpSession {
+            channel: DiscordChannel::Canary,
+            port: 9229,
+        }];
+
+        let result = restore_sessions_with_backends(&sessions, &platform, &Probe(HashSet::new()));
+
+        assert_eq!(result.failures.len(), 1);
+        assert!(result
+            .failures
+            .iter()
+            .any(|failure| failure.error.contains("did not exit within 8 seconds")));
         assert!(platform.spawned.lock().unwrap().is_empty());
     }
 

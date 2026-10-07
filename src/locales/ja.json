@@ -151,7 +151,11 @@
     "submitted": "送信済み",
     "pending": "保留中",
     "stop_single": "このクエストを停止",
-    "running_count": "{count}/{max} 件実行中"
+    "running_count": "{count}/{max} 件実行中",
+    "notify_done_title": "クエスト完了",
+    "notify_done_body": "{name} が完了しました。",
+    "notify_failed_title": "クエスト失敗",
+    "notify_failed_body": "{name} が停止しました: {error}"
   },
   "filter": {
     "type": "タイプ",
@@ -234,7 +238,7 @@
     "about_feature_parallel": "最大5つのクエストを同時実行でき、個別に停止することも可能です。",
     "about_feature_accounts": "複数の Discord アカウントを切り替え、アカウントごとのクエスト履歴を保持します。",
     "about_feature_diagnostics": "クエスト絞り込み、接続診断、17言語対応のインターフェースを備えています。",
-    "about_fork": "Auto Quest Complete Discord は元の Discord Quest Helper プロジェクトの独立した継続版で、MIT ライセンスです。現在の Discord クライアントに合わせています。",
+    "about_fork": "Auto Quest Complete Discord は元の Discord Quest Helper プロジェクトの独立した継続版で、GPL-3.0 ライセンスです。現在の Discord クライアントに合わせています。",
     "about_defender": "本アプリはプロセス識別情報を書き換え、ローカルの認証情報を読み込むため、未署名のビルドは Windows Defender や SmartScreen の警告が出ることがあります。入手元がこのリポジトリであることを確認し、ファイルを許可するか除外設定してください。",
     "about_warning": "警告：このツールの使用はDiscordの利用規約に違反する可能性があります。自己責任でご使用ください。",
     "check_prerelease": "ベータ版の更新を受け取る",

@@ -220,7 +220,7 @@ const activeTimeText = computed(() => {
   <Card
     :aria-busy="busy || undefined"
     :class="[
-      'mb-4 overflow-hidden border-border/50 transition-all hover:shadow-md',
+      'overflow-hidden border-border/50 transition-all hover:shadow-md',
       density === 'compact' && 'hover:shadow-sm',
       (busy || isActiveQuest) && 'border-primary/50',
     ]"
@@ -228,13 +228,13 @@ const activeTimeText = computed(() => {
     <!-- Quest Banner/Hero Image -->
     <div
       v-if="quest.config.assets?.hero"
-      :class="density === 'compact' ? 'relative h-16 bg-cover bg-center sm:h-20' : 'relative h-24 bg-cover bg-center'"
+      :class="density === 'compact' ? 'relative h-12 bg-cover bg-center sm:h-16' : 'relative h-24 bg-cover bg-center'"
       :style="{ backgroundImage: `url(https://cdn.discordapp.com/${quest.config.assets.hero})` }"
     >
       <div class="absolute inset-0 bg-gradient-to-t from-card to-transparent" />
     </div>
     
-    <CardHeader :class="density === 'compact' ? 'pb-2' : 'pb-3'">
+    <CardHeader :class="density === 'compact' ? 'pb-1.5' : 'pb-3'">
       <div class="flex justify-between items-start gap-4">
         <div class="flex gap-3 items-start">
           <!-- Application Icon -->
@@ -242,14 +242,14 @@ const activeTimeText = computed(() => {
             v-if="quest.config.application?.icon"
             :src="`https://cdn.discordapp.com/app-icons/${quest.config.application.id}/${quest.config.application.icon}.png?size=64`"
             :alt="quest.config.application?.name"
-            :class="density === 'compact' ? 'w-10 h-10 rounded-md flex-shrink-0' : 'w-12 h-12 rounded-lg flex-shrink-0'"
+            :class="density === 'compact' ? 'w-9 h-9 rounded-md flex-shrink-0' : 'w-12 h-12 rounded-lg flex-shrink-0'"
           />
           <div class="min-w-0 space-y-1">
             <div class="flex flex-wrap items-center gap-2">
               <Badge
                 variant="outline"
                 :class="[
-                  'mb-1',
+                  density === 'compact' ? 'mb-0.5' : 'mb-1',
                   questType === 'video' && 'border-sky-400/60 bg-sky-500/10 text-sky-600 dark:text-sky-400',
                   questType === 'stream' && 'border-violet-400/60 bg-violet-500/10 text-violet-600 dark:text-violet-400',
                   questType === 'activity' && !isCloudGameActivity && 'border-amber-400/60 bg-amber-500/10 text-amber-600 dark:text-amber-400',
@@ -286,7 +286,7 @@ const activeTimeText = computed(() => {
       </div>
     </CardHeader>
     
-    <CardContent :class="density === 'compact' ? 'grid gap-3' : 'grid gap-4'">
+    <CardContent :class="density === 'compact' ? 'grid gap-2' : 'grid gap-4'">
       <div v-if="density === 'compact'" class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div class="flex min-w-0 items-center gap-2">
           <div v-if="compactRewardViews.length > 0" class="flex shrink-0 -space-x-1">
@@ -448,7 +448,12 @@ const activeTimeText = computed(() => {
       <QuestDeveloperDetails v-if="showDeveloperDetails" :quest="quest" />
     </CardContent>
 
-    <CardFooter class="flex min-h-[4.5rem] flex-wrap gap-2 justify-end pt-2">
+    <CardFooter
+      :class="[
+        'flex flex-wrap justify-end gap-2',
+        density === 'compact' ? 'min-h-[3.25rem] pt-1.5' : 'min-h-[4.5rem] pt-2',
+      ]"
+    >
       <slot name="actions"></slot>
     </CardFooter>
   </Card>

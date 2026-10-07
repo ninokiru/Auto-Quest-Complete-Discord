@@ -20,6 +20,8 @@ import LoginPanel from './components/auth/LoginPanel.vue'
 import { persistSettingsSection } from '@/composables/useSettingsNavigation'
 import { supportedLocales } from '@/locales/meta'
 import { isDebugModeEnabled } from '@/utils/debugMode'
+import { notifyQuestFinished } from '@/api/tauri'
+import { setQuestAnnouncer } from '@/utils/questNotifier'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -114,7 +116,23 @@ function setLanguage(lang: string) {
   localStorage.removeItem('language')
 }
 
+// The store knows which quest ended but cannot translate, so the wording is
+// built here, in the language the page is currently showing.
+function announceQuest(questName: string, failedWith?: string) {
+  const title = failedWith === undefined
+    ? t('quest.notify_done_title')
+    : t('quest.notify_failed_title')
+  const body = failedWith === undefined
+    ? t('quest.notify_done_body', { name: questName })
+    : t('quest.notify_failed_body', { name: questName, error: failedWith })
+  notifyQuestFinished(title, body).catch(error => {
+    console.error('Could not raise the quest notification:', error)
+  })
+}
+
 onMounted(() => {
+  setQuestAnnouncer(announceQuest)
+
   // Init Theme
   const savedTheme = localStorage.getItem('theme')
   if (savedTheme) {
@@ -136,6 +154,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  setQuestAnnouncer(null)
   window.removeEventListener('app:navigate', handleAppNavigate)
 })
 

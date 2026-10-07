@@ -151,7 +151,11 @@
     "submitted": "ส่งแล้ว",
     "pending": "รอดำเนินการในท้องถิ่น",
     "stop_single": "หยุดเควสนี้",
-    "running_count": "{count}/{max} กำลังทำงาน"
+    "running_count": "{count}/{max} กำลังทำงาน",
+    "notify_done_title": "เควสต์เสร็จแล้ว",
+    "notify_done_body": "{name} จบแล้ว",
+    "notify_failed_title": "เควสต์ล้มเหลว",
+    "notify_failed_body": "{name} หยุดทำงาน: {error}"
   },
   "filter": {
     "type": "ประเภท",
@@ -234,7 +238,7 @@
     "about_feature_parallel": "รันเควสต์พร้อมกันได้สูงสุดห้ารายการ และหยุดทีละรายการได้",
     "about_feature_accounts": "สลับระหว่างหลายบัญชี Discord พร้อมเก็บประวัติเควสต์แยกกันแต่ละบัญชี",
     "about_feature_diagnostics": "ตัวกรองเควสต์ ระบบวินิจฉัยการเชื่อมต่อ และอินเทอร์เฟซ 17 ภาษา",
-    "about_fork": "Auto Quest Complete Discord เป็นการดำเนินงานต่ออย่างอิสระภายใต้สัญญาอนุญาต MIT จากโครงการ Discord Quest Helper เดิม และปรับให้เข้ากับไคลเอ็นต์ Discord ปัจจุบัน",
+    "about_fork": "Auto Quest Complete Discord เป็นการดำเนินงานต่ออย่างอิสระภายใต้สัญญาอนุญาต GPL-3.0 จากโครงการ Discord Quest Helper เดิม และปรับให้เข้ากับไคลเอ็นต์ Discord ปัจจุบัน",
     "about_defender": "ไฟล์ที่ยังไม่ได้เซ็นอาจทำให้ Windows Defender หรือ SmartScreen เตือน เพราะแอปเขียนข้อมูลประจำตัวโปรเซสของตัวเองใหม่และอ่านข้อมูลรับรองในเครื่อง โปรดยืนยันว่าดาวน์โหลดจากคลังนี้ จากนั้นอนุญาตไฟล์หรือเพิ่มข้อยกเว้น",
     "about_warning": "คำเตือน: การใช้เครื่องมือนี้อาจละเมิดข้อกำหนดในการให้บริการของ Discord ใช้ความเสี่ยงของคุณเอง",
     "check_prerelease": "รับการอัปเดตเบต้า",

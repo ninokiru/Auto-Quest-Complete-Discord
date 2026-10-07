@@ -151,7 +151,11 @@
     "submitted": "Eingereicht",
     "pending": "Lokal ausstehend",
     "stop_single": "Diesen Quest stoppen",
-    "running_count": "{count}/{max} aktiv"
+    "running_count": "{count}/{max} aktiv",
+    "notify_done_title": "Quest abgeschlossen",
+    "notify_done_body": "{name} ist fertig.",
+    "notify_failed_title": "Quest fehlgeschlagen",
+    "notify_failed_body": "{name} wurde beendet: {error}"
   },
   "filter": {
     "type": "Typ",
@@ -234,7 +238,7 @@
     "about_feature_parallel": "Bis zu fünf Quests gleichzeitig, jeder einzelne lässt sich separat beenden.",
     "about_feature_accounts": "Zwischen mehreren Discord-Konten wechseln, mit getrennter Quest-Historie pro Konto.",
     "about_feature_diagnostics": "Quest-Filter, Verbindungsdiagnose und Oberfläche in 17 Sprachen.",
-    "about_fork": "Auto Quest Complete Discord ist eine unabhängige, MIT-lizenzierte Fortführung des ursprünglichen Projekts Discord Quest Helper, angepasst an aktuelle Discord-Clients.",
+    "about_fork": "Auto Quest Complete Discord ist eine unabhängige, GPL-3.0-lizenzierte Fortführung des ursprünglichen Projekts Discord Quest Helper, angepasst an aktuelle Discord-Clients.",
     "about_defender": "Unsignierte Builds können Warnungen von Windows Defender oder SmartScreen auslösen, weil die App ihre Prozess-Identität umschreibt und lokale Anmeldedaten liest. Stelle sicher, dass die Datei aus diesem Repository stammt, und erlaube sie oder füge eine Ausnahme hinzu.",
     "about_warning": "Warnung: Die Verwendung dieses Tools verstößt möglicherweise gegen die Nutzungsbedingungen von Discord. Die Nutzung erfolgt auf eigene Gefahr.",
     "check_prerelease": "Erhalten Sie Beta-Updates",

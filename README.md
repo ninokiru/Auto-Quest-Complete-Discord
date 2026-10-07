@@ -12,7 +12,7 @@
 
 <p>⭐ <strong>If you find this helpful, please give it a star!</strong> ⭐</p>
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue.svg)](https://github.com/ninokiru/Auto-Quest-Complete-Discord/releases)
 [![Tauri](https://img.shields.io/badge/tauri-2-blue.svg)](https://tauri.app/)
 [![Vue](https://img.shields.io/badge/vue-3.5-green.svg)](https://vuejs.org/)
@@ -44,6 +44,8 @@ Download the latest build from [GitHub Releases](https://github.com/ninokiru/Aut
 | Linux x86_64 Installer | `auto-quest-complete-discord-Linux-x86_64-<version>.deb` | Install the Debian package with the command below. |
 | Linux x86_64 Portable | `auto-quest-complete-discord-Linux-x86_64-<version>.AppImage` | Make the AppImage executable and run it with the commands below. |
 
+Desktop only. Android and iOS are not supported and no build is published for them: the app attaches to the desktop Discord client over Chrome DevTools Protocol, which the mobile apps do not expose.
+
 On macOS, remove the quarantine attribute if needed:
 
 ```bash
@@ -59,6 +61,8 @@ Releases are **not code-signed** — signing certificates cost money and this pr
 3. If Defender removed the file, restore it from quarantine and add its folder to **Virus & threat protection → Exclusions** before launching again.
 
 Every published build comes from the commit tagged with that version, and the GitHub Actions log for the run is public, so the binary can be traced back to this source tree.
+
+On VirusTotal you will typically see 1-3 of 70 engines report a name like `Generic ML PUA` or `Malicious`. `PUA` means "potentially unwanted application", not a virus, and those verdicts come from machine-learning engines rather than a matched malware signature. The engines that ship signature databases stay silent on the same file. If a build you downloaded shows a much higher count than that, do not run it and open an issue instead.
 
 On Linux, install the Debian package like this:
 
@@ -167,14 +171,18 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
 
 ## 📄 License
 
-MIT License — see the [LICENSE](LICENSE) file.
+GNU General Public License v3.0 only — see the [LICENSE](LICENSE) file.
+
+In practice this means you are free to use, study, change, and redistribute this app, but **any derivative you distribute must stay under GPL-3.0 with its complete source code available**, and it must carry the same notice that it comes without warranty. Building your own private copy for yourself has no such obligation.
+
+Contributions to this repository are licensed under GPL-3.0-only as well.
 
 
 ## 🙏 Credits
 
 **Forked from**
 
-- `discord-quest-helper` by Masterain (MIT licensed) — this repository is a renamed continuation of that project, maintained as **Lumina** under `ninokiru/Auto-Quest-Complete-Discord` and starting again at `0.0.1`. Upstream authorship of the original project remains credited to Masterain.
+- `discord-quest-helper` by Masterain (MIT licensed) — this repository is a renamed continuation of that project, maintained as **Lumina** under `ninokiru/Auto-Quest-Complete-Discord` and starting again at `0.0.1`. Upstream authorship of the original project remains credited to Masterain. MIT permits the code it covers to be redistributed under a copyleft license, so this fork is released under GPL-3.0-only; the original MIT notice stays published in that project's own repository.
 
 **Inspiration & Resources**
 - [markterence/discord-quest-completer](https://github.com/markterence/discord-quest-completer)

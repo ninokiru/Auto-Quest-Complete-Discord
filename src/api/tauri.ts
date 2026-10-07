@@ -256,8 +256,14 @@ export async function getQuestDecisionsDebug(placement: number, num: number): Pr
   return await invoke('get_quest_decisions_debug', { placement, num })
 }
 
-export async function claimQuestReward(questId: string, platform?: string): Promise<unknown> {
+export async function claimQuestReward(questId: string, platform?: number): Promise<unknown> {
   return await invoke('claim_quest_reward', { questId, platform })
+}
+
+/** Raise an operating-system notification. The text arrives already translated:
+ *  the backend knows quest ids, the page knows the quest name and the locale. */
+export async function notifyQuestFinished(title: string, body: string): Promise<void> {
+  return await invoke('notify_quest_finished', { title, body })
 }
 
 export async function startVideoQuest(
