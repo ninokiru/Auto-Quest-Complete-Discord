@@ -65,12 +65,14 @@ mod platform {
             if !ENTRY_ADDED.load(Ordering::SeqCst) {
                 let mut registration = entry;
                 registration.uFlags = NIF_ICON;
-                if Shell_NotifyIconW(NIM_ADD, &registration).as_bool() {
+                let added = Shell_NotifyIconW(NIM_ADD, &registration);
+                if added.as_bool() {
                     ENTRY_ADDED.store(true, Ordering::SeqCst);
                 }
             }
             entry.uFlags = NIF_INFO;
-            if Shell_NotifyIconW(NIM_MODIFY, &entry).as_bool() {
+            let shown = Shell_NotifyIconW(NIM_MODIFY, &entry);
+            if shown.as_bool() {
                 return Ok(());
             }
         }

@@ -263,7 +263,9 @@ fn restore_channel<P: PlatformBackend, C: CdpProbe>(
     probe: &C,
 ) -> Result<(), String> {
     if let Err(error) = shutdown_cdp_channel(channel, install, sessions, platform, probe) {
-        return Err(relaunch_after_failed_shutdown(channel, install, platform, error));
+        return Err(relaunch_after_failed_shutdown(
+            channel, install, platform, error,
+        ));
     }
 
     platform
@@ -1126,7 +1128,10 @@ mod tests {
     #[test]
     fn live_client_is_not_relaunched_when_shutdown_verification_fails() {
         let platform = SurvivingShutdownPlatform {
-            install: install(DiscordChannel::Canary, "C:\\DiscordCanary\\DiscordCanary.exe"),
+            install: install(
+                DiscordChannel::Canary,
+                "C:\\DiscordCanary\\DiscordCanary.exe",
+            ),
             spawned: Mutex::new(Vec::new()),
         };
         let sessions = vec![RunningCdpSession {
