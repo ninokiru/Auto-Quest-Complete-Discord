@@ -1651,15 +1651,19 @@ export const useQuestsStore = defineStore('quests', () => {
           if (vals.length > 0) progress = vals[0].value || 0
         }
 
-        // Skip without occupying a slot: already done, or a real Stream quest,
-        // which needs actual broadcasting and has no game-simulation path
-        // (startPlay needs application.id). Matches how Home treats stream quests.
-        if (queueItem.user_status?.completed_at || isManualStreamQuest(queueItem)) {
+        // Skip without occupying a slot: already done, a real Stream quest,
+        // which needs actual broadcasting, or an Activity quest, whose progress
+        // only comes from checkpoints in the activity window the user launched.
+        // startPlay would pace them by their checkpoint count as if it were
+        // seconds and finalize a quest that never progressed. (Matches how Home
+        // keeps these out of the batch dialogs.)
+        const questKind = getQuestKind(queueItem)
+        if (queueItem.user_status?.completed_at || isManualStreamQuest(queueItem)
+          || questKind === 'activity') {
           questQueue.value = questQueue.value.filter(item => item.id !== queueItem.id)
           continue
         }
 
-        const questKind = getQuestKind(queueItem)
         console.log(`Queue item type: ${questKind}`)
         try {
           if (questKind === 'video') {

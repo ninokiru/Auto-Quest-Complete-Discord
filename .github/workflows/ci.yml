@@ -17,10 +17,10 @@ on:
 permissions:
   contents: read
 
-# Superseded PR updates / develop pushes cancel their in-flight run instead of
-# queueing another full 3-platform build.
+# PR and push events for the same source branch share one run. Updates cancel
+# the in-flight build; fork repositories keep separate concurrency groups.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 env:
@@ -317,7 +317,7 @@ jobs:
             target/${{ matrix.cdp_target }}/release/bundle/identity-smoke-macos-renamed.json
 
       - name: Upload desktop identity manifests
-        if: matrix.platform == 'ubuntu-22.04' || matrix.platform == 'macos-14'
+        if: always() && (matrix.platform == 'ubuntu-22.04' || matrix.platform == 'macos-14')
         uses: actions/upload-artifact@v7
         with:
           name: runtime-identity-${{ matrix.cdp_target }}
