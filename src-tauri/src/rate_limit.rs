@@ -34,7 +34,9 @@ static ROUTE_BUCKETS: Lazy<Mutex<HashMap<String, String>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 // Accessors instead of `&ROUTE_*` at each call site: dereferencing a `Lazy` through
@@ -119,7 +121,9 @@ fn header_hold(headers: &HeaderMap) -> Option<Duration> {
 }
 
 fn bucket_of(headers: &HeaderMap) -> Option<String> {
-    Some(bucket_key(headers.get("x-ratelimit-bucket")?.to_str().ok()?))
+    Some(bucket_key(
+        headers.get("x-ratelimit-bucket")?.to_str().ok()?,
+    ))
 }
 
 /// A request's place in the queue for its route and, once Discord names it, its
@@ -133,7 +137,9 @@ impl Gate {
     /// cloned or built, which leaves the request behaving the way it did before
     /// this module existed rather than gating it under a wrong key.
     pub fn from_builder(builder: &RequestBuilder) -> Option<Gate> {
-        let request = builder.try_clone().and_then(|builder| builder.build().ok())?;
+        let request = builder
+            .try_clone()
+            .and_then(|builder| builder.build().ok())?;
         Some(Gate {
             route: route_key(request.method().as_str(), request.url().path()),
         })
@@ -215,7 +221,10 @@ mod tests {
 
     #[test]
     fn keeps_version_and_named_segments_intact() {
-        assert_eq!(route_key("GET", "/api/v9/quests/@me"), "GET /api/v9/quests/@me");
+        assert_eq!(
+            route_key("GET", "/api/v9/quests/@me"),
+            "GET /api/v9/quests/@me"
+        );
         assert_ne!(
             route_key("GET", "/api/v9/quests/@me"),
             route_key("POST", "/api/v9/quests/@me")
@@ -240,7 +249,10 @@ mod tests {
 
         schedule(&mut table, &keys, now, ROUTE_GAP);
         assert_eq!(schedule(&mut table, &keys, now, ROUTE_GAP), now + ROUTE_GAP);
-        assert_eq!(schedule(&mut table, &keys, now, ROUTE_GAP), now + ROUTE_GAP * 2);
+        assert_eq!(
+            schedule(&mut table, &keys, now, ROUTE_GAP),
+            now + ROUTE_GAP * 2
+        );
     }
 
     #[test]
@@ -250,7 +262,10 @@ mod tests {
         let keys = vec![key("POST /a")];
 
         reserve(&mut table, &keys, now, Duration::from_secs(5));
-        assert_eq!(schedule(&mut table, &keys, now, ROUTE_GAP), now + Duration::from_secs(5));
+        assert_eq!(
+            schedule(&mut table, &keys, now, ROUTE_GAP),
+            now + Duration::from_secs(5)
+        );
     }
 
     #[test]
@@ -275,7 +290,10 @@ mod tests {
         let claim = vec![key("POST /c"), key("bucket:b7")];
 
         reserve(&mut table, &enroll, now, Duration::from_secs(3));
-        assert_eq!(schedule(&mut table, &claim, now, ROUTE_GAP), now + Duration::from_secs(3));
+        assert_eq!(
+            schedule(&mut table, &claim, now, ROUTE_GAP),
+            now + Duration::from_secs(3)
+        );
     }
 
     #[test]
