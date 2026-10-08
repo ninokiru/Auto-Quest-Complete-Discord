@@ -30,10 +30,8 @@ These binaries are **not code-signed**. The app rewrites its own process identit
 | --- | --- |
 | `auto-quest-complete-discord-Windows-x64-0.0.1-setup.exe` | Windows installer (NSIS) |
 | `auto-quest-complete-discord-Windows-x64-0.0.1-portable.zip` | Windows portable, no installation |
-| `auto-quest-complete-discord-MacOS-arm64-0.0.1.dmg` | macOS Apple Silicon installer |
-| `auto-quest-complete-discord-MacOS-arm64-0.0.1.zip` | macOS Apple Silicon portable app |
-| `auto-quest-complete-discord-Linux-x86_64-0.0.1.deb` | Debian / Ubuntu package |
-| `auto-quest-complete-discord-Linux-x86_64-0.0.1.AppImage` | Any other x86_64 Linux distribution |
+
+This release publishes **Windows x64 only**. macOS (Apple Silicon) and Linux (x86_64 `.deb` / AppImage) builds are still fully supported by the source tree and are compiled and tested in CI — only their release publishing is temporarily switched off to keep a release run on one runner. They will return in a later release. If you need one of them now, build it from source (`pnpm tauri:build`).
 
 > [!WARNING]
 > Automating Discord quests can violate Discord's Terms of Service and may put your account at risk. Use it on an account you are prepared to lose.

@@ -239,7 +239,7 @@
     "about_feature_game": "Meniru klien game sehingga quest game selesai tanpa mengunduh atau memasang game asli.",
     "about_feature_parallel": "Jalankan hingga lima quest bersamaan dan hentikan salah satunya secara terpisah.",
     "about_feature_accounts": "Berpindah antar beberapa akun Discord dengan riwayat quest terpisah untuk tiap akun.",
-    "about_feature_diagnostics": "Filter quest, diagnostik koneksi, dan antarmuka dalam 17 bahasa.",
+    "about_feature_diagnostics": "Filter quest, diagnostik koneksi, dan antarmuka dalam 16 bahasa.",
     "about_fork": "Auto Quest Complete Discord adalah kelanjutan mandiri berlisensi GPL-3.0 dari proyek Discord Quest Helper awal, disesuaikan dengan klien Discord saat ini.",
     "about_defender": "Build tanpa tanda tangan bisa memicu peringatan Windows Defender atau SmartScreen karena aplikasi ini menulis ulang identitas prosesnya dan membaca kredensial lokal. Pastikan berkas diunduh dari repositori ini, lalu izinkan berkas atau tambahkan pengecualian.",
     "about_warning": "Peringatan: Penggunaan alat ini mungkin melanggar Persyaratan Layanan Discord. Gunakan dengan risiko Anda sendiri.",

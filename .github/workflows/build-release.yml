@@ -237,16 +237,22 @@ jobs:
             x-target: 'win32-x64'
             cdp_target: 'x86_64-pc-windows-msvc'
             runner-ext: '.exe'
-          - platform: 'macos-14'  # Apple Silicon M1/M2 runner
-            args: '--no-sign --target aarch64-apple-darwin'
-            x-target: 'darwin-arm64'
-            cdp_target: 'aarch64-apple-darwin'
-            runner-ext: ''
-          - platform: 'ubuntu-22.04'  # AppImage baseline (WebKitGTK 4.1)
-            args: '--bundles deb,appimage'
-            x-target: 'linux-x64'
-            cdp_target: 'x86_64-unknown-linux-gnu'
-            runner-ext: ''
+          # TEMP Windows-only publishing: the two entries below are switched off
+          # so a release runs on one runner. macOS bundling is the slowest job and
+          # the Linux one adds four headless GUI smoke tests. To publish them again,
+          # uncomment these entries and the blocks tagged TEMP in the `release` job.
+          # Nothing else needs restoring — the crates, sidecars, and platform code
+          # are unchanged, and `quality` still builds and tests the Linux tree.
+          # - platform: 'macos-14'  # Apple Silicon M1/M2 runner
+          #   args: '--no-sign --target aarch64-apple-darwin'
+          #   x-target: 'darwin-arm64'
+          #   cdp_target: 'aarch64-apple-darwin'
+          #   runner-ext: ''
+          # - platform: 'ubuntu-22.04'  # AppImage baseline (WebKitGTK 4.1)
+          #   args: '--bundles deb,appimage'
+          #   x-target: 'linux-x64'
+          #   cdp_target: 'x86_64-unknown-linux-gnu'
+          #   runner-ext: ''
 
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 90
@@ -551,17 +557,20 @@ jobs:
           name: tauri-win-nsis
           path: tauri-win-nsis
 
-      - name: Download macOS artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: tauri-macos-arm64-release
-          path: tauri-macos-arm64-release
+      # TEMP (Windows-only publishing): these two artifacts do not exist while the
+      # macOS/Linux matrix entries are commented out, and a named
+      # download-artifact step fails when its artifact is missing.
+      # - name: Download macOS artifact
+      #   uses: actions/download-artifact@v8
+      #   with:
+      #     name: tauri-macos-arm64-release
+      #     path: tauri-macos-arm64-release
 
-      - name: Download Linux artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: tauri-linux-x64-release
-          path: tauri-linux-x64-release
+      # - name: Download Linux artifact
+      #   uses: actions/download-artifact@v8
+      #   with:
+      #     name: tauri-linux-x64-release
+      #     path: tauri-linux-x64-release
 
       - name: prepare files
         env:
@@ -587,42 +596,46 @@ jobs:
           fi
           cp "$nsis" "./build/auto-quest-complete-discord-Windows-x64-$version-setup.exe"
           
-          # Package macOS build: `files:` below declares both a .dmg and a
-          # portable .app zip, so emit whichever the build actually produced.
-          cd tauri-macos-arm64-release
-          build_dir="$(cd ../build && pwd -P)"
-          dmg="$(find . -maxdepth 3 -name '*.dmg' -type f | head -n 1 || true)"
-          app="$(find . -maxdepth 4 -type d -name '*.app' | head -n 1 || true)"
-          if [ -z "$dmg" ] && [ -z "$app" ]; then
-            echo "::error::No macOS .dmg or .app inside tauri-macos-arm64-release"
-            find . -maxdepth 3 | head -n 40
-            exit 1
-          fi
-          [ -n "$dmg" ] && cp "$dmg" "$build_dir/auto-quest-complete-discord-MacOS-arm64-$version.dmg"
-          if [ -n "$app" ]; then
-            # -y keeps the bundle's Versions/ symlinks instead of duplicating them.
-            (cd "$(dirname "$app")" && zip -qry "$build_dir/auto-quest-complete-discord-MacOS-arm64-$version.zip" "$(basename "$app")")
-          fi
-          cd ..
+          # TEMP (Windows-only publishing): the macOS and Linux asset assembly is
+          # disabled with their matrix entries. Keep the guard style: it reads from
+          # artifact directories that only exist when those jobs run.
+          # # Package macOS build: `files:` below declares both a .dmg and a
+          # # portable .app zip, so emit whichever the build actually produced.
+          # cd tauri-macos-arm64-release
+          # build_dir="$(cd ../build && pwd -P)"
+          # dmg="$(find . -maxdepth 3 -name '*.dmg' -type f | head -n 1 || true)"
+          # app="$(find . -maxdepth 4 -type d -name '*.app' | head -n 1 || true)"
+          # if [ -z "$dmg" ] && [ -z "$app" ]; then
+          #   echo "::error::No macOS .dmg or .app inside tauri-macos-arm64-release"
+          #   find . -maxdepth 3 | head -n 40
+          #   exit 1
+          # fi
+          # [ -n "$dmg" ] && cp "$dmg" "$build_dir/auto-quest-complete-discord-MacOS-arm64-$version.dmg"
+          # if [ -n "$app" ]; then
+          #   # -y keeps the bundle's Versions/ symlinks instead of duplicating them.
+          #   (cd "$(dirname "$app")" && zip -qry "$build_dir/auto-quest-complete-discord-MacOS-arm64-$version.zip" "$(basename "$app")")
+          # fi
+          # cd ..
 
-          # Copy Linux AppImage + DEB (paths are flattened by upload-artifact)
-          appimage=$(find tauri-linux-x64-release -name '*.AppImage' | head -n 1)
-          deb=$(find tauri-linux-x64-release -name '*.deb' | head -n 1)
-          if [ -z "$appimage" ]; then
-            echo "::error::No Linux AppImage found in tauri-linux-x64-release"
-            exit 1
-          fi
-          cp "$appimage" ./build/auto-quest-complete-discord-Linux-x86_64-$version.AppImage
-          if [ -z "$deb" ]; then
-            echo "::error::No Linux .deb found in tauri-linux-x64-release"
-            exit 1
-          fi
-          cp "$deb" ./build/auto-quest-complete-discord-Linux-x86_64-$version.deb
+          # # Copy Linux AppImage + DEB (paths are flattened by upload-artifact)
+          # appimage=$(find tauri-linux-x64-release -name '*.AppImage' | head -n 1)
+          # deb=$(find tauri-linux-x64-release -name '*.deb' | head -n 1)
+          # if [ -z "$appimage" ]; then
+          #   echo "::error::No Linux AppImage found in tauri-linux-x64-release"
+          #   exit 1
+          # fi
+          # cp "$appimage" ./build/auto-quest-complete-discord-Linux-x86_64-$version.AppImage
+          # if [ -z "$deb" ]; then
+          #   echo "::error::No Linux .deb found in tauri-linux-x64-release"
+          #   exit 1
+          # fi
+          # cp "$deb" ./build/auto-quest-complete-discord-Linux-x86_64-$version.deb
 
           echo "win_portable=auto-quest-complete-discord-Windows-x64-$version-portable" >> $GITHUB_ENV
           echo "win_exe=auto-quest-complete-discord-Windows-x64-$version-setup" >> $GITHUB_ENV
-          echo "macos_build_release=auto-quest-complete-discord-MacOS-arm64-$version" >> $GITHUB_ENV
-          echo "linux_build_release=auto-quest-complete-discord-Linux-x86_64-$version" >> $GITHUB_ENV
+          # TEMP: unset, so `files:` must not reference them either.
+          # echo "macos_build_release=auto-quest-complete-discord-MacOS-arm64-$version" >> $GITHUB_ENV
+          # echo "linux_build_release=auto-quest-complete-discord-Linux-x86_64-$version" >> $GITHUB_ENV
 
       - name: Create and Upload Release
         id: create_release
@@ -631,13 +644,15 @@ jobs:
           tag_name: ${{ env.version }}
           name: ${{ env.version }}
           body_path: ./public/version-desc.txt
+          # TEMP (Windows-only publishing): the macOS and Linux asset lines are
+          # dropped from this list along with their matrix entries, the two Download
+          # steps, and the env exports in `prepare files`. Inside a block scalar a
+          # `#` would be a literal file pattern, so the note lives here instead:
+          #   build path for env.macos_build_release, .dmg and .zip
+          #   build path for env.linux_build_release, .AppImage and .deb
           files: |
             ./build/${{ env.win_portable }}.zip
             ./build/${{ env.win_exe }}.exe
-            ./build/${{ env.macos_build_release }}.dmg
-            ./build/${{ env.macos_build_release }}.zip
-            ./build/${{ env.linux_build_release }}.AppImage
-            ./build/${{ env.linux_build_release }}.deb
           prerelease: ${{ env.PRERELEASE }}
           draft: true
         env:

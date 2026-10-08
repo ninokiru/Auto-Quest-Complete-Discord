@@ -239,7 +239,7 @@
     "about_feature_game": "模擬遊戲用戶端，無需下載或安裝真實遊戲即可完成遊戲任務。",
     "about_feature_parallel": "最多同時執行五個任務，並可單獨停止其中任意一個。",
     "about_feature_accounts": "在多組 Discord 帳號之間切換，並為每個帳號保留獨立的任務紀錄。",
-    "about_feature_diagnostics": "內建任務篩選、連線診斷，以及支援 17 種語言的介面。",
+    "about_feature_diagnostics": "內建任務篩選、連線診斷，以及支援 16 種語言的介面。",
     "about_fork": "Auto Quest Complete Discord 為原 Discord Quest Helper 專案的獨立延續，採用 GPL-3.0 授權，並已適配目前的 Discord 用戶端。",
     "about_defender": "未簽氣的建置可能觸發 Windows Defender 或 SmartScreen 警告，因為本應用程式會覆寫自身處理序識別碼並讀取本機憑證。請確認檔案來自本倉庫，然後允許該檔案或新增排除項目。",
     "about_warning": "警告：使用此工具可能違反 Discord 服務條款。請自行承擔風險。",

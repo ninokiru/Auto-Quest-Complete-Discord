@@ -239,7 +239,7 @@
     "about_feature_game": "게임 클라이언트를 흉내 내어 실제 게임을 설치하지 않고 게임 퀘스트를 완료합니다.",
     "about_feature_parallel": "최대 5개의 퀘스트를 동시에 실행하고 각각 개별 중지할 수 있습니다.",
     "about_feature_accounts": "여러 Discord 계정을 전환하고 계정별 퀘스트 기록을 따로 보관합니다.",
-    "about_feature_diagnostics": "퀘스트 필터, 연결 진단, 17개 언어 인터페이스를 제공합니다.",
+    "about_feature_diagnostics": "퀘스트 필터, 연결 진단, 16개 언어 인터페이스를 제공합니다.",
     "about_fork": "Auto Quest Complete Discord는 원 프로젝트 Discord Quest Helper의 독립적인 GPL-3.0 라이선스 계승 버전이며 최신 Discord 클라이언트에 맞게 조정되었습니다.",
     "about_defender": "이 앱은 프로세스 식별 정보를 다시 쓰고 로컬 자격 증명을 읽기 때문에 서명되지 않은 빌드는 Windows Defender 또는 SmartScreen 경고가 뜰 수 있습니다. 이 저장소에서 받은 파일인지 확인한 뒤 허용하거나 제외 목록에 추가하세요.",
     "about_warning": "경고: 이 도구의 사용은 Discord 서비스 약관을 위반할 수 있습니다. 본인의 책임 하에 사용하세요.",

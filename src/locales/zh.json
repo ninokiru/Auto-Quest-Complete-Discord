@@ -241,7 +241,7 @@
     "about_feature_game": "模拟游戏客户端，无需下载或安装真实游戏即可完成游戏任务。",
     "about_feature_parallel": "最多同时运行五个任务，并可单独停止其中任意一个。",
     "about_feature_accounts": "在多个 Discord 账号之间切换，并为每个账号保留独立的任务记录。",
-    "about_feature_diagnostics": "内置任务筛选、连接诊断，以及支持 17 种语言的界面。",
+    "about_feature_diagnostics": "内置任务筛选、连接诊断，以及支持 16 种语言的界面。",
     "about_fork": "Auto Quest Complete Discord 是原 Discord Quest Helper 项目的独立延续，采用 GPL-3.0 许可，并已适配当前的 Discord 客户端。",
     "about_defender": "未签名的构建可能触发 Windows Defender 或 SmartScreen 警告，因为本应用会重写自身进程标识并读取本机凭据。请确认文件来自本仓库，然后允许该文件或添加排除项。",
     "about_warning": "警告：使用此工具可能违反 Discord 的服务条款。请自行承担风险。",

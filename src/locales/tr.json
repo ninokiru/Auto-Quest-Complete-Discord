@@ -239,7 +239,7 @@
     "about_feature_game": "Oyun görevlerini gerçek oyunu indirmeden ve kurmadan tamamlayan bir oyun istemcisi taklit eder.",
     "about_feature_parallel": "Aynı anda beş göreve kadar çalıştırın ve istediğinizi tek tek durdurun.",
     "about_feature_accounts": "Birden çok Discord hesabı arasında geçiş yapın, her hesabın görev geçmişini ayrı tutun.",
-    "about_feature_diagnostics": "Görev filtreleri, bağlantı tanılama ve 17 dilde arayüz.",
+    "about_feature_diagnostics": "Görev filtreleri, bağlantı tanılama ve 16 dilde arayüz.",
     "about_fork": "Auto Quest Complete Discord, orijinal Discord Quest Helper projesinin GPL-3.0 lisanslı bağımsız devamıdır ve güncel Discord istemcilerine uyarlanmıştır.",
     "about_defender": "İmzasız derlemeler Windows Defender veya SmartScreen uyarısı verebilir; çünkü uygulama kendi süreç kimliğini yeniden yazar ve yerel kimlik bilgilerini okur. Dosyanın bu depodan geldiğinden emin olun, ardından dosyaya izin verin veya dışlama ekleyin.",
     "about_warning": "Uyarı: Bu aracın kullanılması Discord Hizmet Şartlarını ihlal edebilir. Riski size ait olmak üzere kullanın.",
