@@ -495,10 +495,10 @@ pub(crate) async fn verify_primary_discord_target(port: u16) -> Result<VerifiedD
         // Every later evaluation re-checks this generation inside the page, so
         // proceeding cannot run code against a replaced document, and aborting here
         // killed healthy quests at their first checkpoint.
-        Ok(VerifiedDiscordTarget {
+        return Ok(VerifiedDiscordTarget {
             target: bound.target,
             generation: bound.generation,
-        })
+        });
     }
     let probe = tauri::async_runtime::spawn_blocking(move || {
         discord_cdp_launch_core::detailed_probe_cdp(port)
