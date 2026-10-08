@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 use discord_cdp_launch_core::{
-    is_discord_target, list_cdp_targets, CdpListError, CdpRuntime, CdpTarget,
+    is_discord_target, list_cdp_targets, CdpListError, CdpRuntime, CdpRuntimeStatus, CdpTarget,
 };
 use futures_util::{future::join_all, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -271,6 +271,59 @@ struct BoundDiscordTarget {
     generation: String,
 }
 
+/// Consecutive silent monitor rounds before a pinned document is treated as lost.
+const MONITOR_PROBE_FAILURES: u32 = 5;
+/// Consecutive unresponsive rounds of the bound primary target before the task
+/// aborts. Each round is a 1s tick plus a probe bounded by its own budget.
+const MONITOR_STALL_ROUNDS: u32 = 12;
+
+/// Outcome of one read of the bound primary target, split by how much it proves.
+/// Only a read-back document generation that differs, or a debugger endpoint that
+/// is gone, is final. A renderer that does not answer in time, or that answers
+/// while still reporting itself as loading, says nothing: Discord throttles a
+/// backgrounded window and stalls the main process while an Activity loads, which
+/// previously aborted healthy quests at their first checkpoint.
+#[derive(Clone, Copy)]
+enum BoundTargetProbe {
+    Alive,
+    Reloaded,
+    Closed,
+    Stalled,
+}
+
+fn classify_bound_target_probe(runtime: &CdpRuntime, bound_generation: &str) -> BoundTargetProbe {
+    match runtime.document_generation.as_deref() {
+        // A read-back generation proves the document only once the page reports
+        // itself loaded. `readyState` still `loading` answers but says nothing
+        // about the final state, so it stays inconclusive and is probed again.
+        Some(generation) if generation == bound_generation => {
+            if runtime.runtime_status == CdpRuntimeStatus::Ready {
+                BoundTargetProbe::Alive
+            } else {
+                BoundTargetProbe::Stalled
+            }
+        }
+        Some(_) => BoundTargetProbe::Reloaded,
+        // The TCP, handshake or close path failed, so this target cannot come back.
+        None if !runtime.web_socket_reachable => BoundTargetProbe::Closed,
+        None => match runtime.reason_code.as_deref() {
+            Some("target_closed") => BoundTargetProbe::Closed,
+            _ => BoundTargetProbe::Stalled,
+        },
+    }
+}
+
+async fn probe_bound_target(bound: &BoundDiscordTarget) -> Result<BoundTargetProbe> {
+    let port = bound.port;
+    let target = bound.target.clone();
+    let generation = bound.generation.clone();
+    let runtime = tauri::async_runtime::spawn_blocking(move || {
+        discord_cdp_launch_core::verify_cdp_target(port, &target)
+    })
+    .await?;
+    Ok(classify_bound_target_probe(&runtime, &generation))
+}
+
 tokio::task_local! {
     static TASK_TARGET: std::cell::RefCell<Option<BoundDiscordTarget>>;
     static TASK_DOCUMENTS: std::cell::RefCell<std::collections::HashMap<String, String>>;
@@ -296,17 +349,25 @@ pub async fn with_pinned_discord_session<T, F: std::future::Future<Output = Resu
 }
 
 async fn watch_pinned_documents() -> anyhow::Error {
-    const MONITOR_PROBE_FAILURES: u32 = 3;
     let mut probe_failures: std::collections::HashMap<String, u32> =
         std::collections::HashMap::new();
+    let mut stalled_rounds: u32 = 0;
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
         let bound = TASK_TARGET.with(|slot| slot.borrow().clone());
         let Some(bound) = bound else {
             continue;
         };
-        if let Err(error) = get_primary_discord_target(bound.port).await {
-            return error;
+        match probe_bound_target(&bound).await {
+            Ok(BoundTargetProbe::Alive) => stalled_rounds = 0,
+            Ok(BoundTargetProbe::Reloaded) => return document_reloaded(),
+            Ok(BoundTargetProbe::Closed) => return bound_target_closed(),
+            Ok(BoundTargetProbe::Stalled) | Err(_) => {
+                stalled_rounds += 1;
+                if stalled_rounds >= MONITOR_STALL_ROUNDS {
+                    return bound_target_stalled();
+                }
+            }
         }
         let documents = TASK_DOCUMENTS.with(|slot| slot.borrow().clone());
         for (ws_url, expected) in documents {
@@ -316,8 +377,8 @@ async fn watch_pinned_documents() -> anyhow::Error {
                 }
                 // A different timeOrigin is a replaced document, so it is final.
                 Ok(_) => return target_invalidated(),
-                // A busy or throttled renderer can miss one probe; the foreground
-                // path retries three times, so the monitor waits for real loss.
+                // A busy or throttled renderer can miss several probes; only
+                // sustained silence on a document we inject into is treated as loss.
                 Err(_) => {
                     let failures = probe_failures.entry(ws_url).or_insert(0);
                     *failures += 1;
@@ -332,6 +393,21 @@ async fn watch_pinned_documents() -> anyhow::Error {
 
 fn target_invalidated() -> anyhow::Error {
     anyhow::anyhow!("cdp_target_invalidated: activity target closed or reloaded")
+}
+
+fn document_reloaded() -> anyhow::Error {
+    anyhow::anyhow!("cdp_target_invalidated: document reloaded")
+}
+
+fn bound_target_closed() -> anyhow::Error {
+    anyhow::anyhow!("cdp_target_invalidated: bound target closed")
+}
+
+fn bound_target_stalled() -> anyhow::Error {
+    anyhow::anyhow!(
+        "cdp_target_invalidated: bound target unresponsive for {} monitor rounds",
+        MONITOR_STALL_ROUNDS
+    )
 }
 
 pub(crate) struct VerifiedDiscordTarget {
@@ -395,27 +471,34 @@ pub(crate) async fn verify_primary_discord_target(port: u16) -> Result<VerifiedD
         // A missing generation is inconclusive (for example a busy renderer or
         // handshake timeout). Retry the same target; never rediscover a replacement.
         for attempt in 0..3 {
-            let target = bound.target.clone();
-            let runtime = tauri::async_runtime::spawn_blocking(move || {
-                discord_cdp_launch_core::verify_cdp_target(port, &target)
-            })
-            .await?;
-            if let Some(generation) = runtime.document_generation.as_deref() {
-                if generation != bound.generation.as_str() {
-                    anyhow::bail!("cdp_target_invalidated: document reloaded");
-                }
-                if runtime.runtime_status == discord_cdp_launch_core::CdpRuntimeStatus::Ready {
+            match probe_bound_target(&bound).await? {
+                BoundTargetProbe::Alive => {
                     return Ok(VerifiedDiscordTarget {
-                        target: bound.target,
-                        generation: bound.generation,
-                    });
+                        target: bound.target.clone(),
+                        generation: bound.generation.clone(),
+                    })
                 }
+                BoundTargetProbe::Reloaded => {
+                    anyhow::bail!("cdp_target_invalidated: document reloaded")
+                }
+                BoundTargetProbe::Closed => {
+                    anyhow::bail!("cdp_target_invalidated: bound target closed")
+                }
+                BoundTargetProbe::Stalled => {}
             }
             if attempt < 2 {
                 tokio::time::sleep(Duration::from_millis(250)).await;
             }
         }
-        anyhow::bail!("cdp_target_invalidated: bound target remained unavailable after retries");
+        // Still the same document, just a renderer that will not answer right now
+        // (throttled background window, or the main process loading an Activity).
+        // Every later evaluation re-checks this generation inside the page, so
+        // proceeding cannot run code against a replaced document, and aborting here
+        // killed healthy quests at their first checkpoint.
+        Ok(VerifiedDiscordTarget {
+            target: bound.target,
+            generation: bound.generation,
+        })
     }
     let probe = tauri::async_runtime::spawn_blocking(move || {
         discord_cdp_launch_core::detailed_probe_cdp(port)
@@ -1537,6 +1620,32 @@ fn describe_activity_targets(targets: &[CdpTarget]) -> String {
         .join(", ")
 }
 
+/// Summarise what the debugger actually lists when no activity target matched, so
+/// a failure distinguishes "not launched yet" from "served from a host we do not
+/// recognise". Only the target type and host are reported, with snowflakes masked.
+fn describe_visible_target_hosts(targets: &[CdpTarget]) -> String {
+    if targets.is_empty() {
+        return "none".to_string();
+    }
+
+    let mut entries: Vec<String> = Vec::new();
+    for target in targets {
+        if entries.len() >= 6 {
+            break;
+        }
+        let host = reqwest::Url::parse(&target.url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+            .unwrap_or_else(|| "unknown-host".to_string());
+        let host = crate::logger::sanitize_user_id(&host);
+        let entry = format!("{}:{}", target.target_type, host);
+        if !entries.contains(&entry) {
+            entries.push(entry);
+        }
+    }
+    entries.join(", ")
+}
+
 /// Find the activity iframe CDP target (discordsays.com).
 #[allow(dead_code)]
 pub async fn find_activity_iframe_target(port: u16) -> Result<CdpTarget> {
@@ -1553,13 +1662,15 @@ pub async fn find_activity_iframe_target_for_application(
     let targets = get_cdp_targets(port).await?;
 
     let activity_targets = targets
-        .into_iter()
-        .filter(is_activity_target)
+        .iter()
+        .filter(|target| is_activity_target(target))
+        .cloned()
         .collect::<Vec<_>>();
 
     if activity_targets.is_empty() {
         anyhow::bail!(
-            "No activity iframe target found. Make sure the Activity is launched in Discord."
+            "No activity iframe target found. Launch the Activity in Discord first. Targets: {}",
+            describe_visible_target_hosts(&targets)
         );
     }
 

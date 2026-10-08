@@ -87,12 +87,20 @@ budget begins; both evaluations retain their document-generation guard.
 Tasks bind the verified target ID and document generation before initialization.
 Initial binding retries discovery at most three times with 250ms intervals to
 tolerate a loading renderer; a bound task never discovers a replacement.
-Their independent monitor detects closure/reload during waits. Inconclusive probes
-retry the same target up to three times; a confirmed generation change stops
-immediately. Evaluations also guard the generation before executing. Activity
-iframes retain their own document
-binding. Failure stops the task and triggers cleanup without selecting another
-renderer. Cleanup still visits Discord page targets, including auxiliary windows,
+Their independent monitor detects closure/reload during waits. Each monitor round
+classifies one read of the bound target: a read-back generation that differs stops
+immediately, an unreachable or closed debugger endpoint stops immediately, and a
+renderer that did not answer, or that answers while still reporting itself as
+loading, is inconclusive. Inconclusive foreground probes retry the same target up
+to three times and then proceed with the bound target, because every later
+evaluation re-guards that generation inside the page; aborting on silence killed
+healthy quests while Discord throttled a backgrounded window or loaded an Activity.
+The monitor tolerates twelve consecutive inconclusive rounds, and five consecutive
+silent reads of an activity document, before declaring the target lost.
+Evaluations also guard the generation before executing. Activity iframes retain
+their own document binding. Failure stops the task and triggers cleanup without
+selecting another renderer. Cleanup still visits Discord page targets, including
+auxiliary windows,
 and validates their loopback debugger URLs. Quest startup and manual game
 simulation discover modules on the current page without route warmup, History API
 writes or full-page navigation. Missing capabilities report the existing error
@@ -100,6 +108,14 @@ rather than navigating to load them. Activity execution retains its own necessar
 client operations.
 JSON task execution reuses one verified renderer and its document guard per call;
 the separate pinned-session monitor remains active.
+
+Activity quests additionally poll the read-only CDP target list until the Activity
+iframe appears, up to twenty one-second attempts, and stay cancellable during that
+wait. This is target listing only: no navigation, no route warmup, no page
+evaluation, so it is separate from the SDK capability budget below. An exhausted
+budget reports the target types and hosts the debugger actually lists, which tells
+"the user never launched it" apart from "the iframe is served from a host this
+build does not recognise".
 
 Video startup first reads a valid enrollment timestamp from QuestsStore. If it
 is missing or invalid, a read-only `/quests/@me` request resolves the requested
@@ -116,8 +132,8 @@ stops and cleans that loop before reporting the failure.
 
 Activity SDK capability discovery also checks at most three times within two
 seconds. Its retries are spaced across that budget; the former 12-second discovery
-wait is intentionally not retained. SDK readiness and actual command timeouts are
-separate from capability discovery.
+wait is intentionally not retained for this in-page SDK lookup. SDK readiness and
+actual command timeouts are separate from capability discovery.
 
 ## Validation record — Windows, 2026-10-01 (Asia/Taipei, UTC+08:00)
 

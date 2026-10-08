@@ -28,6 +28,11 @@ const CDP_CLEANUP_VERIFY_TIMEOUT_SECS: u64 = 10;
 /// Wall-clock ceiling for the pre-init cleanup retries. Without it a stalled
 /// renderer turns every quest start into several minutes of silent waiting.
 const CDP_CLEANUP_BUDGET: Duration = Duration::from_secs(45);
+/// Discord only lists the Activity iframe once its renderer mounts, so one
+/// snapshot races the launch the user just confirmed. Discovery re-reads the
+/// read-only target list (no navigation, no route warmup) until this budget ends.
+const ACTIVITY_DISCOVERY_ATTEMPTS: u32 = 20;
+const ACTIVITY_DISCOVERY_DELAY_SECS: u64 = 1;
 
 /// JavaScript: Initialize quest-related Discord webpack modules and store them in window.__dqh_cdp.
 ///
@@ -3548,6 +3553,43 @@ pub async fn complete_play_activity_via_cdp(
     }
 }
 
+/// Wait for the Activity iframe to join the CDP target list, staying cancellable.
+/// `Ok(None)` means the user stopped the quest during the wait.
+async fn discover_activity_target(
+    port: u16,
+    app_id: Option<&str>,
+    cancel_rx: &mut tokio::sync::mpsc::Receiver<()>,
+) -> Result<Option<discord_cdp_launch_core::CdpTarget>> {
+    use crate::logger::{log, LogCategory, LogLevel};
+
+    let mut last_error = None;
+    for attempt in 1..=ACTIVITY_DISCOVERY_ATTEMPTS {
+        let found = cdp_client::find_activity_iframe_target_for_application(port, app_id).await;
+        match found {
+            Ok(target) => return Ok(Some(target)),
+            Err(error) => {
+                log(
+                    LogLevel::Warn,
+                    LogCategory::TokenExtraction,
+                    &format!(
+                        "CDP activity target discovery attempt {}/{}: {}",
+                        attempt, ACTIVITY_DISCOVERY_ATTEMPTS, error
+                    ),
+                    None,
+                );
+                last_error = Some(error);
+            }
+        }
+        if attempt < ACTIVITY_DISCOVERY_ATTEMPTS {
+            tokio::select! {
+                _ = sleep(Duration::from_secs(ACTIVITY_DISCOVERY_DELAY_SECS)) => {}
+                _ = cancel_rx.recv() => return Ok(None),
+            }
+        }
+    }
+    Err(last_error.expect("every failed attempt stores its error"))
+}
+
 /// Complete an ACHIEVEMENT_IN_ACTIVITY quest via CDP.
 #[allow(clippy::too_many_arguments)]
 pub async fn complete_activity_quest_via_cdp(
@@ -3593,17 +3635,24 @@ pub async fn complete_activity_quest_via_cdp(
         None,
     );
 
-    let application_id_filter = if application_id.trim().is_empty() {
+    let app_filter = if application_id.trim().is_empty() {
         None
     } else {
         Some(application_id.trim())
     };
 
     cdp_client::pin_discord_target(port).await?;
-    let iframe_target =
-        cdp_client::find_activity_iframe_target_for_application(port, application_id_filter)
-            .await
-            .context("Failed to find activity iframe target")?;
+    let found = discover_activity_target(port, app_filter, &mut cancel_rx).await?;
+    let Some(iframe_target) = found else {
+        log(
+            LogLevel::Info,
+            LogCategory::TokenExtraction,
+            "CDP activity quest cancelled before the Activity target appeared",
+            None,
+        );
+        let _ = app_handle.emit("quest-stopped", ());
+        return Ok(());
+    };
 
     let ws_url = iframe_target
         .web_socket_debugger_url
