@@ -129,7 +129,9 @@
     "activity_launch_start": "Iniciar Quest",
     "activity_launch_cancel": "Cancelar",
     "activity_launch_navigate": "Abra Quest em Discord",
-    "activity_navigate_error": "Falha ao navegar Discord para a página da missão. Abra Discord manualmente e vá para a página Quests."
+    "activity_navigate_error": "Falha ao navegar Discord para a página da missão. Abra Discord manualmente e vá para a página Quests.",
+    "enrollment_blocked_title": "A aceção de missões está bloqueada",
+    "enrollment_blocked_desc": "O Discord não permitirá que esta conta aceite novas missões até {until}. Missões já aceites ou em execução continuam normalmente."
   },
   "quest": {
     "soft_error_title": "Não é possível simular este jogo aqui",

@@ -129,7 +129,9 @@
     "activity_launch_start": "เริ่ม Quest",
     "activity_launch_cancel": "ยกเลิก",
     "activity_launch_navigate": "เปิด Quest ใน Discord",
-    "activity_navigate_error": "ไม่สามารถนำทาง Discord ไปยังหน้าภารกิจได้ โปรดเปิด Discord ด้วยตนเองและไปที่หน้า Quests"
+    "activity_navigate_error": "ไม่สามารถนำทาง Discord ไปยังหน้าภารกิจได้ โปรดเปิด Discord ด้วยตนเองและไปที่หน้า Quests",
+    "enrollment_blocked_title": "การรับเควสต์ถูกระงับ",
+    "enrollment_blocked_desc": "Discord จะไม่อนุญาตให้บัญชีนี้รับเควสต์ใหม่จนถึง {until} เควสต์ที่รับไว้หรือกำลังรันอยู่จะดำเนินต่อไปตามปกติ"
   },
   "quest": {
     "soft_error_title": "ไม่สามารถจำลองเกมนี้ที่นี่ได้",

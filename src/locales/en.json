@@ -131,7 +131,9 @@
     "activity_launch_start": "Start Quest",
     "activity_launch_cancel": "Cancel",
     "activity_launch_navigate": "Open Quest in Discord",
-    "activity_navigate_error": "Failed to navigate Discord to quest page. Please open Discord manually and go to the Quests page."
+    "activity_navigate_error": "Failed to navigate Discord to quest page. Please open Discord manually and go to the Quests page.",
+    "enrollment_blocked_title": "Quest enrollment is blocked",
+    "enrollment_blocked_desc": "Discord will not let this account accept new quests until {until}. Quests already enrolled or running continue normally."
   },
   "quest": {
     "soft_error_title": "Can't simulate this game here",

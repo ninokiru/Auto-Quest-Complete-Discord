@@ -506,12 +506,26 @@ impl DiscordApiClient {
     ) -> Result<reqwest::Response> {
         const MAX_RETRIES: u32 = 2;
 
+        // Discord counts requests per route, not per task, so five parallel slots
+        // are one fast client to it. Releasing them one route at a time keeps a
+        // single 429 from stopping the whole set.
+        let gate = crate::rate_limit::Gate::from_builder(&builder);
+        if let Some(gate) = gate.as_ref() {
+            gate.wait().await;
+        }
+
         for attempt in 0..MAX_RETRIES {
             let retry_builder = builder.try_clone();
             let response = builder
                 .send()
                 .await
                 .with_context(|| "Discord API request failed")?;
+
+            // Read the headers before the body: `text` consumes the response, and
+            // `x-ratelimit-bucket` is what lets a co-bucketed route wait as well.
+            if let Some(gate) = gate.as_ref() {
+                gate.observe(&response);
+            }
 
             if response.status().as_u16() != 429 {
                 return Ok(response);
@@ -539,6 +553,11 @@ impl DiscordApiClient {
                 ),
                 None,
             );
+            // The hold applies to the route, so the other slots sleep this out once
+            // instead of each collecting their own 429 when they retry.
+            if let Some(gate) = gate.as_ref() {
+                gate.backoff(retry_after);
+            }
             tokio::time::sleep(Duration::from_secs_f64(retry_after)).await;
             builder = next_builder;
         }

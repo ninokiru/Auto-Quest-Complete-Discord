@@ -15,6 +15,7 @@ mod models;
 mod platform_capabilities;
 mod quest_completer;
 mod quest_notify;
+mod rate_limit;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod runtime_bridge;
 mod runtime_identity;

@@ -37,7 +37,6 @@ Download the latest build from [GitHub Releases](https://github.com/ninokiru/Aut
 | Platform | Release file | Instructions |
 | --- | --- | --- |
 | Windows x64 Installer | `auto-quest-complete-discord-Windows-x64-<version>-setup.exe` | Run the NSIS installer. |
-| Windows x64 Installer (MSI) | `auto-quest-complete-discord-Windows-x64-<version>-setup.msi` | Open the MSI installer, e.g. for scripted deployment with `msiexec`. |
 | Windows x64 Portable | `auto-quest-complete-discord-Windows-x64-<version>-portable.zip` | Extract the ZIP and run `auto-quest-complete-discord.exe`; keep `waybridge.exe` beside it. |
 | macOS Apple Silicon Installer | `auto-quest-complete-discord-MacOS-arm64-<version>.dmg` | Open the DMG and drag the app to Applications. If macOS blocks it, run the quarantine-removal command below. |
 | macOS Apple Silicon Portable | `auto-quest-complete-discord-MacOS-arm64-<version>.zip` | Unzip and move `Auto Quest Complete Discord.app` to Applications. |
@@ -102,6 +101,7 @@ chmod +x auto-quest-complete-discord-Linux-x86_64-<version>.AppImage
 - 🎮 **Zero-Download Game Simulation** — Complete game quests without downloading or installing the actual game.
 - 📺 **Video & Stream Automation** — Start once and let quest progress update in the background.
 - 🔀 **Parallel Quests** — Run up to five quests at the same time and stop any single one of them.
+- 🚦 **Rate-Limit Aware Requests** — Parallel quests share one release budget per API route, and an enrollment cooldown is shown instead of failing silently.
 - 🔍 **Advanced Quest Filters** — Filter by reward type, completion status, and more.
 - 👥 **Multi-Account Support** — Manage multiple Discord accounts in one app.
 - 🌏 **Multi-language** — English, Vietnamese, Simplified Chinese, Traditional Chinese, Japanese, Korean, Russian, Spanish, German, French, Indonesian, Polish, Brazilian Portuguese, European Portuguese, Thai, and Turkish.

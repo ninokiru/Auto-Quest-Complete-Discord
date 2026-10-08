@@ -22,6 +22,24 @@
       </Button>
     </div>
 
+    <!-- Discord reports an enrollment cooldown on /quests/@me. Without this the
+         account just fails every accept with an opaque error, so state the
+         deadline and that already-enrolled quests are unaffected. -->
+    <div
+      v-if="questBuckets.blockedUntil"
+      class="mb-6 p-4 bg-destructive/10 border border-destructive/30 rounded-lg flex items-start gap-3"
+    >
+      <div class="w-10 h-10 rounded-full bg-destructive/20 flex items-center justify-center shrink-0">
+        <ShieldAlert class="w-5 h-5 text-destructive" />
+      </div>
+      <div class="min-w-0 space-y-1">
+        <p class="font-semibold text-destructive">{{ t('home.enrollment_blocked_title') }}</p>
+        <p class="text-sm text-muted-foreground text-pretty">
+          {{ t('home.enrollment_blocked_desc', { until: enrollmentBlockedUntilText }) }}
+        </p>
+      </div>
+    </div>
+
     <div class="space-y-6">
       <div class="space-y-6">
         <div class="flex min-w-0 items-center justify-between gap-4">
@@ -565,7 +583,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
-import { ArrowUpCircle, ExternalLink, Gift, Loader2 } from 'lucide-vue-next'
+import { ArrowUpCircle, ExternalLink, Gift, Loader2, ShieldAlert } from 'lucide-vue-next'
 import { Input } from '@/components/ui/input'
 import { useI18n } from 'vue-i18n'
 import { open } from '@tauri-apps/plugin-shell'
@@ -805,6 +823,13 @@ const { buckets: questBuckets, recommendedQuests } = useHomeQuestState(
     cdpAvailable: computed(() => questsStore.cdpAvailable),
   }
 )
+
+// `buckets` re-computes on the composable's clock, so this banner (and the null
+// it turns into) clears itself once Discord's cooldown expires without a refetch.
+const enrollmentBlockedUntilText = computed(() => {
+  const until = questBuckets.value.blockedUntil
+  return until ? new Date(until).toLocaleString() : ''
+})
 
 function selectPreset(preset: QuestViewPreset) {
   selectedPreset.value = preset

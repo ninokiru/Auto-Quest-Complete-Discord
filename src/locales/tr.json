@@ -129,7 +129,9 @@
     "activity_launch_start": "Quest'ı başlat",
     "activity_launch_cancel": "İptal",
     "activity_launch_navigate": "Discord'da Quest'i açın",
-    "activity_navigate_error": "Discord görev sayfasına gidilemedi. Lütfen Discord'ı manuel olarak açın ve Quests sayfasına gidin."
+    "activity_navigate_error": "Discord görev sayfasına gidilemedi. Lütfen Discord'ı manuel olarak açın ve Quests sayfasına gidin.",
+    "enrollment_blocked_title": "Görev kabulü engellendi",
+    "enrollment_blocked_desc": "Discord bu hesabın {until} tarihine kadar yeni görev kabul etmesine izin vermeyecek. Zaten kabul edilmiş veya çalışan görevler normal şekilde devam eder."
   },
   "quest": {
     "soft_error_title": "Bu oyun burada simüle edilemiyor",

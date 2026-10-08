@@ -20,7 +20,10 @@ serde_json = "1"
 [profile.release]
 opt-level = 3
 lto = "thin"
-codegen-units = 1
+# 16 rather than 1: the release runners expose 4 cores, and one codegen unit
+# serialises LLVM across the whole crate graph, which was the bulk of the ~450s
+# Windows bundle step. The sidecars below keep their single-unit profile.
+codegen-units = 16
 debug = 1
 split-debuginfo = "packed"
 strip = "symbols"

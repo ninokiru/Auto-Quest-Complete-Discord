@@ -131,7 +131,9 @@
     "activity_launch_start": "开始任务",
     "activity_launch_cancel": "取消",
     "activity_launch_navigate": "在 Discord 中打开任务",
-    "activity_navigate_error": "无法将 Discord 导航到任务页面。请手动打开 Discord 并进入任务页面。"
+    "activity_navigate_error": "无法将 Discord 导航到任务页面。请手动打开 Discord 并进入任务页面。",
+    "enrollment_blocked_title": "任务接取已被阻止",
+    "enrollment_blocked_desc": "Discord 在该账号于 {until} 之前不会允许接取新任务。已接取或正在运行的任务照常继续。"
   },
   "quest": {
     "soft_error_title": "无法在此模拟该游戏",

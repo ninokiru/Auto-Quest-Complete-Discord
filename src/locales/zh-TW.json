@@ -129,7 +129,9 @@
     "activity_launch_start": "開始任務",
     "activity_launch_cancel": "取消",
     "activity_launch_navigate": "在 Discord 中開啟任務",
-    "activity_navigate_error": "無法將 Discord 導航到任務頁面。請手動開啟 Discord 並前往任務頁面。"
+    "activity_navigate_error": "無法將 Discord 導航到任務頁面。請手動開啟 Discord 並前往任務頁面。",
+    "enrollment_blocked_title": "任務接取已被封鎖",
+    "enrollment_blocked_desc": "Discord 在該帳號於 {until} 之前不會允許接取新任務。已接取或正在執行的任務照常繼續。"
   },
   "quest": {
     "soft_error_title": "無法在此模擬此遊戲",

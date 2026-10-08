@@ -108,4 +108,12 @@ describe('deriveHomeQuestBuckets', () => {
     expect(buckets.attentionNeeded.map(item => item.id)).toEqual(['mixed-activity'])
     expect(buckets.activityManual.map(item => item.id)).toEqual(['mixed-activity'])
   })
+
+  it('drops the enrollment block once its deadline has passed', () => {
+    const blocked = deriveHomeQuestBuckets([], { now, blockedUntil: '2026-06-21T00:05:00.000Z' })
+    const lifted = deriveHomeQuestBuckets([], { now, blockedUntil: '2026-06-20T23:55:00.000Z' })
+
+    expect(blocked.blockedUntil).toBe('2026-06-21T00:05:00.000Z')
+    expect(lifted.blockedUntil).toBeNull()
+  })
 })

@@ -129,7 +129,9 @@
     "activity_launch_start": "クエスト開始",
     "activity_launch_cancel": "キャンセル",
     "activity_launch_navigate": "Discord でクエストを開く",
-    "activity_navigate_error": "Discord のクエストページへ移動できませんでした。手動で Discord を開き、クエストページへ移動してください。"
+    "activity_navigate_error": "Discord のクエストページへ移動できませんでした。手動で Discord を開き、クエストページへ移動してください。",
+    "enrollment_blocked_title": "クエストの受け取りがブロックされています",
+    "enrollment_blocked_desc": "Discord はこのアカウントで {until} まで新しいクエストを受け取れません。すでに受け取り済み・実行中のクエストはそのまま進行します。"
   },
   "quest": {
     "soft_error_title": "このゲームはここでシミュレートできません",

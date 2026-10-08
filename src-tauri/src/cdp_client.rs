@@ -1587,13 +1587,15 @@ fn describe_activity_host_for_log(host: &str) -> String {
     host.to_string()
 }
 
-fn is_activity_target(target: &CdpTarget) -> bool {
-    let is_activity_host = activity_target_host(target)
+fn is_activity_host(target: &CdpTarget) -> bool {
+    activity_target_host(target)
         .map(|host| host == "discordsays.com" || host.ends_with(".discordsays.com"))
-        .unwrap_or(false);
+        .unwrap_or(false)
+}
 
+fn is_activity_target(target: &CdpTarget) -> bool {
     (target.target_type == "iframe" || target.target_type == "page")
-        && is_activity_host
+        && is_activity_host(target)
         && target.web_socket_debugger_url.is_some()
 }
 
@@ -1646,6 +1648,31 @@ fn describe_visible_target_hosts(targets: &[CdpTarget]) -> String {
     entries.join(", ")
 }
 
+/// Say *which* miss happened. Discord listing no activity host at all means the
+/// Activity was never opened; listing one that `is_activity_target` rejects means
+/// the frame is there and this build could not attach to it. Those need opposite
+/// answers from the user, and the old single "launch it first" text blamed the
+/// user for the second case too.
+fn describe_activity_miss(targets: &[CdpTarget]) -> String {
+    let listed: Vec<String> = targets
+        .iter()
+        .filter(|target| is_activity_host(target))
+        .map(|target| {
+            let debugger = target.web_socket_debugger_url.is_some();
+            format!("{}(debugger:{})", target.target_type, debugger)
+        })
+        .collect();
+
+    if listed.is_empty() {
+        return format!(
+            "Discord lists no discordsays.com target. Visible: {}",
+            describe_visible_target_hosts(targets)
+        );
+    }
+
+    format!("discordsays.com listed but unusable: {}", listed.join(", "))
+}
+
 /// Find the activity iframe CDP target (discordsays.com).
 #[allow(dead_code)]
 pub async fn find_activity_iframe_target(port: u16) -> Result<CdpTarget> {
@@ -1668,9 +1695,11 @@ pub async fn find_activity_iframe_target_for_application(
         .collect::<Vec<_>>();
 
     if activity_targets.is_empty() {
+        // describe_activity_miss decides whether the user still has to launch the
+        // Activity or whether Discord exposed it in a shape we cannot attach to.
         anyhow::bail!(
-            "No activity iframe target found. Launch the Activity in Discord first. Targets: {}",
-            describe_visible_target_hosts(&targets)
+            "No activity iframe target found. Launch the Activity in Discord first. {}",
+            describe_activity_miss(&targets)
         );
     }
 

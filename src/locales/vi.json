@@ -129,7 +129,9 @@
     "activity_launch_start": "Bắt đầu Quest",
     "activity_launch_cancel": "Hủy bỏ",
     "activity_launch_navigate": "Mở Quest trong Discord",
-    "activity_navigate_error": "Không thể điều hướng Discord tới trang nhiệm vụ. Vui lòng mở Discord theo cách thủ công và truy cập trang Quests."
+    "activity_navigate_error": "Không thể điều hướng Discord tới trang nhiệm vụ. Vui lòng mở Discord theo cách thủ công và truy cập trang Quests.",
+    "enrollment_blocked_title": "Việc nhận nhiệm vụ đang bị chặn",
+    "enrollment_blocked_desc": "Discord không cho tài khoản này nhận nhiệm vụ mới đến {until}. Các nhiệm vụ đã nhận hoặc đang chạy vẫn diễn ra bình thường."
   },
   "quest": {
     "soft_error_title": "Không thể mô phỏng trò chơi này ở đây",

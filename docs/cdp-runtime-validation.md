@@ -110,12 +110,15 @@ JSON task execution reuses one verified renderer and its document guard per call
 the separate pinned-session monitor remains active.
 
 Activity quests additionally poll the read-only CDP target list until the Activity
-iframe appears, up to twenty one-second attempts, and stay cancellable during that
+iframe appears, up to sixty one-second attempts, and stay cancellable during that
 wait. This is target listing only: no navigation, no route warmup, no page
-evaluation, so it is separate from the SDK capability budget below. An exhausted
-budget reports the target types and hosts the debugger actually lists, which tells
-"the user never launched it" apart from "the iframe is served from a host this
-build does not recognise".
+evaluation, so it is separate from the SDK capability budget below. The budget is
+wide because the wait only ends once the user has opened the Activity in Discord
+and its frame has mounted; twenty seconds proved shorter than that round trip. An
+exhausted wait reports which of the two misses happened: no `discordsays.com`
+target is listed at all, which means the Activity was never launched, or one is
+listed but carries no usable target type or debugger endpoint, which means the
+frame exists and this build could not attach to it.
 
 Video startup first reads a valid enrollment timestamp from QuestsStore. If it
 is missing or invalid, a read-only `/quests/@me` request resolves the requested

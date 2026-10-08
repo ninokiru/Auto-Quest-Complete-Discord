@@ -31,7 +31,10 @@ const CDP_CLEANUP_BUDGET: Duration = Duration::from_secs(45);
 /// Discord only lists the Activity iframe once its renderer mounts, so one
 /// snapshot races the launch the user just confirmed. Discovery re-reads the
 /// read-only target list (no navigation, no route warmup) until this budget ends.
-const ACTIVITY_DISCOVERY_ATTEMPTS: u32 = 20;
+/// Sixty seconds because the wait covers a human action: switching to Discord,
+/// pressing the launch button, and letting the activity frame mount. Twenty was
+/// routinely shorter than that round trip and failed healthy quests.
+const ACTIVITY_DISCOVERY_ATTEMPTS: u32 = 60;
 const ACTIVITY_DISCOVERY_DELAY_SECS: u64 = 1;
 
 /// JavaScript: Initialize quest-related Discord webpack modules and store them in window.__dqh_cdp.
@@ -3565,21 +3568,25 @@ async fn discover_activity_target(
     let mut last_error = None;
     for attempt in 1..=ACTIVITY_DISCOVERY_ATTEMPTS {
         let found = cdp_client::find_activity_iframe_target_for_application(port, app_id).await;
-        match found {
+        let error = match found {
             Ok(target) => return Ok(Some(target)),
-            Err(error) => {
-                log(
-                    LogLevel::Warn,
-                    LogCategory::TokenExtraction,
-                    &format!(
-                        "CDP activity target discovery attempt {}/{}: {}",
-                        attempt, ACTIVITY_DISCOVERY_ATTEMPTS, error
-                    ),
-                    None,
-                );
-                last_error = Some(error);
-            }
+            Err(error) => error,
+        };
+        // Sampling instead of recording every attempt: sixty near-identical lines
+        // would push the useful entries out of the log file, which is where a
+        // "no activity target" report is read from.
+        if attempt == 1 || attempt == ACTIVITY_DISCOVERY_ATTEMPTS || attempt % 10 == 0 {
+            log(
+                LogLevel::Warn,
+                LogCategory::TokenExtraction,
+                &format!(
+                    "CDP activity target discovery attempt {}/{}: {}",
+                    attempt, ACTIVITY_DISCOVERY_ATTEMPTS, error
+                ),
+                None,
+            );
         }
+        last_error = Some(error);
         if attempt < ACTIVITY_DISCOVERY_ATTEMPTS {
             tokio::select! {
                 _ = sleep(Duration::from_secs(ACTIVITY_DISCOVERY_DELAY_SECS)) => {}

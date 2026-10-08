@@ -216,10 +216,13 @@ jobs:
       - name: Verify CDP core dependency boundary
         run: pnpm run check:cdp-core-deps
 
+  # Runs beside `quality`, not after it: the bundles only need the version and
+  # the lockfile, so waiting ~2.5 minutes for a `cargo fmt` diff to finish before
+  # starting three 6-10 minute compile jobs bought nothing. `release` below is
+  # the gate that refuses to publish unless both succeed.
   build-tauri:
     needs:
       - release_policy
-      - quality
     if: needs.release_policy.outputs.should_release == 'true'
     permissions:
       contents: write
@@ -228,7 +231,9 @@ jobs:
       matrix:
         include:
           - platform: 'windows-latest'
-            args: ''
+            # The release ships the NSIS .exe and the portable .zip only, so the
+            # bundle step stops before also building the WiX .msi.
+            args: '--bundles nsis'
             x-target: 'win32-x64'
             cdp_target: 'x86_64-pc-windows-msvc'
             runner-ext: '.exe'
@@ -475,18 +480,11 @@ jobs:
           name: tauri-win-portable
           path: build/windows-portable/*
 
-      # Upload Windows artifact (MSI installer)
-      - name: Upload Windows artifact (MSI)
-        if: matrix.platform == 'windows-latest'
-        uses: actions/upload-artifact@v7
-        with:
-          name: tauri-win-msi
-          path: target/release/bundle/msi/*.msi
-
       # Upload Windows artifact (NSIS installer executable)
-      # `bundle.targets: all` produces both the WiX .msi and the NSIS .exe, so a
-      # missing match here means the bundler changed behaviour, not a transient
-      # glitch: fail in the build job instead of shipping a release without it.
+      # `--bundles nsis` above means the NSIS .exe is the only installer this
+      # job produces, so a missing match means the bundler changed behaviour, not
+      # a transient glitch: fail in the build job instead of shipping a release
+      # without it.
       - name: Upload Windows artifact (EXE)
         if: matrix.platform == 'windows-latest'
         uses: actions/upload-artifact@v7
@@ -520,9 +518,13 @@ jobs:
     timeout-minutes: 30
     needs:
       - release_policy
+      - quality
       - build-tauri
+    # `build-tauri` no longer waits for `quality`, so this is where the two
+    # branches rejoin: no release is created unless both are green.
     if: >-
       needs.release_policy.outputs.should_release == 'true' &&
+      needs.quality.result == 'success' &&
       needs.build-tauri.result == 'success'
     steps:
       - uses: actions/checkout@v6
@@ -542,12 +544,6 @@ jobs:
         with:
           name: tauri-win-portable
           path: tauri-win-portable
-
-      - name: Download Windows artifact (MSI)
-        uses: actions/download-artifact@v8
-        with:
-          name: tauri-win-msi
-          path: tauri-win-msi
 
       - name: Download Windows artifact (EXE)
         uses: actions/download-artifact@v8
@@ -580,23 +576,16 @@ jobs:
           zip -r "../build/auto-quest-complete-discord-Windows-x64-$version-portable.zip" .
           cd ..
           
-          # Copy Windows installers. Bundle file names carry the product name, so
-          # locate them with find instead of a glob: an unquoted glob would split
+          # Copy the Windows installer. Bundle file names carry the product name,
+          # so locate it with find instead of a glob: an unquoted glob would split
           # on any space the bundler ever emits.
-          copy_one() {
-            source_dir="$1"
-            pattern="$2"
-            destination="$3"
-            found="$(find "$source_dir" -maxdepth 1 -type f -name "$pattern" | head -n 1 || true)"
-            if [ -z "$found" ]; then
-              echo "::error::No $pattern inside $source_dir"
-              find "$source_dir" -maxdepth 1 || true
-              exit 1
-            fi
-            cp "$found" "$destination"
-          }
-          copy_one tauri-win-msi '*.msi' "./build/auto-quest-complete-discord-Windows-x64-$version-setup.msi"
-          copy_one tauri-win-nsis '*.exe' "./build/auto-quest-complete-discord-Windows-x64-$version-setup.exe"
+          nsis="$(find tauri-win-nsis -maxdepth 1 -type f -name '*.exe' | head -n 1 || true)"
+          if [ -z "$nsis" ]; then
+            echo "::error::No *.exe inside tauri-win-nsis"
+            find tauri-win-nsis -maxdepth 1 || true
+            exit 1
+          fi
+          cp "$nsis" "./build/auto-quest-complete-discord-Windows-x64-$version-setup.exe"
           
           # Package macOS build: `files:` below declares both a .dmg and a
           # portable .app zip, so emit whichever the build actually produced.
@@ -631,7 +620,6 @@ jobs:
           cp "$deb" ./build/auto-quest-complete-discord-Linux-x86_64-$version.deb
 
           echo "win_portable=auto-quest-complete-discord-Windows-x64-$version-portable" >> $GITHUB_ENV
-          echo "win_msi=auto-quest-complete-discord-Windows-x64-$version-setup" >> $GITHUB_ENV
           echo "win_exe=auto-quest-complete-discord-Windows-x64-$version-setup" >> $GITHUB_ENV
           echo "macos_build_release=auto-quest-complete-discord-MacOS-arm64-$version" >> $GITHUB_ENV
           echo "linux_build_release=auto-quest-complete-discord-Linux-x86_64-$version" >> $GITHUB_ENV
@@ -645,7 +633,6 @@ jobs:
           body_path: ./public/version-desc.txt
           files: |
             ./build/${{ env.win_portable }}.zip
-            ./build/${{ env.win_msi }}.msi
             ./build/${{ env.win_exe }}.exe
             ./build/${{ env.macos_build_release }}.dmg
             ./build/${{ env.macos_build_release }}.zip

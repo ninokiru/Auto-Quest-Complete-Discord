@@ -129,7 +129,9 @@
     "activity_launch_start": "퀘스트 시작",
     "activity_launch_cancel": "취소",
     "activity_launch_navigate": "Discord에서 퀘스트 열기",
-    "activity_navigate_error": "Discord의 퀘스트 페이지로 이동하지 못했습니다. Discord를 직접 열고 퀘스트 페이지로 이동하세요."
+    "activity_navigate_error": "Discord의 퀘스트 페이지로 이동하지 못했습니다. Discord를 직접 열고 퀘스트 페이지로 이동하세요.",
+    "enrollment_blocked_title": "퀘스트 수락이 차단되었습니다",
+    "enrollment_blocked_desc": "Discord가 이 계정의 새 퀘스트 수락을 {until}까지 차단합니다. 이미 수락하거나 실행 중인 퀘스트는 정상적으로 계속됩니다."
   },
   "quest": {
     "soft_error_title": "여기서는 이 게임을 시뮬레이션할 수 없습니다",

@@ -129,7 +129,9 @@
     "activity_launch_start": "Rozpocznij Quest",
     "activity_launch_cancel": "Anuluj",
     "activity_launch_navigate": "Otwórz Quest w Discord",
-    "activity_navigate_error": "Nie udało się przejść Discord do strony zadań. Proszę otworzyć Discord ręcznie i przejść do strony Quests."
+    "activity_navigate_error": "Nie udało się przejść Discord do strony zadań. Proszę otworzyć Discord ręcznie i przejść do strony Quests.",
+    "enrollment_blocked_title": "Przyjmowanie questów jest zablokowane",
+    "enrollment_blocked_desc": "Discord nie pozwoli temu kontu przyjąć nowych questów do {until}. Już przyjęte lub uruchomione questy działają normalnie."
   },
   "quest": {
     "soft_error_title": "Nie można tu symulować tej gry",

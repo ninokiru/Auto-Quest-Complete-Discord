@@ -29,7 +29,6 @@ These binaries are **not code-signed**. The app rewrites its own process identit
 | File | Use |
 | --- | --- |
 | `auto-quest-complete-discord-Windows-x64-0.0.1-setup.exe` | Windows installer (NSIS) |
-| `auto-quest-complete-discord-Windows-x64-0.0.1-setup.msi` | Windows installer (MSI) |
 | `auto-quest-complete-discord-Windows-x64-0.0.1-portable.zip` | Windows portable, no installation |
 | `auto-quest-complete-discord-MacOS-arm64-0.0.1.dmg` | macOS Apple Silicon installer |
 | `auto-quest-complete-discord-MacOS-arm64-0.0.1.zip` | macOS Apple Silicon portable app |

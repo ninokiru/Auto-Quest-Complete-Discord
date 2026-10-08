@@ -129,7 +129,9 @@
     "activity_launch_start": "Mulai Quest",
     "activity_launch_cancel": "Batalkan",
     "activity_launch_navigate": "Buka Quest di Discord",
-    "activity_navigate_error": "Gagal menavigasi Discord ke halaman misi. Silakan buka Discord secara manual dan buka halaman Quests."
+    "activity_navigate_error": "Gagal menavigasi Discord ke halaman misi. Silakan buka Discord secara manual dan buka halaman Quests.",
+    "enrollment_blocked_title": "Pendaftaran quest diblokir",
+    "enrollment_blocked_desc": "Discord tidak mengizinkan akun ini menerima quest baru hingga {until}. Quest yang sudah diterima atau sedang berjalan tetap berlanjut seperti biasa."
   },
   "quest": {
     "soft_error_title": "Tidak dapat menyimulasikan game ini di sini",

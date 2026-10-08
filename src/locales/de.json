@@ -129,7 +129,9 @@
     "activity_launch_start": "Quest starten",
     "activity_launch_cancel": "Abbrechen",
     "activity_launch_navigate": "Öffnen Sie Quest in Discord",
-    "activity_navigate_error": "Die Navigation von Discord zur Questseite ist fehlgeschlagen. Bitte öffnen Sie Discord manuell und gehen Sie zur Seite Quests."
+    "activity_navigate_error": "Die Navigation von Discord zur Questseite ist fehlgeschlagen. Bitte öffnen Sie Discord manuell und gehen Sie zur Seite Quests.",
+    "enrollment_blocked_title": "Quest-Annahme ist gesperrt",
+    "enrollment_blocked_desc": "Discord lässt dieses Konto bis {until} keine neuen Quests annehmen. Bereits angenommene oder laufende Quests laufen normal weiter."
   },
   "quest": {
     "soft_error_title": "Dieses Spiel kann hier nicht simuliert werden",

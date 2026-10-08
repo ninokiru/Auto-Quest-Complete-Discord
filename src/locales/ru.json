@@ -129,7 +129,9 @@
     "activity_launch_start": "Начать квест",
     "activity_launch_cancel": "Отмена",
     "activity_launch_navigate": "Открыть квест в Discord",
-    "activity_navigate_error": "Не удалось перейти на страницу квеста в Discord. Откройте Discord вручную и перейдите на страницу квестов."
+    "activity_navigate_error": "Не удалось перейти на страницу квеста в Discord. Откройте Discord вручную и перейдите на страницу квестов.",
+    "enrollment_blocked_title": "Приём квестов заблокирован",
+    "enrollment_blocked_desc": "Discord не позволит этому аккаунту принимать новые квесты до {until}. Уже принятые или запущенные квесты продолжают работать как обычно."
   },
   "quest": {
     "soft_error_title": "Здесь нельзя симулировать эту игру",

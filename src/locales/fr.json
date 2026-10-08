@@ -129,7 +129,9 @@
     "activity_launch_start": "Démarrer Quest",
     "activity_launch_cancel": "Annuler",
     "activity_launch_navigate": "Ouvrez Quest dans Discord",
-    "activity_navigate_error": "Échec de la navigation de Discord vers la page de quête. Veuillez ouvrir Discord manuellement et accéder à la page Quests."
+    "activity_navigate_error": "Échec de la navigation de Discord vers la page de quête. Veuillez ouvrir Discord manuellement et accéder à la page Quests.",
+    "enrollment_blocked_title": "L’acceptation de quêtes est bloquée",
+    "enrollment_blocked_desc": "Discord n’autorisera pas ce compte à accepter de nouvelles quêtes avant {until}. Les quêtes déjà acceptées ou en cours se poursuivent normalement."
   },
   "quest": {
     "soft_error_title": "Impossible de simuler ce jeu ici",
