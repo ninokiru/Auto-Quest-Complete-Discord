@@ -31,11 +31,17 @@ const CDP_CLEANUP_BUDGET: Duration = Duration::from_secs(45);
 /// Discord only lists the Activity iframe once its renderer mounts, so one
 /// snapshot races the launch the user just confirmed. Discovery re-reads the
 /// read-only target list (no navigation, no route warmup) until this budget ends.
-/// Sixty seconds because the wait covers a human action: switching to Discord,
-/// pressing the launch button, and letting the activity frame mount. Twenty was
-/// routinely shorter than that round trip and failed healthy quests.
-const ACTIVITY_DISCOVERY_ATTEMPTS: u32 = 60;
+/// Five minutes because the wait covers several human actions: reading the
+/// launch dialog, finding the quest card in Discord, pressing Play, and letting
+/// the activity frame mount. Sixty seconds routinely expired while the user was
+/// still clicking, and the quest then failed with a "no target" error.
+const ACTIVITY_DISCOVERY_ATTEMPTS: u32 = 300;
 const ACTIVITY_DISCOVERY_DELAY_SECS: u64 = 1;
+/// Server-side confirmation of the last checkpoint lags the activity's own SDK
+/// by up to a minute; polling both sources at a five second cadence covers that
+/// lag while staying cancellable between attempts.
+const ACTIVITY_VERIFY_ATTEMPTS: u32 = 10;
+const ACTIVITY_VERIFY_DELAY_SECS: u64 = 5;
 
 /// JavaScript: Initialize quest-related Discord webpack modules and store them in window.__dqh_cdp.
 ///
@@ -3556,6 +3562,26 @@ pub async fn complete_play_activity_via_cdp(
     }
 }
 
+/// Human-readable tail for an exhausted activity-target discovery, keyed off
+/// what the client window itself shows. `None` means the window could not be
+/// queried, which says nothing about whether an Activity is open.
+fn activity_discovery_exhausted_hint(open_frames: Option<usize>) -> String {
+    match open_frames {
+        Some(0) => "the attached Discord client window itself shows no open Activity. \
+                    Launch the Activity in that same client (Quest Home > Play, or a voice \
+                    channel > Activities); if it is open in a different Discord app, switch \
+                    to that client in Settings and retry."
+            .to_string(),
+        Some(count) => format!(
+            "the client window contains {count} Activity iframe(s), but the CDP target \
+             list exposes none of them. Restart Discord with the debug port and retry."
+        ),
+        None => "the client window could not be queried, so whether an Activity is open \
+                 is unknown."
+            .to_string(),
+    }
+}
+
 /// Wait for the Activity iframe to join the CDP target list, staying cancellable.
 /// `Ok(None)` means the user stopped the quest during the wait.
 async fn discover_activity_target(
@@ -3566,14 +3592,16 @@ async fn discover_activity_target(
     use crate::logger::{log, LogCategory, LogLevel};
 
     let mut last_error = None;
+    let mut logged_waiting_for_launch = false;
+    let mut logged_listing_gap = false;
     for attempt in 1..=ACTIVITY_DISCOVERY_ATTEMPTS {
         let found = cdp_client::find_activity_iframe_target_for_application(port, app_id).await;
         let error = match found {
             Ok(target) => return Ok(Some(target)),
             Err(error) => error,
         };
-        // Sampling instead of recording every attempt: sixty near-identical lines
-        // would push the useful entries out of the log file, which is where a
+        // Sampling instead of recording every attempt: three hundred near-identical
+        // lines would push the useful entries out of the log file, which is where a
         // "no activity target" report is read from.
         if attempt == 1 || attempt == ACTIVITY_DISCOVERY_ATTEMPTS || attempt % 10 == 0 {
             log(
@@ -3587,6 +3615,37 @@ async fn discover_activity_target(
             );
         }
         last_error = Some(error);
+
+        // Every fifth attempt, ask the client window itself whether an Activity is
+        // open. The probe keeps its own short timeout so it cannot fight a renderer
+        // that is busy mounting the very frame being waited for.
+        if attempt % 5 == 0 && attempt < ACTIVITY_DISCOVERY_ATTEMPTS {
+            match cdp_client::count_open_activity_frames(port).await {
+                Some(0) if !logged_waiting_for_launch => {
+                    logged_waiting_for_launch = true;
+                    log(
+                        LogLevel::Info,
+                        LogCategory::TokenExtraction,
+                        "CDP activity target discovery: no open Activity in the attached client yet — waiting for the user to launch it",
+                        None,
+                    );
+                }
+                Some(count) if count > 0 && !logged_listing_gap => {
+                    logged_listing_gap = true;
+                    log(
+                        LogLevel::Warn,
+                        LogCategory::TokenExtraction,
+                        &format!(
+                            "CDP activity target discovery: client window shows {} Activity iframe(s), but the target list exposes none",
+                            count
+                        ),
+                        None,
+                    );
+                }
+                _ => {}
+            }
+        }
+
         if attempt < ACTIVITY_DISCOVERY_ATTEMPTS {
             tokio::select! {
                 _ = sleep(Duration::from_secs(ACTIVITY_DISCOVERY_DELAY_SECS)) => {}
@@ -3594,7 +3653,13 @@ async fn discover_activity_target(
             }
         }
     }
-    Err(last_error.expect("every failed attempt stores its error"))
+    let open_frames = cdp_client::count_open_activity_frames(port).await;
+    let error = last_error.expect("every failed attempt stores its error");
+    Err(error.context(format!(
+        "no Activity target appeared after {}s of waiting — {}",
+        ACTIVITY_DISCOVERY_ATTEMPTS as u64 * ACTIVITY_DISCOVERY_DELAY_SECS,
+        activity_discovery_exhausted_hint(open_frames)
+    )))
 }
 
 /// Complete an ACHIEVEMENT_IN_ACTIVITY quest via CDP.
@@ -3834,108 +3899,105 @@ pub async fn complete_activity_quest_via_cdp(
 
     let verify_js = js_check_activity_quest_status(&quest_id);
     let mut verified_completed = false;
-    match cdp_client::execute_js_on_target(&ws_url, &verify_js, true, 15).await {
-        Ok(result) => {
-            let parsed: serde_json::Value = serde_json::from_str(&result).unwrap_or_default();
-            let completed = parsed
-                .get("completed")
-                .and_then(|c| c.as_bool())
-                .unwrap_or(false);
-            let completed_at = parsed
-                .get("completedAt")
-                .and_then(|c| c.as_str())
-                .unwrap_or("null");
+    // Highest checkpoint count /quests/@me has ever reported. The completion
+    // write (completed_at) lags that counter, so it decides between "server
+    // accepted everything, confirmation pending" and a real rejection.
+    let mut server_progress_max = 0.0f64;
+    // Both sources are polled every attempt: the embedded SDK answers fastest
+    // while the Activity window is open, /quests/@me is the only witness once
+    // the user closes it. Discord can take up to a minute to write completed_at
+    // after the last checkpoint, which is what the five second cadence covers.
+    for attempt in 1..=ACTIVITY_VERIFY_ATTEMPTS {
+        match cdp_client::execute_js_on_target(&ws_url, &verify_js, true, 5).await {
+            Ok(result) => {
+                let parsed: serde_json::Value = serde_json::from_str(&result).unwrap_or_default();
+                let completed = parsed
+                    .get("completed")
+                    .and_then(|c| c.as_bool())
+                    .unwrap_or(false);
+                let completed_at = parsed
+                    .get("completedAt")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("null");
 
-            log(
-                LogLevel::Info,
-                LogCategory::TokenExtraction,
-                &format!(
-                    "CDP activity quest verification: completed={}, completedAt={}",
-                    completed, completed_at
-                ),
-                None,
-            );
+                log(
+                    LogLevel::Info,
+                    LogCategory::TokenExtraction,
+                    &format!(
+                        "CDP activity quest verification attempt {}/{}: completed={}, completedAt={}",
+                        attempt, ACTIVITY_VERIFY_ATTEMPTS, completed, completed_at
+                    ),
+                    None,
+                );
 
-            if completed {
-                verified_completed = true;
-            } else {
+                if completed {
+                    verified_completed = true;
+                    break;
+                }
+            }
+            Err(e) => {
                 log(
                     LogLevel::Warn,
                     LogCategory::TokenExtraction,
-                    "CDP activity quest iframe verification did not confirm completion; checking server status",
+                    &format!(
+                        "CDP activity quest iframe verification attempt {}/{} failed: {}",
+                        attempt, ACTIVITY_VERIFY_ATTEMPTS, e
+                    ),
                     None,
                 );
             }
         }
-        Err(e) => {
-            log(
-                LogLevel::Warn,
-                LogCategory::TokenExtraction,
-                &format!("CDP activity quest verification failed: {}", e),
-                None,
-            );
-        }
-    }
 
-    if !verified_completed {
         if let Some(api_client) = client.as_ref() {
-            log(
-                LogLevel::Info,
-                LogCategory::TokenExtraction,
-                "CDP activity quest: verifying completion via Discord API...",
-                None,
-            );
+            match api_client.get_quest_progress(&quest_id).await {
+                Ok((progress, completed)) => {
+                    server_progress_max = server_progress_max.max(progress);
+                    log(
+                        LogLevel::Info,
+                        LogCategory::TokenExtraction,
+                        &format!(
+                            "CDP activity quest API verification attempt {}/{}: progress={}, completed={}",
+                            attempt, ACTIVITY_VERIFY_ATTEMPTS, progress, completed
+                        ),
+                        None,
+                    );
 
-            for attempt in 1..=6 {
-                match api_client.get_quest_progress(&quest_id).await {
-                    Ok((progress, completed)) => {
-                        log(
-                            LogLevel::Info,
-                            LogCategory::TokenExtraction,
-                            &format!(
-                                "CDP activity quest API verification attempt {}/6: progress={}, completed={}",
-                                attempt, progress, completed
-                            ),
-                            None,
-                        );
-
-                        if completed {
-                            verified_completed = true;
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        log(
-                            LogLevel::Warn,
-                            LogCategory::TokenExtraction,
-                            &format!(
-                                "CDP activity quest API verification attempt {}/6 failed: {}",
-                                attempt, e
-                            ),
-                            None,
-                        );
+                    if completed {
+                        verified_completed = true;
+                        break;
                     }
                 }
-
-                if attempt < 6 {
-                    tokio::select! {
-                        _ = sleep(Duration::from_secs(2)) => {},
-                        _ = cancel_rx.recv() => {
-                            log(LogLevel::Info, LogCategory::TokenExtraction, "CDP activity quest cancelled during final verification", None);
-                            cdp_cleanup_after_stop(port, "activity quest cancelled during verification", true).await;
-                            let _ = app_handle.emit("quest-stopped", ());
-                            return Ok(());
-                        }
-                    }
+                Err(e) => {
+                    log(
+                        LogLevel::Warn,
+                        LogCategory::TokenExtraction,
+                        &format!(
+                            "CDP activity quest API verification attempt {}/{} failed: {}",
+                            attempt, ACTIVITY_VERIFY_ATTEMPTS, e
+                        ),
+                        None,
+                    );
                 }
             }
-        } else {
+        } else if attempt == 1 {
             log(
                 LogLevel::Warn,
                 LogCategory::TokenExtraction,
                 "CDP activity quest: no Discord API client available for server-side completion verification",
                 None,
             );
+        }
+
+        if attempt < ACTIVITY_VERIFY_ATTEMPTS {
+            tokio::select! {
+                _ = sleep(Duration::from_secs(ACTIVITY_VERIFY_DELAY_SECS)) => {},
+                _ = cancel_rx.recv() => {
+                    log(LogLevel::Info, LogCategory::TokenExtraction, "CDP activity quest cancelled during final verification", None);
+                    cdp_cleanup_after_stop(port, "activity quest cancelled during verification", true).await;
+                    let _ = app_handle.emit("quest-stopped", ());
+                    return Ok(());
+                }
+            }
         }
     }
 
@@ -3952,9 +4014,29 @@ pub async fn complete_activity_quest_via_cdp(
         return Ok(());
     }
 
-    // Fail through Err so the task registry records Failed for this quest. An Ok
-    // return here published "Finished" next to the quest-error the UI already
-    // received, which let the status poll finalize a failed quest as completed.
+    // Discord accepted every checkpoint but has not written completed_at yet —
+    // for ACHIEVEMENT tasks that write lags the progress counter by up to a
+    // minute. Failing here marked quests Failed that Discord finished seconds
+    // later, so resolve as complete; the next quest refresh picks up
+    // completed_at once the server writes it.
+    if server_progress_max >= total_checkpoints as f64 {
+        let _ = app_handle.emit("quest-progress", 100.0f64);
+        let _ = app_handle.emit("quest-complete", ());
+        cdp_cleanup_after_stop(port, "activity quest unconfirmed", false).await;
+        log(
+            LogLevel::Warn,
+            LogCategory::TokenExtraction,
+            &format!(
+                "CDP activity quest finished without completed_at; server accepted {}/{} checkpoints",
+                server_progress_max as u64, total_checkpoints
+            ),
+            None,
+        );
+        return Ok(());
+    }
+
+    // Checkpoints were rejected or never registered server-side: this is a real
+    // failure, so let the task registry record Failed for this quest.
     anyhow::bail!(
         "Activity quest finished locally, but Discord has not confirmed completion yet. Refresh quests or check Discord."
     );
@@ -3962,6 +4044,20 @@ pub async fn complete_activity_quest_via_cdp(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn activity_discovery_hint_separates_the_three_miss_kinds() {
+        let not_open = activity_discovery_exhausted_hint(Some(0));
+        assert!(not_open.contains("shows no open Activity"));
+        assert!(not_open.contains("different Discord app"));
+
+        let listing_gap = activity_discovery_exhausted_hint(Some(2));
+        assert!(listing_gap.contains("2 Activity iframe(s)"));
+        assert!(listing_gap.contains("target list exposes none"));
+
+        let unknown = activity_discovery_exhausted_hint(None);
+        assert!(unknown.contains("could not be queried"));
+    }
+
     #[test]
     fn capability_errors_keep_their_details_through_context_and_events() {
         let error = anyhow::Error::from(capability_error(

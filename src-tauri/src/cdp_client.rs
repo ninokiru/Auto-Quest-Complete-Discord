@@ -1778,6 +1778,31 @@ pub async fn find_activity_iframe_target_for_application(
     Ok(activity_targets[0].clone())
 }
 
+/// Count `*.discordsays.com` iframes inside the bound Discord document, so a
+/// discovery miss can tell "no Activity is open in this client" apart from
+/// "the frame is open but the target list never exposed it". `None` means the
+/// document could not be queried (busy renderer, no pinned target); it says
+/// nothing about whether an Activity is open.
+pub(crate) async fn count_open_activity_frames(port: u16) -> Option<usize> {
+    let bound = TASK_TARGET
+        .try_with(|slot| slot.borrow().clone())
+        .ok()
+        .flatten()?;
+    if bound.port != port {
+        return None;
+    }
+    let ws_url = bound.target.web_socket_debugger_url.as_deref()?;
+    let raw = execute_js_via_ws(
+        ws_url,
+        "document.querySelectorAll('iframe[src*=\"discordsays.com\"]').length",
+        false,
+        3,
+    )
+    .await
+    .ok()?;
+    raw.trim().parse::<usize>().ok()
+}
+
 /// Execute JavaScript on a specific CDP target via its WebSocket URL.
 pub async fn execute_js_on_target(
     ws_url: &str,
