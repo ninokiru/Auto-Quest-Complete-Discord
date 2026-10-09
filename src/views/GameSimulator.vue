@@ -82,7 +82,11 @@ function errorMessage(value: unknown): string {
 }
 
 onMounted(async () => {
-  await idleStore.initialize()
+  // An unreadable idle session must not blank the rest of the panel: the
+  // failure is reported and the restore below still runs.
+  await idleStore.initialize().catch(e => {
+    error.value = errorMessage(e)
+  })
   await idleStore.refreshHistory().catch(() => undefined)
   if (idleStore.isActive || idleStore.loading) mode.value = 'idle'
   const capabilities = store.initPlatformCapabilities()
@@ -420,9 +424,11 @@ async function handleRunGame() {
     if (ownsRpc) {
       const activity = {
         app_id: appId,
-        large_image_key: 'logo',
-        large_image_text: displayName,
-        start_timestamp: Date.now()
+        state: 'In Game',
+        details: `Playing ${displayName}`,
+        largeImageKey: 'logo',
+        largeImageText: displayName,
+        timestamp: Math.floor(Date.now() / 1000),
       }
       try {
         await connectToDiscordRpc(JSON.stringify(activity), 'connect')
@@ -667,6 +673,9 @@ async function stopRunningGame(game: RunningSimulatedGame): Promise<void> {
           <template v-if="mode === 'select'">
             <div v-if="!selectedGame" class="text-center py-8 text-muted-foreground border-2 border-dashed rounded-lg">
               {{ t('game_sim.select_game') }}
+              <p v-if="error" class="mt-3 mx-3 p-3 bg-destructive/10 text-destructive rounded-md text-sm text-left">
+                {{ error }}
+              </p>
             </div>
 
             <div v-else class="space-y-6">

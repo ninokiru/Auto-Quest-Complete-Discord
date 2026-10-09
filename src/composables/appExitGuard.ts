@@ -98,6 +98,19 @@ export function createAppExitGuard(dependencies: ExitGuardDependencies) {
     }
   }
 
+  /**
+   * Abandon a pending exit while the prompt is open. Guarded on `checking`
+   * and `closing` so Escape cannot race a confirmed close that is already
+   * restoring sessions or sending the exit IPC. Nothing latches: the next
+   * genuine close request re-scans and can show the dialog again.
+   */
+  function cancelClose() {
+    if (!state.dialogOpen || state.checking || state.closing) return
+    state.dialogOpen = false
+    state.sessions = undefined
+    publish()
+  }
+
   async function closeOnly() {
     await closeApplication()
   }
@@ -173,5 +186,5 @@ export function createAppExitGuard(dependencies: ExitGuardDependencies) {
   }
 
   publish()
-  return { requestClose, closeOnly, restoreAndClose, restoreManagedAndClose }
+  return { requestClose, cancelClose, closeOnly, restoreAndClose, restoreManagedAndClose }
 }

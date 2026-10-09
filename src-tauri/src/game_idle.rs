@@ -661,9 +661,9 @@ async fn start_simulation(
                 "app_id": game.id,
                 "state": "In Game",
                 "details": format!("Playing {}", game.name),
-                "large_image_key": "logo",
-                "large_image_text": game.name,
-                "start_timestamp": chrono::Utc::now().timestamp_millis(),
+                "largeImageKey": "logo",
+                "largeImageText": game.name,
+                "timestamp": chrono::Utc::now().timestamp(),
             });
             if let Err(error) = crate::replace_discord_rpc(activity.to_string()).await {
                 let executable = executable_name.clone();

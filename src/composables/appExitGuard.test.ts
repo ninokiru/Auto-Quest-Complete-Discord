@@ -140,6 +140,43 @@ describe('app exit guard', () => {
     expect(dependencies.exitApplication).toHaveBeenCalledTimes(2)
   })
 
+  it('cancels a pending exit and re-arms the next close request without latching', async () => {
+    const listSessions = vi.fn().mockResolvedValue([{ providerId: 'discord.official', port: 9223 }])
+    const { guard, dependencies, states } = harness({ listSessions })
+
+    await guard.requestClose({ preventDefault: vi.fn() })
+    expect(states[states.length - 1]?.dialogOpen).toBe(true)
+
+    guard.cancelClose()
+    expect(states[states.length - 1]?.dialogOpen).toBe(false)
+    expect(states[states.length - 1]?.sessions).toBeUndefined()
+    expect(dependencies.prepareExit).not.toHaveBeenCalled()
+    expect(dependencies.exitApplication).not.toHaveBeenCalled()
+
+    await guard.requestClose({ preventDefault: vi.fn() })
+    expect(listSessions).toHaveBeenCalledTimes(2)
+    expect(states[states.length - 1]?.dialogOpen).toBe(true)
+    expect(dependencies.exitApplication).not.toHaveBeenCalled()
+  })
+
+  it('ignores cancel while a confirmed close is in progress and still exits', async () => {
+    let resolveRestore!: (value: void | PromiseLike<void>) => void
+    const restoreSession = vi.fn(() => new Promise<void>(done => { resolveRestore = done }))
+    const { guard, dependencies, states } = harness({
+      listSessions: vi.fn().mockResolvedValue([
+        { providerId: 'discord.official', installationId: 'stable', ownership: 'managed' as const, port: 9223 },
+      ]),
+      restoreSession,
+    })
+    await guard.requestClose({ preventDefault: vi.fn() })
+    const closing = guard.restoreAndClose()
+    guard.cancelClose()
+    expect(states[states.length - 1]?.dialogOpen).toBe(true)
+    resolveRestore(undefined)
+    await closing
+    expect(dependencies.exitApplication).toHaveBeenCalledOnce()
+  })
+
   it('still exits when the helper launch error dialog fails', async () => {
     const { guard, dependencies } = harness({
       startRestoreHelper: vi.fn().mockRejectedValue(new Error('spawn failed')),

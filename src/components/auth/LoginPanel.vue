@@ -480,14 +480,14 @@ async function handleCdpLogin() {
 }
 
 async function selectCdpLaunchTarget(target: CdpLaunchTarget) {
+  if (!begin('cdp')) return
   const shouldRemember = rememberCdpChoice.value
+  cdpChooseDialogOpen.value = false
   setProgress(
     'cdp',
     'running',
     target === 'vesktop' ? 'auth.progress.launching_vesktop' : 'auth.progress.launching_discord',
   )
-  cdpChooseDialogOpen.value = false
-  if (!begin('cdp')) return
   try {
     const selected = selectionForTarget(target)
     const persisted = shouldRemember ? selected : { kind: 'auto' as const }
@@ -504,8 +504,8 @@ async function selectCdpLaunchTarget(target: CdpLaunchTarget) {
 }
 
 async function confirmCdpRestart() {
-  cdpRestartDialogOpen.value = false
   if (!begin('cdp')) return
+  cdpRestartDialogOpen.value = false
   setProgress(
     'cdp',
     'running',
@@ -540,22 +540,26 @@ async function confirmCdpRestart() {
 }
 
 async function useCurrentCdpOwner() {
+  if (!begin('cdp')) return
   try {
     const snapshot = await clients.refresh(questsStore.cdpPort)
     const providerId = snapshot?.endpoint.ownerProviderId
-    if (!snapshot || !providerId) return
+    if (!snapshot || !providerId) {
+      throw new Error(t('desktop_clients.current_owner_unavailable'))
+    }
     const ownerSession = findCurrentCdpOwnerSession(
       await listRunningDesktopCdpSessions(),
       questsStore.cdpPort,
       providerId,
     )
-    if (!ownerSession) throw new Error('The current CDP owner could not be mapped to one exact installation.')
+    if (!ownerSession) {
+      throw new Error(t('desktop_clients.owner_installation_unmatched'))
+    }
     const selection = selectionForCurrentCdpOwner(snapshot, ownerSession)
     await clients.select(selection, questsStore.cdpPort)
     syncLegacyDesktopClientPreference(selection)
     ownerConflict.value = false
     cdpRestartDialogOpen.value = false
-    if (!begin('cdp')) return
     await finishCdpLogin()
   } catch (error) {
     authStore.error = errorDetail(error)
@@ -863,6 +867,7 @@ watch(() => questsStore.cdpPort, () => {
               :key="target"
               type="button"
               variant="outline"
+              :disabled="activeMethod !== null"
               class="group flex h-auto min-h-[72px] w-full items-center justify-between rounded-xl border-border/70 bg-card/70 px-4 py-3.5 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/45 hover:bg-primary/[0.045] hover:shadow-[0_12px_28px_-20px_hsl(var(--primary)/0.7)] active:translate-y-0 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2"
               @click="selectCdpLaunchTarget(target)"
             >

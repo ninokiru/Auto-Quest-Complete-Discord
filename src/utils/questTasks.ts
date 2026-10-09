@@ -118,14 +118,66 @@ export function isManualStreamQuest(quest: Quest): boolean {
   return !!task && isStreamTask(task) && !isDesktopPlayTask(task)
 }
 
+/**
+ * True when the quest's routed task is a cloud-game Activity (`PLAY_ACTIVITY`).
+ * Its progress accrues from the backend heartbeat loop alone, so unlike a
+ * checkpoint Activity it needs nothing from the user and is fully automatable.
+ */
+export function isPlayActivityQuest(quest: Quest): boolean {
+  const task = firstStartableTask(quest)
+  return !!task && isPlayActivityTask(task)
+}
+
+/**
+ * True when the quest's routed task is a checkpoint Activity
+ * (`ACHIEVEMENT_IN_ACTIVITY`): its checkpoints only register while the user
+ * keeps the Activity window open in the attached Discord client. `getQuestKind`
+ * collapses these together with `PLAY_ACTIVITY` into the `'activity'` kind, so
+ * batch flows must test this predicate instead of the kind to keep automatable
+ * cloud games from disappearing from a batch.
+ */
+export function isManualActivityQuest(quest: Quest): boolean {
+  const task = firstStartableTask(quest)
+  return !!task && isActivityTask(task) && !isPlayActivityTask(task)
+}
+
+/**
+ * True when completing the quest requires a human: a real Stream (actual
+ * broadcasting) or a checkpoint Activity (the launched Activity window).
+ * Anything else the store can start on its own, so batch flows must keep it
+ * eligible instead of dropping it silently.
+ */
+export function isManualQuest(quest: Quest): boolean {
+  return isManualStreamQuest(quest) || isManualActivityQuest(quest)
+}
+
+/**
+ * The batch rule Home's bulk actions apply: a quest belongs in a batch only when
+ * the store has a task it can drive, and driving it needs no human. Without the
+ * startable-task check, an Activity quest whose checkpoint target is missing
+ * would look automatable and be queued with a zero duration.
+ */
+export function isBatchCompletableQuest(quest: Quest): boolean {
+  return firstStartableTask(quest) !== null && !isManualQuest(quest)
+}
+
+/**
+ * Percentage for a slot whose progress and target are written in the SAME unit:
+ * elapsed seconds for a `PLAY_ACTIVITY` cloud game, checkpoint counts for an
+ * `ACHIEVEMENT_IN_ACTIVITY`. Never mix the two units across a call — a
+ * checkpoint count divided by a duration is the bug this helper used to hide.
+ * Mirrors the backend's `PlayActivityHeartbeatStatus::progress_percentage`:
+ * a completed quest is 100, otherwise the ratio stays capped at 99 while
+ * Discord has not written `completed_at`.
+ */
 export function playActivityProgressPercentage(
-  progressSeconds: number,
-  targetSeconds: number,
+  progressValue: number,
+  targetValue: number,
   completed = false
 ): number {
   if (completed) return 100
-  if (targetSeconds <= 0) return 0
-  return Math.min(99, Math.max(0, progressSeconds / targetSeconds * 100))
+  if (targetValue <= 0) return 0
+  return Math.min(99, Math.max(0, progressValue / targetValue * 100))
 }
 
 export function firstProgressValue(quest: Quest, taskKey?: string): number {

@@ -242,6 +242,7 @@ watch(
                   class="h-9 w-9"
                   @click="toggleTheme"
                   :title="t('header.toggle_theme')"
+                  :aria-label="t('header.toggle_theme')"
                 >
                   <Moon v-if="isDark" class="h-4 w-4" />
                   <Sun v-else class="h-4 w-4" />
@@ -254,6 +255,7 @@ watch(
                       size="icon"
                       class="h-9 w-9"
                       :title="t('header.change_language')"
+                      :aria-label="t('header.change_language')"
                     >
                       <Languages class="h-4 w-4" />
                     </Button>
@@ -304,14 +306,14 @@ watch(
 
                     <span class="mx-1 hidden h-5 w-px bg-border sm:block" aria-hidden="true" />
 
-                    <Button variant="ghost" size="icon" class="h-9 w-9" @click="toggleTheme" :title="t('header.toggle_theme')">
+                    <Button variant="ghost" size="icon" class="h-9 w-9" @click="toggleTheme" :title="t('header.toggle_theme')" :aria-label="t('header.toggle_theme')">
                       <Moon v-if="isDark" class="h-4 w-4" />
                       <Sun v-else class="h-4 w-4" />
                     </Button>
 
                     <DropdownMenu>
                       <DropdownMenuTrigger as-child>
-                        <Button variant="ghost" size="icon" class="h-9 w-9" :title="t('header.change_language')">
+                        <Button variant="ghost" size="icon" class="h-9 w-9" :title="t('header.change_language')" :aria-label="t('header.change_language')">
                           <Languages class="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>

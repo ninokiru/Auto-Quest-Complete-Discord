@@ -32,6 +32,7 @@ const hasActions = computed(() =>
 <template>
   <div
     v-if="hasActions"
+    role="group"
     class="mt-3 border-t border-border/60 pt-3"
     :aria-label="t('home.batch_actions')"
   >

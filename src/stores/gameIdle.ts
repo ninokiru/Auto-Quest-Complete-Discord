@@ -59,6 +59,7 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
   const stopRequested = ref(false)
   const error = ref<string | null>(null)
   let initialized = false
+  let initialization: Promise<void> | null = null
   let accountGeneration = 0
   let pendingStart: Promise<void> | null = null
   let statusUnlisten: (() => void) | null = null
@@ -67,14 +68,6 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
   const isActive = computed(() => {
     const phase = status.value?.phase
     return phase !== undefined && phase !== 'stopped'
-  })
-
-  const sessionTotalSeconds = computed(() => {
-    const current = status.value
-    if (!current) return 0
-    if (current.phase !== 'playing') return current.accumulatedPlayedSeconds
-    const elapsed = Math.max(0, Math.floor((Date.now() - current.phaseStartedAt) / 1000))
-    return current.accumulatedPlayedSeconds + elapsed
   })
 
   function persistConfig() {
@@ -100,7 +93,19 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
 
   async function initialize() {
     if (initialized) return
-    initialized = true
+    // Concurrent mounts share one handshake: a second caller waits for the
+    // first instead of resolving against a half-populated store.
+    if (initialization) return initialization
+    const pending = initializeOnce()
+    initialization = pending
+    try {
+      await pending
+    } finally {
+      if (initialization === pending) initialization = null
+    }
+  }
+
+  async function initializeOnce() {
     try {
       await Promise.all([quests.initPlatformCapabilities(), quests.initCdpMode().catch(() => undefined)])
       if (savedMode === null) {
@@ -122,12 +127,14 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
       historyUnlisten = await onGameSimulationHistoryUpdated(entry => {
         history.value = { ...history.value, [entry.appId]: entry }
       })
+      // Only a completed handshake may block a later attempt; a failure stays
+      // retryable and never leaves its listeners bound to a dead store.
+      initialized = true
     } catch (cause) {
       statusUnlisten?.()
       historyUnlisten?.()
       statusUnlisten = null
       historyUnlisten = null
-      initialized = false
       throw cause
     }
   }
@@ -229,14 +236,6 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
     history.value = {}
   }
 
-  function dispose() {
-    statusUnlisten?.()
-    historyUnlisten?.()
-    statusUnlisten = null
-    historyUnlisten = null
-    initialized = false
-  }
-
   return {
     playMinutes,
     restMinutes,
@@ -248,7 +247,6 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
     stopRequested,
     error,
     isActive,
-    sessionTotalSeconds,
     initialize,
     refreshHistory,
     start,
@@ -256,6 +254,5 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
     removeUpcoming,
     stopForAccountChange,
     validateConfig,
-    dispose,
   }
 })

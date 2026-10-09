@@ -1,9 +1,30 @@
 # CDP runtime verification and diagnostics
 
-This replaces route-based CDP readiness and primary-target selection. The shared
-`discord-cdp-launch-core` probe is used by the Helper and standalone launcher;
-Tauri login, navigation, network capture and task operations select targets with
-the same runtime verification.
+**Who reads this:** anyone changing Chrome DevTools Protocol code — `src-tauri/src/cdp_client.rs`,
+`src-tauri/src/cdp_quest.rs`, or `crates/discord-cdp-launch-core/`. If you are trying to fix a
+connection problem in an app you are running, read
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md) instead; that file is written for users, this one is for
+the people changing the behavior it describes.
+
+**The one idea in this file.** The Discord desktop client is an Electron application, so starting it
+with a debug port exposes a list of everything it is currently rendering: pages, auxiliary windows,
+iframes. Several of those look like Discord and are not the frame that owns your session — an
+updater, a splash screen, a Settings pop-up, or a second client signed into another account. Picking
+the wrong one is how an app silently does nothing while claiming to be connected. So every operation
+first *verifies* a candidate, and each timeout, retry count, and ordering rule recorded below exists
+because a specific failure happened without it. Do not shorten one of those constants without
+reading the section that justified it.
+
+**Scope.** Route-based readiness checking and separate primary-target selection have been replaced by
+one shared probe in `discord-cdp-launch-core`, used by both the application and the standalone
+launcher (`waybridge`), so login, navigation, network capture and quest operations all select targets
+through the same verification.
+
+**How to read the rest.** [Readiness contract](#readiness-contract) and
+[Sessions and operations](#sessions-and-operations) are the specification. Everything from
+[Validation record](#validation-record--windows-2026-10-01-asiataipei-utc0800) onward is dated
+history: what was tested, on which machine, against which commit, and which reviewer raised what.
+Treat the numbers in those sections as a snapshot of one day, not as properties of your build.
 
 ## Readiness contract
 
@@ -110,15 +131,32 @@ JSON task execution reuses one verified renderer and its document guard per call
 the separate pinned-session monitor remains active.
 
 Activity quests additionally poll the read-only CDP target list until the Activity
-iframe appears, up to sixty one-second attempts, and stay cancellable during that
-wait. This is target listing only: no navigation, no route warmup, no page
+iframe appears, up to three hundred one-second attempts, and stay cancellable during
+that wait. This is target listing only: no navigation, no route warmup, no page
 evaluation, so it is separate from the SDK capability budget below. The budget is
 wide because the wait only ends once the user has opened the Activity in Discord
-and its frame has mounted; twenty seconds proved shorter than that round trip. An
-exhausted wait reports which of the two misses happened: no `discordsays.com`
-target is listed at all, which means the Activity was never launched, or one is
-listed but carries no usable target type or debugger endpoint, which means the
-frame exists and this build could not attach to it.
+and its frame has mounted; sixty seconds routinely expired while the user was still
+clicking through the launch dialog.
+
+An Activity frame is recognised by the quest's own application id: the subdomain
+Discord serves it on is that id, so a host whose first label equals the id attaches
+even if Discord moves activities to a new domain, and a frame belonging to a
+different application is not. Every fifth attempt also reads the bound window's
+iframe list (a read-only DOM query with a three-second timeout), and an exhausted
+wait reports which miss happened: no activity target is listed and the window has no
+iframe, which means the Activity was never launched in the attached client; a frame
+is in the window but the target list never exposed it, which needs a client restart;
+or the window has iframes on other hosts, whose names are reported so a wrong-client
+bind can be told apart from a host this build cannot attach to. Every reported list is
+bounded: the DOM probe stops collecting after forty iframe hosts, the probe message names
+at most eight distinct iframe hosts, and the listed-target message names at most six
+deduplicated `type: host` entries. A client with a very large frame tree therefore still
+produces a log line a human can read. When the window reports iframes but
+none of them carries a `src`, the message says the frame may still be mounting rather
+than claiming the Activity lives on unrelated hosts. Both lists keep application ids
+masked (`*.discordsays.com`) and count repeated windows,
+because the generic id sanitizer rendered `discord.com` and `discordsays.com` as the
+same string and made the report unreadable.
 
 Video startup first reads a valid enrollment timestamp from QuestsStore. If it
 is missing or invalid, a read-only `/quests/@me` request resolves the requested
@@ -139,6 +177,11 @@ wait is intentionally not retained for this in-page SDK lookup. SDK readiness an
 actual command timeouts are separate from capability discovery.
 
 ## Validation record — Windows, 2026-10-01 (Asia/Taipei, UTC+08:00)
+
+> **Historical log.** From here to the end of the file are dated records: what was verified on that
+> day, on one Windows machine, against one commit. Test counts, artifact sizes, process ids and
+> reviewer numbers describe that run and nothing else. They are kept because each one explains why a
+> constant in the specification above has the value it has.
 
 Completed before the user's instruction to stop additional testing:
 

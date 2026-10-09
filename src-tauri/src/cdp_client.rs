@@ -1566,36 +1566,58 @@ fn activity_target_host(target: &CdpTarget) -> Option<String> {
         .and_then(|url| url.host_str().map(str::to_owned))
 }
 
+/// Discord names an Activity frame's subdomain after its application id. Reading
+/// the id off the host instead of assuming one fixed domain is what keeps a
+/// Discord-side host move from turning an open Activity into a "you never
+/// launched it" report.
 fn activity_target_application_id(target: &CdpTarget) -> Option<String> {
     let host = activity_target_host(target)?;
-    host.strip_suffix(".discordsays.com")
-        .filter(|prefix| !prefix.is_empty())
-        .map(str::to_owned)
+    leading_application_id(&host)
 }
 
+fn leading_application_id(host: &str) -> Option<String> {
+    let (label, rest) = host.split_once('.')?;
+    let label_is_id = !label.is_empty() && label.chars().all(|value| value.is_ascii_digit());
+    (label_is_id && !rest.is_empty()).then(|| label.to_owned())
+}
+
+/// Mask only the application-id subdomain, the identifying part of an Activity
+/// host. The generic id sanitizer could not: it rendered `discord.com` and
+/// `discordsays.com` as the same string, which is exactly the distinction a
+/// discovery failure has to make.
 fn describe_activity_host_for_log(host: &str) -> String {
-    if let Some(application_id) = host.strip_suffix(".discordsays.com") {
-        if !application_id.is_empty() && application_id.chars().all(|value| value.is_ascii_digit())
-        {
-            return format!(
-                "{}.discordsays.com",
-                crate::logger::sanitize_user_id(application_id)
-            );
-        }
+    if leading_application_id(host).is_some() {
+        let (_, domain) = host.split_once('.').expect("checked by the guard");
+        return format!("*.{domain}");
     }
-
-    host.to_string()
+    host.to_owned()
 }
 
-fn is_activity_host(target: &CdpTarget) -> bool {
+/// A frame belongs to an Activity when it is on Discord's activity domain, or -
+/// when the quest supplied its application id - on any host whose subdomain is
+/// exactly that id.
+fn host_is_activity(host: &str, application_id: Option<&str>) -> bool {
+    if host == "discordsays.com" || host.ends_with(".discordsays.com") {
+        return true;
+    }
+    application_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some_and(|app_id| {
+            host.split_once('.')
+                .is_some_and(|(label, domain)| label == app_id && !domain.is_empty())
+        })
+}
+
+fn is_activity_host(target: &CdpTarget, application_id: Option<&str>) -> bool {
     activity_target_host(target)
-        .map(|host| host == "discordsays.com" || host.ends_with(".discordsays.com"))
+        .map(|host| host_is_activity(&host, application_id))
         .unwrap_or(false)
 }
 
-fn is_activity_target(target: &CdpTarget) -> bool {
+fn is_activity_target(target: &CdpTarget, application_id: Option<&str>) -> bool {
     (target.target_type == "iframe" || target.target_type == "page")
-        && is_activity_host(target)
+        && is_activity_host(target, application_id)
         && target.web_socket_debugger_url.is_some()
 }
 
@@ -1624,28 +1646,40 @@ fn describe_activity_targets(targets: &[CdpTarget]) -> String {
 
 /// Summarise what the debugger actually lists when no activity target matched, so
 /// a failure distinguishes "not launched yet" from "served from a host we do not
-/// recognise". Only the target type and host are reported, with snowflakes masked.
+/// recognise". Only the target type and host are reported, with snowflakes masked,
+/// and repeats carry a count because several windows on the same host is itself a
+/// clue (the bound window may not be the one showing the Activity).
 fn describe_visible_target_hosts(targets: &[CdpTarget]) -> String {
     if targets.is_empty() {
         return "none".to_string();
     }
 
-    let mut entries: Vec<String> = Vec::new();
+    let mut entries: Vec<(String, usize)> = Vec::new();
     for target in targets {
-        if entries.len() >= 6 {
-            break;
-        }
         let host = reqwest::Url::parse(&target.url)
             .ok()
             .and_then(|url| url.host_str().map(str::to_owned))
             .unwrap_or_else(|| "unknown-host".to_string());
-        let host = crate::logger::sanitize_user_id(&host);
+        let host = describe_activity_host_for_log(&host);
         let entry = format!("{}:{}", target.target_type, host);
-        if !entries.contains(&entry) {
-            entries.push(entry);
+        match entries.iter().position(|(name, _)| *name == entry) {
+            Some(repeat) => entries[repeat].1 += 1,
+            None => entries.push((entry, 1)),
         }
     }
-    entries.join(", ")
+
+    entries
+        .iter()
+        .take(6)
+        .map(|(entry, count)| {
+            if *count == 1 {
+                entry.clone()
+            } else {
+                format!("{entry} x{count}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Say *which* miss happened. Discord listing no activity host at all means the
@@ -1653,10 +1687,10 @@ fn describe_visible_target_hosts(targets: &[CdpTarget]) -> String {
 /// the frame is there and this build could not attach to it. Those need opposite
 /// answers from the user, and the old single "launch it first" text blamed the
 /// user for the second case too.
-fn describe_activity_miss(targets: &[CdpTarget]) -> String {
+fn describe_activity_miss(targets: &[CdpTarget], application_id: Option<&str>) -> String {
     let listed: Vec<String> = targets
         .iter()
-        .filter(|target| is_activity_host(target))
+        .filter(|target| is_activity_host(target, application_id))
         .map(|target| {
             let debugger = target.web_socket_debugger_url.is_some();
             format!("{}(debugger:{})", target.target_type, debugger)
@@ -1665,12 +1699,12 @@ fn describe_activity_miss(targets: &[CdpTarget]) -> String {
 
     if listed.is_empty() {
         return format!(
-            "Discord lists no discordsays.com target. Visible: {}",
+            "Discord lists no Activity target. Visible: {}",
             describe_visible_target_hosts(targets)
         );
     }
 
-    format!("discordsays.com listed but unusable: {}", listed.join(", "))
+    format!("Activity host listed but unusable: {}", listed.join(", "))
 }
 
 /// Find the activity iframe CDP target (discordsays.com).
@@ -1688,9 +1722,13 @@ pub async fn find_activity_iframe_target_for_application(
 
     let targets = get_cdp_targets(port).await?;
 
+    let requested_application_id = application_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
     let activity_targets = targets
         .iter()
-        .filter(|target| is_activity_target(target))
+        .filter(|target| is_activity_target(target, requested_application_id))
         .cloned()
         .collect::<Vec<_>>();
 
@@ -1699,13 +1737,9 @@ pub async fn find_activity_iframe_target_for_application(
         // Activity or whether Discord exposed it in a shape we cannot attach to.
         anyhow::bail!(
             "No activity iframe target found. Launch the Activity in Discord first. {}",
-            describe_activity_miss(&targets)
+            describe_activity_miss(&targets, requested_application_id)
         );
     }
-
-    let requested_application_id = application_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
 
     if let Some(app_id) = requested_application_id {
         let app_id_hint = crate::logger::sanitize_user_id(app_id);
@@ -1778,12 +1812,22 @@ pub async fn find_activity_iframe_target_for_application(
     Ok(activity_targets[0].clone())
 }
 
-/// Count `*.discordsays.com` iframes inside the bound Discord document, so a
-/// discovery miss can tell "no Activity is open in this client" apart from
-/// "the frame is open but the target list never exposed it". `None` means the
-/// document could not be queried (busy renderer, no pinned target); it says
+/// What the bound Discord window actually loads, as opposed to what the CDP target
+/// list exposes. The host list is what makes a discovery miss explainable: "this
+/// window has no iframe" tells the user to launch the Activity, while "this window
+/// has these iframes" names the frame Discord really put on screen. `None` means
+/// the document could not be queried (busy renderer, no pinned target) and says
 /// nothing about whether an Activity is open.
-pub(crate) async fn count_open_activity_frames(port: u16) -> Option<usize> {
+pub(crate) struct ActivityFrameProbe {
+    pub iframes: usize,
+    pub activity_iframes: usize,
+    pub hosts: Vec<String>,
+}
+
+pub(crate) async fn probe_activity_frames(
+    port: u16,
+    application_id: Option<&str>,
+) -> Option<ActivityFrameProbe> {
     let bound = TASK_TARGET
         .try_with(|slot| slot.borrow().clone())
         .ok()
@@ -1794,13 +1838,55 @@ pub(crate) async fn count_open_activity_frames(port: u16) -> Option<usize> {
     let ws_url = bound.target.web_socket_debugger_url.as_deref()?;
     let raw = execute_js_via_ws(
         ws_url,
-        "document.querySelectorAll('iframe[src*=\"discordsays.com\"]').length",
+        r#"(function () {
+             var frames = document.querySelectorAll('iframe');
+             var hosts = [];
+             for (var i = 0; i < frames.length; i++) {
+               var src = frames[i].getAttribute('src');
+               if (!src) continue;
+               try { hosts.push(new URL(src, location.href).host); } catch (e) {}
+               if (hosts.length >= 40) break;
+             }
+             return JSON.stringify({ iframes: frames.length, hosts: hosts });
+           })()"#,
         false,
         3,
     )
     .await
     .ok()?;
-    raw.trim().parse::<usize>().ok()
+
+    let parsed: serde_json::Value = serde_json::from_str(raw.trim()).ok()?;
+    let hosts = parsed
+        .get("hosts")?
+        .as_array()?
+        .iter()
+        .filter_map(|value| value.as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
+
+    let activity_iframes = hosts
+        .iter()
+        .filter(|host| host_is_activity(host, application_id))
+        .count();
+
+    let mut labels: Vec<String> = Vec::new();
+    for host in &hosts {
+        let label = describe_activity_host_for_log(host);
+        if !labels.contains(&label) {
+            labels.push(label);
+            if labels.len() >= 8 {
+                break;
+            }
+        }
+    }
+
+    Some(ActivityFrameProbe {
+        iframes: parsed
+            .get("iframes")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0) as usize,
+        activity_iframes,
+        hosts: labels,
+    })
 }
 
 /// Execute JavaScript on a specific CDP target via its WebSocket URL.
@@ -2068,6 +2154,93 @@ mod tests {
             url: url.to_string(),
             web_socket_debugger_url: ws,
         }
+    }
+
+    #[test]
+    fn activity_host_matches_the_quests_application_id_not_only_a_fixed_domain() {
+        let app_id = "123456789012345678";
+        assert_eq!(
+            leading_application_id("123456789012345678.discordsays.com").as_deref(),
+            Some(app_id)
+        );
+        assert_eq!(leading_application_id("www.discordsays.com"), None);
+        assert_eq!(leading_application_id("discordsays.com"), None);
+
+        assert!(host_is_activity("discordsays.com", None));
+        assert!(host_is_activity("whatever.discordsays.com", None));
+        // A Discord-side host move stays discoverable through the application id.
+        assert!(host_is_activity(
+            "123456789012345678.activity-host.example",
+            Some(app_id)
+        ));
+        assert!(!host_is_activity(
+            "123456789012345678.activity-host.example",
+            None
+        ));
+        assert!(!host_is_activity(
+            "999999999999999999.activity-host.example",
+            Some(app_id)
+        ));
+        assert!(!host_is_activity("discord.com", Some(app_id)));
+    }
+
+    #[test]
+    fn described_visible_hosts_keep_discord_and_discordsays_apart() {
+        // The generic id sanitizer masked both to `disc....com`, which made a
+        // "no Activity target" report unreadable.
+        let targets = vec![
+            mk_target("page", "Discord", "https://discord.com/channels/@me"),
+            mk_target(
+                "page",
+                "Discord",
+                "https://discord.com/guilds/123456789012345678",
+            ),
+            mk_target(
+                "iframe",
+                "Activity",
+                "https://123456789012345678.discordsays.com/",
+            ),
+        ];
+        let described = describe_visible_target_hosts(&targets);
+        assert!(
+            described.contains("page:discord.com x2"),
+            "repeated windows must be counted, got {described}"
+        );
+        assert!(
+            described.contains("iframe:*.discordsays.com"),
+            "the activity domain must stay readable, got {described}"
+        );
+        assert!(
+            !described.contains("123456789012345678"),
+            "application ids stay masked in user-visible errors, got {described}"
+        );
+    }
+
+    #[test]
+    fn activity_miss_description_separates_unusable_from_absent() {
+        let no_debugger = mk_target_opt_ws(
+            "iframe",
+            "Activity",
+            "https://123456789012345678.discordsays.com/",
+            None,
+        );
+        let unusable = describe_activity_miss(&[no_debugger], Some("123456789012345678"));
+        assert!(
+            unusable.contains("Activity host listed but unusable"),
+            "an attached-but-unusable frame must not blame the user, got {unusable}"
+        );
+        assert!(unusable.contains("debugger:false"));
+        assert!(
+            !unusable.contains("123456789012345678"),
+            "application ids stay masked in user-visible errors, got {unusable}"
+        );
+
+        let absent_target = mk_target("page", "Discord", "https://discord.com/channels/@me");
+        let absent = describe_activity_miss(&[absent_target], Some("123456789012345678"));
+        assert!(
+            absent.contains("Discord lists no Activity target"),
+            "no activity host at all is the launch-it-yourself case, got {absent}"
+        );
     }
 
     #[test]

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { AlertTriangle, CheckCircle2, ExternalLink, Info, Link2, ShieldAlert, Sparkles, XCircle } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { open } from '@tauri-apps/plugin-shell'
@@ -47,6 +47,11 @@ const versionTapCount = ref(0)
 const lastTapTime = ref(0)
 const showDebugUnlockHint = ref(false)
 
+// The unlock sequence only counts taps that land inside this window, so the
+// hint has to expire on the same schedule instead of waiting for another tap.
+const TAP_WINDOW_MS = 2000
+let tapResetTimer: ReturnType<typeof setTimeout> | undefined
+
 interface LogoBubble {
   id: number
   style: Record<string, string>
@@ -63,13 +68,24 @@ async function openExternal(url: string) {
   }
 }
 
+function clearTapResetTimer() {
+  if (tapResetTimer !== undefined) {
+    clearTimeout(tapResetTimer)
+    tapResetTimer = undefined
+  }
+}
+
+function resetTapProgress() {
+  versionTapCount.value = 0
+  showDebugUnlockHint.value = false
+}
+
 function handleVersionTap() {
   if (debugModeEnabled.value) return
 
   const now = Date.now()
-  if (now - lastTapTime.value > 2000) {
-    versionTapCount.value = 0
-    showDebugUnlockHint.value = false
+  if (now - lastTapTime.value > TAP_WINDOW_MS) {
+    resetTapProgress()
   }
   lastTapTime.value = now
   versionTapCount.value++
@@ -81,10 +97,17 @@ function handleVersionTap() {
   if (versionTapCount.value >= 7) {
     debugModeEnabled.value = true
     persistDebugMode(true)
-    versionTapCount.value = 0
-    showDebugUnlockHint.value = false
+    clearTapResetTimer()
+    resetTapProgress()
     emit('debugUnlocked')
+    return
   }
+
+  clearTapResetTimer()
+  tapResetTimer = setTimeout(() => {
+    tapResetTimer = undefined
+    resetTapProgress()
+  }, TAP_WINDOW_MS)
 }
 
 function handleVersionTapWithBubble() {
@@ -119,6 +142,8 @@ function removeBubble(id: number) {
   const idx = logoBubbles.value.findIndex(bubble => bubble.id === id)
   if (idx !== -1) logoBubbles.value.splice(idx, 1)
 }
+
+onUnmounted(clearTapResetTimer)
 </script>
 
 <template>
@@ -147,7 +172,11 @@ function removeBubble(id: number) {
         <div class="flex flex-wrap items-center gap-2">
           <span
             class="relative cursor-pointer select-none text-base font-semibold text-foreground transition-transform active:scale-95"
+            role="button"
+            tabindex="0"
             @click="handleVersionTapWithBubble"
+            @keydown.enter.prevent="handleVersionTapWithBubble"
+            @keydown.space.prevent="handleVersionTapWithBubble"
             title="Version Info"
           >
             Auto Quest Complete Discord v{{ versionStore.currentVersion }}
@@ -240,6 +269,7 @@ function removeBubble(id: number) {
             </div>
             <SettingsSwitch
               :model-value="versionStore.checkPreRelease"
+              :label="t('settings.check_prerelease')"
               @update:model-value="versionStore.setCheckPreRelease"
             />
           </div>

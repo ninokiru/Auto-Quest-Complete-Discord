@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Quest } from '@/api/tauri'
-import { deriveHomeQuestBuckets } from './useHomeQuestState'
+import { deriveHomeQuestBuckets, getRecommendedQuests } from './useHomeQuestState'
 
 function quest(overrides: Partial<Quest> & { id: string }): Quest {
   return {
@@ -84,7 +84,8 @@ describe('deriveHomeQuestBuckets', () => {
 
     expect(buckets.readyToRun.map(item => item.id)).toEqual(['cloud-activity'])
     expect(buckets.attentionNeeded).toHaveLength(0)
-    expect(buckets.activityManual).toHaveLength(0)
+    expect(getRecommendedQuests(buckets).map(item => item.id)).toContain('cloud-activity')
+    expect(Object.keys(buckets)).not.toContain('activityManual')
   })
 
   it('uses the routed task when a quest contains multiple Activity task types', () => {
@@ -106,7 +107,7 @@ describe('deriveHomeQuestBuckets', () => {
 
     expect(buckets.readyToRun).toHaveLength(0)
     expect(buckets.attentionNeeded.map(item => item.id)).toEqual(['mixed-activity'])
-    expect(buckets.activityManual.map(item => item.id)).toEqual(['mixed-activity'])
+    expect(getRecommendedQuests(buckets).map(item => item.id)).toContain('mixed-activity')
   })
 
   it('drops the enrollment block once its deadline has passed', () => {

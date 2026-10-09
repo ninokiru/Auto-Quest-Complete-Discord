@@ -38,6 +38,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside))
     <!-- Trigger button — pure HTML, no Radix wrapper -->
     <button
       class="h-10 px-2 rounded-lg inline-flex items-center gap-2 hover:bg-muted/60 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      :aria-expanded="open"
       @click="open = !open"
     >
       <Avatar class="w-8 h-8 shrink-0">

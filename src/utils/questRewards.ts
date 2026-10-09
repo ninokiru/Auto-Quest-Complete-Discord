@@ -2,14 +2,34 @@ import type { Quest, QuestReward, QuestUserStatus } from '@/api/tauri'
 
 export type QuestRewardKind = 'orbs' | 'collectible' | 'ingame' | 'discord'
 
+/**
+ * Locale key plus its interpolation values. Numbers arrive pre-formatted so the
+ * grouping separators stay stable across the several call sites that resolve it.
+ */
+export interface QuestRewardLocalizedText {
+  key: string
+  params?: Record<string, string>
+}
+
+/**
+ * The reward's amount line. `name` renders the Discord-supplied reward name,
+ * `quantity` that name with a count, `text` a localized orb string. Nothing here
+ * is English prose: the render site owns the wording.
+ */
+export type QuestRewardAmount =
+  | { type: 'name' }
+  | { type: 'quantity'; quantity: number }
+  | { type: 'text'; text: QuestRewardLocalizedText }
+
 export interface QuestRewardView {
   kind: QuestRewardKind
+  /** Discord-supplied label; empty when the payload carries no name. */
   name: string
   asset: string | null
   skuId: string
   type: number
-  amountText: string
-  badgeText: string | null
+  amount: QuestRewardAmount
+  badge: QuestRewardLocalizedText | null
   claimed: boolean
   icon: 'orbs' | 'asset' | 'gift'
 }
@@ -37,11 +57,15 @@ export function getPremiumMultiplier(reward: QuestReward): number | null {
 }
 
 function formatMultiplier(multiplier: number): string {
-  return `${Number(multiplier.toFixed(2)).toString()}x`
+  return Number(multiplier.toFixed(2)).toString()
+}
+
+function formatOrbCount(count: number): string {
+  return count.toLocaleString()
 }
 
 export function formatQuestReward(reward: QuestReward, userStatus?: QuestUserStatus | null, userPremiumType?: number | null): QuestRewardView {
-  const name = reward.messages?.name || 'Reward'
+  const name = reward.messages?.name || ''
   const hasNitro = !!userPremiumType && userPremiumType > 0
   const multiplier = hasNitro ? getPremiumMultiplier(reward) : null
   const claimedOrbs = userStatus?.orb_quantity_claimed
@@ -50,13 +74,13 @@ export function formatQuestReward(reward: QuestReward, userStatus?: QuestUserSta
   if (isOrbReward(reward)) {
     const base = reward.orb_quantity
     const premium = reward.premium_orb_quantity
-    const amountText = claimed && claimedOrbs != null
-      ? `Claimed ${claimedOrbs.toLocaleString()} Orbs`
+    const amount: QuestRewardAmount = claimed && claimedOrbs != null
+      ? { type: 'text', text: { key: 'quest.reward_orbs_claimed', params: { count: formatOrbCount(claimedOrbs) } } }
       : hasNitro && base != null && premium != null && premium > base
-        ? `${base.toLocaleString()} -> ${premium.toLocaleString()} Orbs`
+        ? { type: 'text', text: { key: 'quest.reward_orbs_premium', params: { base: formatOrbCount(base), premium: formatOrbCount(premium) } } }
         : base != null
-          ? `${base.toLocaleString()} Orbs`
-          : name
+          ? { type: 'text', text: { key: 'quest.reward_orbs', params: { count: formatOrbCount(base) } } }
+          : { type: 'name' }
 
     return {
       kind: 'orbs',
@@ -64,8 +88,10 @@ export function formatQuestReward(reward: QuestReward, userStatus?: QuestUserSta
       asset: reward.asset || null,
       skuId: reward.sku_id,
       type: reward.type,
-      amountText,
-      badgeText: multiplier ? `Nitro ${formatMultiplier(multiplier)}` : null,
+      amount,
+      badge: multiplier
+        ? { key: 'quest.reward_nitro_multiplier', params: { multiplier: formatMultiplier(multiplier) } }
+        : null,
       claimed,
       icon: reward.asset ? 'asset' : 'orbs',
     }
@@ -77,14 +103,18 @@ export function formatQuestReward(reward: QuestReward, userStatus?: QuestUserSta
       ? 'collectible'
       : 'discord'
 
+  const amount: QuestRewardAmount = reward.quantity != null
+    ? { type: 'quantity', quantity: reward.quantity }
+    : { type: 'name' }
+
   return {
     kind,
     name,
     asset: reward.asset || null,
     skuId: reward.sku_id,
     type: reward.type,
-    amountText: reward.quantity != null ? `${name} x${reward.quantity}` : name,
-    badgeText: null,
+    amount,
+    badge: null,
     claimed,
     icon: reward.asset ? 'asset' : 'gift',
   }

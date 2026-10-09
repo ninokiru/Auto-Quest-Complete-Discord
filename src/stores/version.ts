@@ -80,6 +80,11 @@ export const useVersionStore = defineStore('version', () => {
     const hasChecked = ref(false)
     const checkPreRelease = ref(localStorage.getItem('checkPreRelease') === 'true')
 
+    // Bumped on every request so a slower response from an earlier request can
+    // never overwrite state that a newer request already committed.
+    let versionInfoGeneration = 0
+    let updateCheckGeneration = 0
+
     const isPreRelease = computed(() =>
         currentVersion.value !== 'Dev' && currentVersion.value.toLowerCase().includes('rc'),
     )
@@ -96,11 +101,12 @@ export const useVersionStore = defineStore('version', () => {
     })
 
     async function loadCurrentVersion() {
+        const generation = ++versionInfoGeneration
         try {
             const res = await fetch('/version.txt')
             if (res.ok) {
                 const text = await res.text()
-                if (text) {
+                if (text && generation === versionInfoGeneration) {
                     currentVersion.value = text.trim()
                 }
             }
@@ -110,13 +116,16 @@ export const useVersionStore = defineStore('version', () => {
     }
 
     async function checkForUpdate() {
-        if (isChecking.value) return
+        const generation = ++updateCheckGeneration
+        // Snapshot the channel so the response is parsed with the same mode that
+        // built the URL, even if the toggle flips while this request is running.
+        const includePreRelease = checkPreRelease.value
 
         isChecking.value = true
         checkError.value = null
 
         try {
-            const url = checkPreRelease.value
+            const url = includePreRelease
               ? 'https://api.github.com/repos/ninokiru/Auto-Quest-Complete-Discord/releases'
               : 'https://api.github.com/repos/ninokiru/Auto-Quest-Complete-Discord/releases/latest'
 
@@ -132,7 +141,9 @@ export const useVersionStore = defineStore('version', () => {
 
             const data = await res.json()
 
-            if (checkPreRelease.value) {
+            if (generation !== updateCheckGeneration) return
+
+            if (includePreRelease) {
                 // Array of releases — pick the first one (newest, including pre-releases)
                 const release = Array.isArray(data) ? data[0] : data
                 if (!release) throw new Error('No releases found')
@@ -152,10 +163,13 @@ export const useVersionStore = defineStore('version', () => {
             }
             hasChecked.value = true
         } catch (e) {
+            if (generation !== updateCheckGeneration) return
             checkError.value = e instanceof Error ? e.message : 'Failed to check for updates'
             console.error('Version check failed:', e)
         } finally {
-            isChecking.value = false
+            if (generation === updateCheckGeneration) {
+                isChecking.value = false
+            }
         }
     }
 

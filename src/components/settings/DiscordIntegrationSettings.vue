@@ -196,13 +196,17 @@ async function useCurrentCdpOwner() {
   try {
     const snapshot = await clients.refresh(questsStore.cdpPort)
     const providerId = snapshot?.endpoint.ownerProviderId
-    if (!snapshot || !providerId) return
+    if (!snapshot || !providerId) {
+      throw new Error(t('desktop_clients.current_owner_unavailable'))
+    }
     const ownerSession = findCurrentCdpOwnerSession(
       await listRunningDesktopCdpSessions(),
       questsStore.cdpPort,
       providerId,
     )
-    if (!ownerSession) throw new Error('The current CDP owner could not be mapped to one exact installation.')
+    if (!ownerSession) {
+      throw new Error(t('desktop_clients.owner_installation_unmatched'))
+    }
     const selection = selectionForCurrentCdpOwner(snapshot, ownerSession)
     const next = await clients.select(selection, questsStore.cdpPort)
     questsStore.desktopClient = desktopClientArgForProvider(providerId)
@@ -451,9 +455,10 @@ watch(() => questsStore.cdpPort, () => {
         default-open
       >
         <div class="space-y-2">
-          <Label>{{ t('settings.cdp_port') }}</Label>
+          <Label for="cdp-port-input">{{ t('settings.cdp_port') }}</Label>
           <div class="flex items-center gap-2">
             <Input
+              id="cdp-port-input"
               type="number"
               v-model.number="questsStore.cdpPort"
               min="1024"

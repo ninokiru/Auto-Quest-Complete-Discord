@@ -16,7 +16,7 @@ const props = withDefaults(defineProps<{
 </script>
 
 <template>
-  <Card :class="cn('overflow-hidden transition-shadow hover:shadow-sm', settingToneClass[tone].card)">
+  <Card class="overflow-hidden transition-shadow hover:shadow-sm">
     <CardHeader class="pb-4">
       <div class="flex items-start gap-3">
         <div

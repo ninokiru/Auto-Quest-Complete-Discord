@@ -2,22 +2,34 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Minus, Square, X, Copy } from 'lucide-vue-next'
+import { useI18n } from 'vue-i18n'
 import { useVersionStore } from '@/stores/version'
 
+const { t } = useI18n()
 const appWindow = getCurrentWindow()
 const versionStore = useVersionStore()
 const isMaximized = ref(false)
 let unlisten: (() => void) | null = null
+let unmounted = false
 
 onMounted(async () => {
   isMaximized.value = await appWindow.isMaximized()
-  unlisten = await appWindow.listen('tauri://resize', async () => {
+  const handle = await appWindow.listen('tauri://resize', async () => {
     isMaximized.value = await appWindow.isMaximized()
   })
+  // The handle only exists after the await: when the component is already gone
+  // by then, release the listener instead of leaking it.
+  if (unmounted) {
+    handle()
+    return
+  }
+  unlisten = handle
 })
 
 onUnmounted(() => {
+  unmounted = true
   if (unlisten) unlisten()
+  unlisten = null
 })
 
 async function handleMinimize() {
@@ -55,7 +67,7 @@ async function handleDragStart(e: MouseEvent) {
       class="flex-1 flex items-center gap-2 px-3 h-full cursor-default"
       @mousedown="handleDragStart"
     >
-        <img src="/icons/logo.png" alt="logo" class="w-4 h-4 pointer-events-none" />
+        <img src="/icons/32x32.png" alt="logo" class="w-4 h-4 pointer-events-none" />
         <span class="text-xs font-medium text-muted-foreground pointer-events-none">
           Auto Quest Complete Discord <span class="opacity-70 ml-1">v{{ versionStore.currentVersion }}</span>
         </span>
@@ -65,7 +77,7 @@ async function handleDragStart(e: MouseEvent) {
       <button 
         @click="handleMinimize" 
         class="titlebar-button hover:bg-accent hover:text-accent-foreground inline-flex items-center justify-center h-full w-[46px] transition-colors"
-        tabindex="-1"
+        :aria-label="t('general.minimize')"
       >
         <Minus class="w-4 h-4" />
       </button>
@@ -73,7 +85,7 @@ async function handleDragStart(e: MouseEvent) {
       <button 
         @click="handleToggleMaximize" 
         class="titlebar-button hover:bg-accent hover:text-accent-foreground inline-flex items-center justify-center h-full w-[46px] transition-colors"
-        tabindex="-1"
+        :aria-label="isMaximized ? t('general.restore') : t('general.maximize')"
       >
         <Copy v-if="isMaximized" class="w-4 h-4 rotate-180" />
         <Square v-else class="w-3.5 h-3.5" />
@@ -82,7 +94,7 @@ async function handleDragStart(e: MouseEvent) {
       <button 
         @click="handleClose" 
         class="titlebar-button hover:bg-destructive hover:text-white inline-flex items-center justify-center h-full w-[46px] transition-colors"
-        tabindex="-1"
+        :aria-label="t('general.close')"
       >
         <X class="w-4 h-4" />
       </button>

@@ -49,6 +49,7 @@ server of its own, and no telemetry.
 - [📐 Behaviour worth knowing](#-behaviour-worth-knowing)
 - [🏗️ Architecture](#-architecture)
 - [🔒 Security and privacy](#-security-and-privacy)
+- [📚 Guides](#-guides)
 - [🩺 Troubleshooting](#-troubleshooting)
 - [🛠️ Development](#-development)
 - [🤝 Contributing](#-contributing)
@@ -369,7 +370,23 @@ Explore the codebase with [![Ask DeepWiki](https://deepwiki.com/badge.svg)](http
 Report vulnerabilities privately — see [SECURITY.md](SECURITY.md). Only the latest release receives
 security fixes.
 
+## 📚 Guides
+
+Step-by-step documentation lives in [`docs/`](docs/). Everything there is in English.
+
+| Document | For you, if |
+| --- | --- |
+| [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) | You want to know what every file in this repository is for, what the project is built with, and which file to open for a given change |
+| [docs/README.md](docs/README.md) | You want the map of all documentation and a reading order |
+| [docs/USAGE.md](docs/USAGE.md) | You are installing it, signing in, or working out how a quest type is run — including why some quests count checkpoints and others count seconds |
+| [docs/BUILDING.md](docs/BUILDING.md) | You want your own Windows, macOS, or Linux binary, or you need the exact commands CI runs before you push |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Something failed and you want to know what the code in the message means |
+| [docs/cdp-runtime-validation.md](docs/cdp-runtime-validation.md) | You are changing CDP code and need to know why each timeout, cap, and probe order is what it is |
+
 ## 🩺 Troubleshooting
+
+The short version of the usual failures; [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) explains
+every error code, what it means, and what to do.
 
 | Symptom | Cause and fix |
 | --- | --- |
@@ -387,6 +404,10 @@ security fixes.
 | Five parallel quests feel slow | Expected: requests are paced per route to avoid 429 storms. Lower the parallelism or the submission interval if you want fewer, slower requests. |
 
 ## 🛠️ Development
+
+[docs/BUILDING.md](docs/BUILDING.md) is the long version: what each command actually runs, where the
+two sidecar binaries come from, where artifacts land per platform, and the build failures people hit
+first. The summary below is the short path.
 
 ### Requirements
 

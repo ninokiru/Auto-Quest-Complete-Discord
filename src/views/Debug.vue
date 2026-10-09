@@ -58,6 +58,8 @@ const decisionsPlacement = ref(3)
 const decisionsNum = ref(1)
 const decisionLoading = ref(false)
 const decisionError = ref<string | null>(null)
+const decisionsLoading = ref(false)
+const decisionsError = ref<string | null>(null)
 const decisionResult = ref<Record<string, unknown> | null>(null)
 const decisionsResult = ref<Record<string, unknown> | null>(null)
 
@@ -223,15 +225,22 @@ const availableRequestTypes = computed<RequestType[]>(() => {
   return REQUEST_TYPES.filter(t => t === 'All' || found.has(t))
 })
 
-const filteredRequests = computed(() => {
+interface IndexedRequest {
+  id: string
+  request: CapturedRequest
+}
+
+const filteredRequests = computed<IndexedRequest[]>(() => {
   if (capturedRequests.value.length === 0) return []
-  return capturedRequests.value.filter(req => {
-    const matchesType = requestTypeFilter.value === 'All' || inferRequestType(req.url, req.headers) === requestTypeFilter.value
-    const q = requestSearch.value.trim().toLowerCase()
-    const matchesSearch = !q || req.url.toLowerCase().includes(q) ||
-      Object.entries(req.headers).some(([k, v]) => k.toLowerCase().includes(q) || v.toLowerCase().includes(q))
-    return matchesType && matchesSearch
-  })
+  return capturedRequests.value
+    .map((request, index) => ({ id: `req_${index}`, request }))
+    .filter(({ request }) => {
+      const matchesType = requestTypeFilter.value === 'All' || inferRequestType(request.url, request.headers) === requestTypeFilter.value
+      const q = requestSearch.value.trim().toLowerCase()
+      const matchesSearch = !q || request.url.toLowerCase().includes(q) ||
+        Object.entries(request.headers).some(([k, v]) => k.toLowerCase().includes(q) || v.toLowerCase().includes(q))
+      return matchesType && matchesSearch
+    })
 })
 
 interface QuestBaselineEndpoint {
@@ -469,6 +478,7 @@ async function loadDebugInfo() {
   try {
     runnerInfo.value = await withCommandTimeout(getRunnerInfo(), 'get_runner_info')
   } catch (e) {
+    runnerInfo.value = null
     errors.push(commandErrorMessage(e))
   } finally {
     await diagnosticsLoad
@@ -572,17 +582,21 @@ async function fetchQuestDecisionDebug() {
 }
 
 async function fetchQuestDecisionsDebug() {
-  decisionLoading.value = true
-  decisionError.value = null
+  decisionsLoading.value = true
+  decisionsError.value = null
   try {
+    const count = Math.min(
+      5,
+      Math.max(1, Number.isFinite(decisionsNum.value) ? decisionsNum.value : 1),
+    )
     decisionsResult.value = await withCommandTimeout(
-      getQuestDecisionsDebug(decisionsPlacement.value, decisionsNum.value),
+      getQuestDecisionsDebug(decisionsPlacement.value, count),
       'get_quest_decisions_debug'
     ) as Record<string, unknown>
   } catch (e) {
-    decisionError.value = commandErrorMessage(e)
+    decisionsError.value = commandErrorMessage(e)
   } finally {
-    decisionLoading.value = false
+    decisionsLoading.value = false
   }
 }
 
@@ -627,9 +641,9 @@ onMounted(() => {
             <div>
               <CardTitle class="flex items-center gap-2">
                 <Radio class="w-5 h-5" />
-                Discord CDP Diagnostics
+                {{ t('debug.cdp_diagnostics_title') }}
               </CardTitle>
-              <CardDescription>Local, sanitized snapshot of endpoint, launch flag, process, and target readiness.</CardDescription>
+              <CardDescription>{{ t('debug.cdp_diagnostics_desc') }}</CardDescription>
             </div>
             <Button
               v-if="cdpDiagnostics"
@@ -639,7 +653,7 @@ onMounted(() => {
             >
               <Check v-if="copied === 'cdp_diagnostics'" class="w-4 h-4 mr-1 text-green-500" />
               <Copy v-else class="w-4 h-4 mr-1" />
-              Copy CDP Diagnostics
+              {{ t('debug.copy_cdp_diagnostics') }}
             </Button>
           </div>
         </CardHeader>
@@ -649,61 +663,61 @@ onMounted(() => {
           </div>
           <template v-if="cdpDiagnostics">
             <div class="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
-              <div class="p-2 bg-muted rounded"><div class="text-xs text-muted-foreground">Port</div><code>{{ cdpDiagnostics.port }}</code></div>
-              <div class="p-2 bg-muted rounded"><div class="text-xs text-muted-foreground">Endpoint status</div><code>{{ cdpDiagnostics.endpointStatus }}</code></div>
-              <div class="p-2 bg-muted rounded"><div class="text-xs text-muted-foreground">Port listening</div><code>{{ cdpDiagnostics.portListening }}</code></div>
-              <div class="p-2 bg-muted rounded"><div class="text-xs text-muted-foreground">HTTP reachable / status</div><code>{{ cdpDiagnostics.cdpHttpReachable }} / {{ cdpDiagnostics.cdpHttpStatus ?? fallbackText }}</code></div>
-              <div class="p-2 bg-muted rounded"><div class="text-xs text-muted-foreground">Owner</div><code>{{ cdpDiagnostics.endpointOwner }}</code></div>
+              <div class="p-2 bg-muted rounded"><div class="text-xs text-muted-foreground">{{ t('debug.cdp_port') }}</div><code>{{ cdpDiagnostics.port }}</code></div>
+              <div class="p-2 bg-muted rounded"><div class="text-xs text-muted-foreground">{{ t('debug.cdp_endpoint_status') }}</div><code>{{ cdpDiagnostics.endpointStatus }}</code></div>
+              <div class="p-2 bg-muted rounded"><div class="text-xs text-muted-foreground">{{ t('debug.cdp_port_listening') }}</div><code>{{ cdpDiagnostics.portListening }}</code></div>
+              <div class="p-2 bg-muted rounded"><div class="text-xs text-muted-foreground">{{ t('debug.cdp_http_status') }}</div><code>{{ cdpDiagnostics.cdpHttpReachable }} / {{ cdpDiagnostics.cdpHttpStatus ?? fallbackText }}</code></div>
+              <div class="p-2 bg-muted rounded"><div class="text-xs text-muted-foreground">{{ t('debug.cdp_endpoint_owner') }}</div><code>{{ cdpDiagnostics.endpointOwner }}</code></div>
             </div>
 
             <div class="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-              <div class="rounded border p-3"><div class="text-xs text-muted-foreground">Selected provider / variant</div><code>{{ cdpDiagnostics.selectedProviderId ?? 'auto' }} / {{ cdpDiagnostics.selectedVariantId ?? 'auto' }}</code></div>
-              <div class="rounded border p-3"><div class="text-xs text-muted-foreground">Selected installation</div><code class="break-all">{{ cdpDiagnostics.selectedClient ?? 'Auto' }}</code></div>
-              <div class="rounded border p-3"><div class="text-xs text-muted-foreground">Executable / running</div><code class="break-all">{{ cdpDiagnostics.selectedExecutablePath ?? fallbackText }} / {{ cdpDiagnostics.selectedRunning }}</code></div>
-              <div class="rounded border p-3"><div class="text-xs text-muted-foreground">Targets / Discord / main</div><code>{{ cdpDiagnostics.cdpTargetCount }} / {{ cdpDiagnostics.discordTargetCount }} / {{ cdpDiagnostics.mainRendererFound }}</code></div>
+              <div class="rounded border p-3"><div class="text-xs text-muted-foreground">{{ t('debug.cdp_selected_provider_variant') }}</div><code>{{ cdpDiagnostics.selectedProviderId ?? 'auto' }} / {{ cdpDiagnostics.selectedVariantId ?? 'auto' }}</code></div>
+              <div class="rounded border p-3"><div class="text-xs text-muted-foreground">{{ t('debug.cdp_selected_installation') }}</div><code class="break-all">{{ cdpDiagnostics.selectedClient ?? 'Auto' }}</code></div>
+              <div class="rounded border p-3"><div class="text-xs text-muted-foreground">{{ t('debug.cdp_executable_running') }}</div><code class="break-all">{{ cdpDiagnostics.selectedExecutablePath ?? fallbackText }} / {{ cdpDiagnostics.selectedRunning }}</code></div>
+              <div class="rounded border p-3"><div class="text-xs text-muted-foreground">{{ t('debug.cdp_targets_discord_main') }}</div><code>{{ cdpDiagnostics.cdpTargetCount }} / {{ cdpDiagnostics.discordTargetCount }} / {{ cdpDiagnostics.mainRendererFound }}</code></div>
             </div>
 
             <div v-if="cdpDiagnostics.runtime" class="rounded border p-3 text-xs">
-              <div class="font-medium">Runtime verification</div>
+              <div class="font-medium">{{ t('debug.cdp_runtime_verification') }}</div>
               <code class="mt-2 block">{{ cdpDiagnostics.runtime.runtimeStatus }} · WebSocket: {{ cdpDiagnostics.runtime.webSocketReachable }} · App root: {{ cdpDiagnostics.runtime.appRootPresent }} · Module loader: {{ cdpDiagnostics.runtime.moduleLoaderPresent }} · Native bridge: {{ cdpDiagnostics.runtime.nativeBridgePresent }}</code>
               <code v-if="cdpDiagnostics.runtime.failureStage || cdpDiagnostics.runtime.reasonCode" class="mt-1 block">{{ cdpDiagnostics.runtime.failureStage }} / {{ cdpDiagnostics.runtime.reasonCode }}</code>
             </div>
             <div class="space-y-2">
-              <div class="text-sm font-medium">Launch flags and processes</div>
-              <div v-if="!cdpDiagnostics.processes.length" class="rounded bg-muted p-3 text-xs text-muted-foreground">No related Discord, Vesktop, or port-owning process found.</div>
+              <div class="text-sm font-medium">{{ t('debug.cdp_launch_flags_processes') }}</div>
+              <div v-if="!cdpDiagnostics.processes.length" class="rounded bg-muted p-3 text-xs text-muted-foreground">{{ t('debug.cdp_no_processes') }}</div>
               <div v-for="process in cdpDiagnostics.processes" :key="process.pid" class="grid gap-2 rounded border p-3 text-xs sm:grid-cols-5">
-                <div><span class="text-muted-foreground">Process</span><code class="block">{{ process.processName }} ({{ process.pid }})</code></div>
-                <div><span class="text-muted-foreground">Provider</span><code class="block">{{ process.providerId ?? 'other' }}</code></div>
-                <div><span class="text-muted-foreground">Selected</span><code class="block">{{ process.isSelectedInstallation }}</code></div>
-                <div><span class="text-muted-foreground">CDP flag</span><code class="block">{{ process.hasRemoteDebuggingPortArg ? `--remote-debugging-port=${process.remoteDebuggingPort}` : 'missing' }}</code></div>
-                <div><span class="text-muted-foreground">Executable</span><code class="block break-all">{{ process.executablePath ?? fallbackText }}</code></div>
+                <div><span class="text-muted-foreground">{{ t('debug.cdp_process') }}</span><code class="block">{{ process.processName }} ({{ process.pid }})</code></div>
+                <div><span class="text-muted-foreground">{{ t('debug.cdp_provider') }}</span><code class="block">{{ process.providerId ?? 'other' }}</code></div>
+                <div><span class="text-muted-foreground">{{ t('debug.cdp_selected') }}</span><code class="block">{{ process.isSelectedInstallation }}</code></div>
+                <div><span class="text-muted-foreground">{{ t('debug.cdp_flag') }}</span><code class="block">{{ process.hasRemoteDebuggingPortArg ? `--remote-debugging-port=${process.remoteDebuggingPort}` : t('debug.cdp_flag_missing') }}</code></div>
+                <div><span class="text-muted-foreground">{{ t('debug.cdp_executable') }}</span><code class="block break-all">{{ process.executablePath ?? fallbackText }}</code></div>
               </div>
             </div>
 
             <div class="space-y-2">
-              <div class="text-sm font-medium">Targets</div>
-              <div v-if="!cdpDiagnostics.targets.length" class="rounded bg-muted p-3 text-xs text-muted-foreground">No parseable CDP targets.</div>
+              <div class="text-sm font-medium">{{ t('debug.cdp_targets') }}</div>
+              <div v-if="!cdpDiagnostics.targets.length" class="rounded bg-muted p-3 text-xs text-muted-foreground">{{ t('debug.cdp_no_targets') }}</div>
               <div v-for="target in cdpDiagnostics.targets" :key="target.id" class="grid gap-2 rounded border p-3 text-xs sm:grid-cols-4">
-                <div><span class="text-muted-foreground">Type</span><code class="block">{{ target.type }}</code></div>
-                <div><span class="text-muted-foreground">Title</span><code class="block break-all">{{ target.title || fallbackText }}</code></div>
-                <div><span class="text-muted-foreground">Classification</span><code class="block">{{ target.classification }}</code></div>
-                <div v-if="target.runtime"><span class="text-muted-foreground">Runtime</span><code class="block">{{ target.runtime.runtimeStatus }} / {{ target.runtime.reasonCode ?? 'ok' }}</code></div>
-                <div><span class="text-muted-foreground">Sanitized URL</span><code class="block break-all">{{ target.url || fallbackText }}</code></div>
+                <div><span class="text-muted-foreground">{{ t('debug.cdp_target_type') }}</span><code class="block">{{ target.type }}</code></div>
+                <div><span class="text-muted-foreground">{{ t('debug.cdp_target_title') }}</span><code class="block break-all">{{ target.title || fallbackText }}</code></div>
+                <div><span class="text-muted-foreground">{{ t('debug.cdp_target_classification') }}</span><code class="block">{{ target.classification }}</code></div>
+                <div v-if="target.runtime"><span class="text-muted-foreground">{{ t('debug.cdp_target_runtime') }}</span><code class="block">{{ target.runtime.runtimeStatus }} / {{ target.runtime.reasonCode ?? 'ok' }}</code></div>
+                <div><span class="text-muted-foreground">{{ t('debug.cdp_target_url') }}</span><code class="block break-all">{{ target.url || fallbackText }}</code></div>
               </div>
             </div>
 
           </template>
           <div class="rounded border p-3 text-sm">
-            <div class="font-medium">Last CDP Launch Error</div>
+            <div class="font-medium">{{ t('debug.cdp_last_launch_error') }}</div>
             <template v-if="visibleCdpLaunchError">
               <div class="mt-2 grid gap-2 sm:grid-cols-2">
-                <div><span class="text-muted-foreground">Code</span><code class="block">{{ visibleCdpLaunchError.code ?? fallbackText }}</code></div>
-                <div><span class="text-muted-foreground">Timestamp</span><code class="block">{{ visibleCdpLaunchError.timestamp }}</code></div>
+                <div><span class="text-muted-foreground">{{ t('debug.cdp_launch_error_code') }}</span><code class="block">{{ visibleCdpLaunchError.code ?? fallbackText }}</code></div>
+                <div><span class="text-muted-foreground">{{ t('debug.cdp_launch_error_timestamp') }}</span><code class="block">{{ visibleCdpLaunchError.timestamp }}</code></div>
               </div>
               <p class="mt-2 text-sm">{{ visibleCdpLaunchError.message }}</p>
               <pre class="mt-2 overflow-auto rounded bg-muted p-2 text-xs">{{ JSON.stringify(visibleCdpLaunchError.params, null, 2) }}</pre>
             </template>
-            <div v-else class="mt-2 text-xs text-muted-foreground">No launch error recorded in this app session.</div>
+            <div v-else class="mt-2 text-xs text-muted-foreground">{{ t('debug.cdp_no_launch_error') }}</div>
           </div>
         </CardContent>
       </Card>
@@ -715,9 +729,9 @@ onMounted(() => {
             <div>
               <CardTitle class="flex items-center gap-2">
                 <ShieldCheck class="w-5 h-5" />
-                Runtime Identity Audit
+                {{ t('debug.identity_audit_title') }}
               </CardTitle>
-              <CardDescription>Local-only process, package, helper, and native fingerprint evidence.</CardDescription>
+              <CardDescription>{{ t('debug.identity_audit_desc') }}</CardDescription>
             </div>
             <span
               :class="[
@@ -736,40 +750,40 @@ onMounted(() => {
         <CardContent class="space-y-4">
           <div class="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
             <div class="p-2 bg-muted rounded">
-              <div class="text-xs text-muted-foreground">Platform / build</div>
+              <div class="text-xs text-muted-foreground">{{ t('debug.identity_platform_build') }}</div>
               <code>{{ identityAudit.platform }} / {{ identityAudit.buildProfile }}</code>
             </div>
             <div class="p-2 bg-muted rounded">
-              <div class="text-xs text-muted-foreground">Main executable</div>
+              <div class="text-xs text-muted-foreground">{{ t('debug.identity_main_executable') }}</div>
               <code>{{ identityAudit.main.basename }}</code>
             </div>
             <div class="p-2 bg-muted rounded">
-              <div class="text-xs text-muted-foreground">Runtime bridge</div>
-              <code>{{ identityAudit.helper.installed ? identityAudit.helper.basename : 'not installed' }}</code>
+              <div class="text-xs text-muted-foreground">{{ t('debug.identity_runtime_bridge') }}</div>
+              <code>{{ identityAudit.helper.installed ? identityAudit.helper.basename : t('debug.identity_helper_not_installed') }}</code>
             </div>
             <div class="p-2 bg-muted rounded">
-              <div class="text-xs text-muted-foreground">Legacy / migration</div>
+              <div class="text-xs text-muted-foreground">{{ t('debug.identity_legacy_migration') }}</div>
               <code>{{ identityAudit.legacyArtifactCount }} / {{ identityAudit.migrationResult }}</code>
             </div>
           </div>
 
           <div class="grid gap-3 text-sm sm:grid-cols-2">
             <div class="rounded border border-border p-3 space-y-2">
-              <div class="font-medium">Identity checks</div>
+              <div class="font-medium">{{ t('debug.identity_checks') }}</div>
               <div class="grid grid-cols-2 gap-2 text-xs">
-                <span class="text-muted-foreground">main path token</span>
+                <span class="text-muted-foreground">{{ t('debug.identity_main_path_token') }}</span>
                 <code>{{ identityAudit.main.pathHasProductToken }}</code>
-                <span class="text-muted-foreground">unexpected path token</span>
+                <span class="text-muted-foreground">{{ t('debug.identity_unexpected_path_token') }}</span>
                 <code>{{ identityAudit.main.unexpectedPathProductToken }}</code>
-                <span class="text-muted-foreground">helper path token</span>
+                <span class="text-muted-foreground">{{ t('debug.identity_helper_path_token') }}</span>
                 <code>{{ debugText(identityAudit.helper.pathHasProductToken) }}</code>
-                <span class="text-muted-foreground">helper manifest hash</span>
+                <span class="text-muted-foreground">{{ t('debug.identity_helper_manifest_hash') }}</span>
                 <code>{{ debugText(identityAudit.helper.manifestHashOk) }}</code>
-                <span class="text-muted-foreground">helper signature</span>
+                <span class="text-muted-foreground">{{ t('debug.identity_helper_signature') }}</span>
                 <code>{{ debugText(identityAudit.helper.signatureOk) }}</code>
               </div>
               <details>
-                <summary class="cursor-pointer text-xs font-medium">Show redacted paths</summary>
+                <summary class="cursor-pointer text-xs font-medium">{{ t('debug.identity_show_redacted_paths') }}</summary>
                 <div class="mt-2 space-y-1 text-xs break-all">
                   <div><span class="text-muted-foreground">main:</span> <code>{{ identityAudit.main.path }}</code></div>
                   <div><span class="text-muted-foreground">helper:</span> <code>{{ identityAudit.helper.path || fallbackText }}</code></div>
@@ -778,25 +792,25 @@ onMounted(() => {
             </div>
 
             <div class="rounded border border-border p-3 space-y-2">
-              <div class="font-medium">Discord native fingerprint</div>
+              <div class="font-medium">{{ t('debug.identity_native_fingerprint') }}</div>
               <div class="grid grid-cols-2 gap-2 text-xs">
-                <span class="text-muted-foreground">status</span><code>{{ identityAudit.fingerprint.status }}</code>
-                <span class="text-muted-foreground">length</span><code>{{ identityAudit.fingerprint.length }}</code>
-                <span class="text-muted-foreground">fields</span><code>{{ identityAudit.fingerprint.fieldCount }}</code>
+                <span class="text-muted-foreground">{{ t('debug.fingerprint_status') }}</span><code>{{ identityAudit.fingerprint.status }}</code>
+                <span class="text-muted-foreground">{{ t('debug.fingerprint_length') }}</span><code>{{ identityAudit.fingerprint.length }}</code>
+                <span class="text-muted-foreground">{{ t('debug.fingerprint_fields') }}</span><code>{{ identityAudit.fingerprint.fieldCount }}</code>
               </div>
               <div class="text-xs">
                 <div class="text-muted-foreground">SHA-256</div>
                 <code class="block break-all">{{ identityAudit.fingerprint.sha256 || fallbackText }}</code>
               </div>
               <details v-if="identityAudit.fingerprint.rawAvailableLocally && debugInfo.x_super_properties_base64">
-                <summary class="cursor-pointer text-xs font-medium">Show local raw fingerprint</summary>
+                <summary class="cursor-pointer text-xs font-medium">{{ t('debug.fingerprint_show_raw') }}</summary>
                 <code class="mt-2 block max-h-32 overflow-auto break-all rounded bg-muted p-2 text-xs">{{ debugInfo.x_super_properties_base64 }}</code>
               </details>
             </div>
           </div>
 
           <details>
-            <summary class="cursor-pointer text-sm font-medium">Platform details</summary>
+            <summary class="cursor-pointer text-sm font-medium">{{ t('debug.platform_details') }}</summary>
             <div class="mt-2 grid gap-px bg-border sm:grid-cols-2">
               <div v-for="(value, key) in identityAudit.platformDetails" :key="key" class="bg-background p-2 min-w-0">
                 <div class="text-xs text-muted-foreground">{{ key }}</div>
@@ -808,41 +822,41 @@ onMounted(() => {
           <div class="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" @click="showIdentityBaseline = !showIdentityBaseline">
               <GitCompare class="w-4 h-4 mr-1" />
-              Compare release baseline
+              {{ t('debug.compare_release_baseline') }}
             </Button>
             <Button variant="outline" size="sm" @click="copyToClipboard(identityAuditJson(), 'identity_audit')">
               <Check v-if="copied === 'identity_audit'" class="w-4 h-4 mr-1 text-green-500" />
               <Copy v-else class="w-4 h-4 mr-1" />
-              Copy JSON
+              {{ t('debug.copy_json') }}
             </Button>
             <Button variant="outline" size="sm" @click="exportIdentityAudit">
               <Download class="w-4 h-4 mr-1" />
-              Export JSON
+              {{ t('debug.export_json') }}
             </Button>
           </div>
 
           <div v-if="showIdentityBaseline" :class="['rounded p-3 text-sm', identityAudit.baseline.matches ? 'bg-green-500/10 text-green-600' : 'bg-yellow-500/10 text-yellow-700']">
-            <div class="font-medium">{{ identityAudit.baseline.matches ? 'No release baseline differences' : 'Release baseline differences' }}</div>
+            <div class="font-medium">{{ identityAudit.baseline.matches ? t('debug.baseline_matches_title') : t('debug.baseline_differences_title') }}</div>
             <div v-if="identityAudit.baseline.configuredWindowIdentityMatches !== null" class="mt-2 text-xs">
-              Configured window identity:
-              <code>{{ identityAudit.baseline.configuredWindowIdentityMatches ? 'matches baseline' : 'mismatch' }}</code>
+              {{ t('debug.baseline_configured_window_identity') }}:
+              <code>{{ identityAudit.baseline.configuredWindowIdentityMatches ? t('debug.baseline_identity_matches') : t('debug.baseline_mismatch') }}</code>
             </div>
             <div v-if="identityAudit.baseline.observedWindowIdentityMatches !== null" class="mt-1 text-xs">
-              Observed window identity:
-              <code>{{ identityAudit.baseline.observedWindowIdentityMatches ? 'matches configuration' : 'mismatch' }}</code>
+              {{ t('debug.baseline_observed_window_identity') }}:
+              <code>{{ identityAudit.baseline.observedWindowIdentityMatches ? t('debug.baseline_matches_configuration') : t('debug.baseline_mismatch') }}</code>
             </div>
             <div v-else-if="identityAudit.baseline.unavailableObservations.length" class="mt-1 text-xs">
-              Observed window identity: <code>unavailable</code>
-              (requires external release smoke manifests)
+              {{ t('debug.baseline_observed_window_identity') }}: <code>{{ t('debug.baseline_unavailable') }}</code>
+              ({{ t('debug.baseline_requires_smoke_manifests') }})
             </div>
             <ul v-if="identityAudit.baseline.differences.length" class="mt-2 list-disc pl-5 text-xs space-y-1">
               <li v-for="difference in identityAudit.baseline.differences" :key="difference">{{ difference }}</li>
             </ul>
             <div v-if="identityAudit.baseline.fingerprintFieldsAdded.length" class="mt-2 text-xs">
-              Added fingerprint fields: <code>{{ identityAudit.baseline.fingerprintFieldsAdded.join(', ') }}</code>
+              {{ t('debug.baseline_fingerprint_fields_added') }}: <code>{{ identityAudit.baseline.fingerprintFieldsAdded.join(', ') }}</code>
             </div>
             <div v-if="identityAudit.baseline.fingerprintFieldsRemoved.length" class="mt-1 text-xs">
-              Removed fingerprint fields: <code>{{ identityAudit.baseline.fingerprintFieldsRemoved.join(', ') }}</code>
+              {{ t('debug.baseline_fingerprint_fields_removed') }}: <code>{{ identityAudit.baseline.fingerprintFieldsRemoved.join(', ') }}</code>
             </div>
           </div>
 
@@ -1062,12 +1076,14 @@ onMounted(() => {
               <CardTitle>{{ t('debug.session_ids') }}</CardTitle>
               <CardDescription>{{ t('debug.session_ids_desc') }}</CardDescription>
             </div>
-            <span 
+            <span
               :class="[
                 'px-3 py-1 text-xs font-medium rounded-full',
-                debugInfo.source === 'Default' 
-                  ? 'bg-blue-500/10 text-blue-500' 
-                  : 'bg-green-500/10 text-green-500'
+                debugInfo.source === 'Default'
+                  ? 'bg-blue-500/10 text-blue-500'
+                  : debugInfo.source
+                    ? 'bg-green-500/10 text-green-500'
+                    : 'bg-muted text-muted-foreground'
               ]"
             >
               {{ debugText(debugInfo.source) }}
@@ -1080,7 +1096,7 @@ onMounted(() => {
               <div class="text-sm font-medium">launch_signature</div>
               <code class="text-xs text-muted-foreground break-all">{{ debugText(debugInfo.launch_signature) }}</code>
             </div>
-            <Button variant="ghost" size="icon" @click="copyToClipboard(debugText(debugInfo.launch_signature), 'launch_signature')">
+            <Button variant="ghost" size="icon" :aria-label="t('debug.copy')" @click="copyToClipboard(debugText(debugInfo.launch_signature), 'launch_signature')">
               <Check v-if="copied === 'launch_signature'" class="w-4 h-4 text-green-500" />
               <Copy v-else class="w-4 h-4" />
             </Button>
@@ -1091,7 +1107,7 @@ onMounted(() => {
               <div class="text-sm font-medium">client_launch_id</div>
               <code class="text-xs text-muted-foreground break-all">{{ debugText(debugInfo.client_launch_id) }}</code>
             </div>
-            <Button variant="ghost" size="icon" @click="copyToClipboard(debugText(debugInfo.client_launch_id), 'client_launch_id')">
+            <Button variant="ghost" size="icon" :aria-label="t('debug.copy')" @click="copyToClipboard(debugText(debugInfo.client_launch_id), 'client_launch_id')">
               <Check v-if="copied === 'client_launch_id'" class="w-4 h-4 text-green-500" />
               <Copy v-else class="w-4 h-4" />
             </Button>
@@ -1102,7 +1118,7 @@ onMounted(() => {
               <div class="text-sm font-medium">client_heartbeat_session_id</div>
               <code class="text-xs text-muted-foreground break-all">{{ debugText(debugInfo.client_heartbeat_session_id) }}</code>
             </div>
-            <Button variant="ghost" size="icon" @click="copyToClipboard(debugText(debugInfo.client_heartbeat_session_id), 'client_heartbeat_session_id')">
+            <Button variant="ghost" size="icon" :aria-label="t('debug.copy')" @click="copyToClipboard(debugText(debugInfo.client_heartbeat_session_id), 'client_heartbeat_session_id')">
               <Check v-if="copied === 'client_heartbeat_session_id'" class="w-4 h-4 text-green-500" />
               <Copy v-else class="w-4 h-4" />
             </Button>
@@ -1157,7 +1173,7 @@ onMounted(() => {
           <!-- Base64 -->
           <div class="space-y-2">
             <div class="flex items-center justify-between">
-              <span class="text-sm font-medium">Base64 Encoded</span>
+              <span class="text-sm font-medium">{{ t('debug.base64_encoded') }}</span>
               <Button variant="ghost" size="sm" @click="copyToClipboard(debugText(debugInfo.x_super_properties_base64), 'base64')">
                 <Check v-if="copied === 'base64'" class="w-4 h-4 mr-1 text-green-500" />
                 <Copy v-else class="w-4 h-4 mr-1" />
@@ -1258,14 +1274,14 @@ onMounted(() => {
           <CardDescription>{{ t('debug.quest_placement_decisions_desc') }}</CardDescription>
         </CardHeader>
         <CardContent class="space-y-4">
-          <div v-if="decisionError" class="p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
-            {{ decisionError }}
-          </div>
           <div class="grid gap-3 md:grid-cols-2">
             <div class="space-y-2 rounded border border-border p-3">
               <div class="text-sm font-medium">/quests/decision</div>
+              <div v-if="decisionError" class="p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
+                {{ decisionError }}
+              </div>
               <div class="flex items-center gap-2">
-                <input v-model.number="decisionPlacement" type="number" min="1" class="h-8 w-20 rounded border border-input bg-background px-2 text-xs" />
+                <input v-model.number="decisionPlacement" type="number" min="1" :aria-label="t('debug.decision_placement_label')" class="h-8 w-20 rounded border border-input bg-background px-2 text-xs" />
                 <Button size="sm" variant="outline" :disabled="decisionLoading" @click="fetchQuestDecisionDebug">
                   <RefreshCw v-if="decisionLoading" class="w-4 h-4 mr-2 animate-spin" />
                   {{ t('debug.fetch') }}
@@ -1276,11 +1292,14 @@ onMounted(() => {
 
             <div class="space-y-2 rounded border border-border p-3">
               <div class="text-sm font-medium">/quests/get-decisions</div>
+              <div v-if="decisionsError" class="p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
+                {{ decisionsError }}
+              </div>
               <div class="flex items-center gap-2">
-                <input v-model.number="decisionsPlacement" type="number" min="1" class="h-8 w-20 rounded border border-input bg-background px-2 text-xs" />
-                <input v-model.number="decisionsNum" type="number" min="1" max="5" class="h-8 w-20 rounded border border-input bg-background px-2 text-xs" />
-                <Button size="sm" variant="outline" :disabled="decisionLoading" @click="fetchQuestDecisionsDebug">
-                  <RefreshCw v-if="decisionLoading" class="w-4 h-4 mr-2 animate-spin" />
+                <input v-model.number="decisionsPlacement" type="number" min="1" :aria-label="t('debug.decision_placement_label')" class="h-8 w-20 rounded border border-input bg-background px-2 text-xs" />
+                <input v-model.number="decisionsNum" type="number" min="1" max="5" :aria-label="t('debug.decision_count_label')" class="h-8 w-20 rounded border border-input bg-background px-2 text-xs" />
+                <Button size="sm" variant="outline" :disabled="decisionsLoading" @click="fetchQuestDecisionsDebug">
+                  <RefreshCw v-if="decisionsLoading" class="w-4 h-4 mr-2 animate-spin" />
                   {{ t('debug.fetch') }}
                 </Button>
               </div>
@@ -1309,6 +1328,7 @@ onMounted(() => {
                   min="5"
                   max="120"
                   :disabled="capturing"
+                  :aria-label="t('debug.capture_duration')"
                   class="w-16 h-8 px-2 text-xs text-center rounded border border-input bg-background"
                 />
                 <span class="text-xs text-muted-foreground">s</span>
@@ -1356,7 +1376,12 @@ onMounted(() => {
                   <!-- Header key row -->
                   <div
                     class="flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-muted/50 border-b border-border"
+                    role="button"
+                    tabindex="0"
+                    :aria-expanded="expandedKeys.has(group.key)"
                     @click="toggleKey(group.key)"
+                    @keydown.enter.prevent="toggleKey(group.key)"
+                    @keydown.space.prevent="toggleKey(group.key)"
                   >
                     <div class="flex items-center gap-2 font-mono text-xs">
                       <ChevronRight 
@@ -1364,7 +1389,7 @@ onMounted(() => {
                         :class="{ 'rotate-90': expandedKeys.has(group.key) }" 
                       />
                       <span class="font-medium text-primary">{{ group.key }}</span>
-                      <span class="text-muted-foreground">({{ group.values.length }} unique)</span>
+                      <span class="text-muted-foreground">({{ t('debug.header_unique_values', { count: group.values.length }) }})</span>
                     </div>
                     <span class="font-mono text-xs tabular-nums">{{ group.count }}</span>
                   </div>
@@ -1384,6 +1409,7 @@ onMounted(() => {
                           class="h-5 w-5 shrink-0" 
                           @click.stop="openDecoder(v.value)"
                           :title="t('debug.decode')"
+                          :aria-label="t('debug.decode')"
                         >
                           <Search class="w-3 h-3" />
                         </Button>
@@ -1427,28 +1453,29 @@ onMounted(() => {
                   v-model="requestSearch"
                   class="w-full pl-8 pr-8 py-1.5 bg-muted rounded border border-input text-xs"
                   :placeholder="t('debug.request_search')"
+                  :aria-label="t('debug.request_search')"
                 />
-                <button v-if="requestSearch" @click="requestSearch = ''" class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                <button v-if="requestSearch" @click="requestSearch = ''" :aria-label="t('general.clear')" class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
                   <X class="w-3.5 h-3.5" />
                 </button>
               </div>
 
               <div class="max-h-96 overflow-y-auto space-y-2">
                 <div v-if="filteredRequests.length === 0" class="text-xs text-muted-foreground text-center py-4">{{ t('debug.request_no_match') }}</div>
-                <div v-for="(req, idx) in filteredRequests" :key="idx" class="p-3 bg-muted rounded-lg text-xs space-y-1">
+                <div v-for="row in filteredRequests" :key="row.id" class="p-3 bg-muted rounded-lg text-xs space-y-1">
                   <div class="flex items-center gap-2">
-                    <span class="px-1.5 py-0.5 rounded text-[10px] font-bold" :class="req.method === 'GET' ? 'bg-blue-500/20 text-blue-500' : req.method === 'POST' ? 'bg-green-500/20 text-green-500' : 'bg-yellow-500/20 text-yellow-500'">
-                      {{ req.method }}
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-bold" :class="row.request.method === 'GET' ? 'bg-blue-500/20 text-blue-500' : row.request.method === 'POST' ? 'bg-green-500/20 text-green-500' : 'bg-yellow-500/20 text-yellow-500'">
+                      {{ row.request.method }}
                     </span>
-                    <span class="px-1.5 py-0.5 rounded text-[10px] bg-muted-foreground/20 text-muted-foreground">{{ inferRequestType(req.url, req.headers) }}</span>
-                    <code class="break-all text-muted-foreground flex-1 min-w-0">{{ req.url }}</code>
-                    <Button variant="ghost" size="icon" class="h-5 w-5 shrink-0" @click="copyToClipboard(JSON.stringify(req, null, 2), 'req_' + idx)" :title="t('debug.copy')">
-                      <Check v-if="copied === 'req_' + idx" class="w-3 h-3 text-green-500" />
+                    <span class="px-1.5 py-0.5 rounded text-[10px] bg-muted-foreground/20 text-muted-foreground">{{ inferRequestType(row.request.url, row.request.headers) }}</span>
+                    <code class="break-all text-muted-foreground flex-1 min-w-0">{{ row.request.url }}</code>
+                    <Button variant="ghost" size="icon" class="h-5 w-5 shrink-0" @click="copyToClipboard(JSON.stringify(row.request, null, 2), row.id)" :title="t('debug.copy')" :aria-label="t('debug.copy')">
+                      <Check v-if="copied === row.id" class="w-3 h-3 text-green-500" />
                       <Copy v-else class="w-3 h-3" />
                     </Button>
                   </div>
                   <div class="pl-2 border-l-2 border-border mt-1 space-y-0.5">
-                    <div v-for="(val, hkey) in req.headers" :key="hkey" class="font-mono">
+                    <div v-for="(val, hkey) in row.request.headers" :key="hkey" class="font-mono">
                       <span class="text-primary">{{ hkey }}</span>: <span class="text-muted-foreground">{{ val.length > 120 ? val.substring(0, 120) + '...' : val }}</span>
                     </div>
                   </div>
@@ -1481,6 +1508,7 @@ onMounted(() => {
               v-model="decoderInput"
               class="flex-1 px-3 py-2 bg-muted rounded border border-border font-mono text-xs"
               :placeholder="t('debug.decoder_placeholder')"
+              :aria-label="t('debug.decoder_placeholder')"
               @keydown.enter="decodeBase64"
             />
             <Button size="sm" @click="decodeBase64">{{ t('debug.decoder_decode') }}</Button>

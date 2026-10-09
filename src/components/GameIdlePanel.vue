@@ -179,7 +179,11 @@ onMounted(async () => {
   }, { immediate: true })
   document.addEventListener('mousedown', closeContextMenu)
   document.addEventListener('keydown', handleDocumentKeydown)
-  await idle.initialize()
+  // A failed init must still leave the editable configuration on screen, so the
+  // reason is published through the store's own error surface instead of throwing.
+  await idle.initialize().catch(cause => {
+    idle.error = cause instanceof Error ? cause.message : String(cause)
+  })
   await quests.getDetectableGames().catch(() => undefined)
 })
 

@@ -8,7 +8,12 @@
     "logout": "Logout",
     "loading": "Loading...",
     "refresh": "Refresh",
-    "clear": "Clear"
+    "clear": "Clear",
+    "minimize": "Minimize",
+    "maximize": "Maximize",
+    "restore": "Restore",
+    "close": "Close",
+    "dismiss": "Dismiss notification"
   },
   "auth": {
     "cdp_login": "Log in with Discord Client",
@@ -62,7 +67,9 @@
       "restarting_vesktop": "Restarting Vesktop with CDP enabled...",
       "restart_cancelled": "Discord restart was cancelled. No account was logged in.",
       "launch_cancelled": "Client launch was cancelled. No account was logged in."
-    }
+    },
+    "show_token": "Show token",
+    "hide_token": "Hide token"
   },
   "nav": {
     "home": "Home",
@@ -159,7 +166,13 @@
     "notify_done_title": "Quest completed",
     "notify_done_body": "{name} is finished.",
     "notify_failed_title": "Quest failed",
-    "notify_failed_body": "{name} stopped: {error}"
+    "notify_failed_body": "{name} stopped: {error}",
+    "reward_orbs": "{count} Orbs",
+    "reward_orbs_claimed": "Claimed {count} Orbs",
+    "reward_orbs_premium": "{base} -> {premium} Orbs",
+    "reward_nitro_multiplier": "Nitro {multiplier}",
+    "reward_quantity": "{name} x{quantity}",
+    "soft_error_console_only": "{game} only runs on consoles, which this app cannot simulate. Play it on a console and Discord will record the progress."
   },
   "filter": {
     "type": "Type",
@@ -336,7 +349,9 @@
     "debug_already_unlocked": "Developer mode enabled",
     "disable_developer_mode": "Disable Developer Mode",
     "disable_debug_confirm_title": "Disable Developer Mode?",
-    "disable_debug_confirm_desc": "The Debug tab and developer tools will be hidden. You can re-enable it by tapping the version number 7 times."
+    "disable_debug_confirm_desc": "The Debug tab and developer tools will be hidden. You can re-enable it by tapping the version number 7 times.",
+    "copy_diagnostics_error": "Could not copy the diagnostics summary.",
+    "super_props_mode_unknown": "Unknown mode"
   },
   "version": {
     "update_available": "A new version is available!",
@@ -474,7 +489,77 @@
     "loading_status": "Loading {command}...",
     "last_load_duration": "Last debug load finished in {ms}ms",
     "load_failed": "Debug load failed",
-    "fetch": "Fetch"
+    "fetch": "Fetch",
+    "cdp_diagnostics_title": "Discord CDP Diagnostics",
+    "cdp_diagnostics_desc": "Local, sanitized snapshot of endpoint, launch flag, process, and target readiness.",
+    "copy_cdp_diagnostics": "Copy CDP Diagnostics",
+    "cdp_port": "Port",
+    "cdp_endpoint_status": "Endpoint status",
+    "cdp_port_listening": "Port listening",
+    "cdp_http_status": "HTTP reachable / status",
+    "cdp_endpoint_owner": "Owner",
+    "cdp_selected_provider_variant": "Selected provider / variant",
+    "cdp_selected_installation": "Selected installation",
+    "cdp_executable_running": "Executable / running",
+    "cdp_targets_discord_main": "Targets / Discord / main",
+    "cdp_runtime_verification": "Runtime verification",
+    "cdp_launch_flags_processes": "Launch flags and processes",
+    "cdp_no_processes": "No related Discord, Vesktop, or port-owning process found.",
+    "cdp_process": "Process",
+    "cdp_provider": "Provider",
+    "cdp_selected": "Selected",
+    "cdp_flag": "CDP flag",
+    "cdp_flag_missing": "missing",
+    "cdp_executable": "Executable",
+    "cdp_targets": "Targets",
+    "cdp_no_targets": "No parseable CDP targets.",
+    "cdp_target_type": "Type",
+    "cdp_target_title": "Title",
+    "cdp_target_classification": "Classification",
+    "cdp_target_runtime": "Runtime",
+    "cdp_target_url": "Sanitized URL",
+    "cdp_last_launch_error": "Last CDP Launch Error",
+    "cdp_launch_error_code": "Code",
+    "cdp_launch_error_timestamp": "Timestamp",
+    "cdp_no_launch_error": "No launch error recorded in this app session.",
+    "identity_audit_title": "Runtime Identity Audit",
+    "identity_audit_desc": "Local-only process, package, helper, and native fingerprint evidence.",
+    "identity_platform_build": "Platform / build",
+    "identity_main_executable": "Main executable",
+    "identity_runtime_bridge": "Runtime bridge",
+    "identity_helper_not_installed": "not installed",
+    "identity_legacy_migration": "Legacy / migration",
+    "identity_checks": "Identity checks",
+    "identity_main_path_token": "main path token",
+    "identity_unexpected_path_token": "unexpected path token",
+    "identity_helper_path_token": "helper path token",
+    "identity_helper_manifest_hash": "helper manifest hash",
+    "identity_helper_signature": "helper signature",
+    "identity_show_redacted_paths": "Show redacted paths",
+    "identity_native_fingerprint": "Discord native fingerprint",
+    "fingerprint_status": "status",
+    "fingerprint_length": "length",
+    "fingerprint_fields": "fields",
+    "fingerprint_show_raw": "Show local raw fingerprint",
+    "platform_details": "Platform details",
+    "compare_release_baseline": "Compare release baseline",
+    "copy_json": "Copy JSON",
+    "export_json": "Export JSON",
+    "baseline_matches_title": "No release baseline differences",
+    "baseline_differences_title": "Release baseline differences",
+    "baseline_configured_window_identity": "Configured window identity",
+    "baseline_observed_window_identity": "Observed window identity",
+    "baseline_identity_matches": "matches baseline",
+    "baseline_matches_configuration": "matches configuration",
+    "baseline_mismatch": "mismatch",
+    "baseline_unavailable": "unavailable",
+    "baseline_requires_smoke_manifests": "requires external release smoke manifests",
+    "baseline_fingerprint_fields_added": "Added fingerprint fields",
+    "baseline_fingerprint_fields_removed": "Removed fingerprint fields",
+    "base64_encoded": "Base64 Encoded",
+    "header_unique_values": "{count} unique",
+    "decision_placement_label": "Placement",
+    "decision_count_label": "Decisions count"
   },
   "user": {
     "nitro": "Nitro",
@@ -567,13 +652,16 @@
     "switch_selected": "Switch to selected client",
     "restore_managed_and_close": "Restore Helper-started clients and close",
     "restore_all_and_close": "Confirm external clients, restore all, and close",
-    "cdp_owner": "CDP owner"
+    "cdp_owner": "CDP owner",
+    "current_owner_unavailable": "The current CDP owner could not be read from the running client.",
+    "owner_installation_unmatched": "The current CDP owner could not be mapped to one exact installation."
   },
   "exit_cdp": {
     "title": "Discord is still running in CDP mode",
     "description": "Closing this app does not disable Discord's local debugging interface. You can close only this app, or restart Discord without CDP enabled.",
     "close_only": "Close this app only",
     "restore_and_close": "Close app and restart Discord normally",
-    "helper_error": "The Discord restart helper could not be started. You may need to fully quit and reopen Discord manually."
+    "helper_error": "The Discord restart helper could not be started. You may need to fully quit and reopen Discord manually.",
+    "installation_unidentified": "Could not identify the {client} installation on port {port}."
   }
 }

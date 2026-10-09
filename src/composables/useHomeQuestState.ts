@@ -34,7 +34,6 @@ export type QuestBucket = {
   readyToClaim: Quest[]
   completed: Quest[]
   expired: Quest[]
-  activityManual: Quest[]
   attentionNeeded: Quest[]
 }
 
@@ -117,7 +116,6 @@ export function deriveHomeQuestBuckets(quests: Quest[], options: HomeQuestStateO
     readyToClaim: [],
     completed: [],
     expired: [],
-    activityManual: [],
     attentionNeeded: [],
   }
 
@@ -126,7 +124,6 @@ export function deriveHomeQuestBuckets(quests: Quest[], options: HomeQuestStateO
     const enrolled = isEnrolled(quest)
     const completed = isCompleted(quest)
     const claimed = isClaimed(quest)
-    const startableTask = firstStartableTask(quest)
     const startable = canQuestStart(quest, cdpAvailable)
 
     if (expired && !claimed) {
@@ -152,10 +149,6 @@ export function deriveHomeQuestBuckets(quests: Quest[], options: HomeQuestStateO
     }
 
     if (enrolled && !completed && !expired) {
-      if (startableTask && isActivityTask(startableTask) && !isPlayActivityTask(startableTask)) {
-        bucket.activityManual.push(quest)
-      }
-
       if (startable) {
         bucket.readyToRun.push(quest)
       } else {

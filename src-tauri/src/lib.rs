@@ -2254,7 +2254,7 @@ pub(crate) async fn replace_discord_rpc(activity_json: String) -> Result<(), Str
 }
 
 #[tauri::command(rename_all = "snake_case")]
-fn connect_to_discord_rpc(
+async fn connect_to_discord_rpc(
     handle: tauri::AppHandle,
     activity_json: String,
     action: String,
@@ -2280,6 +2280,8 @@ fn connect_to_discord_rpc(
         client_guard.take();
     }
 
+    let (result_sender, result_receiver) = tokio::sync::oneshot::channel();
+
     let task = tauri::async_runtime::spawn(async move {
         handle
             .emit(event_connecting, connecting_payload)
@@ -2287,7 +2289,7 @@ fn connect_to_discord_rpc(
 
         let client_result = runner::set_activity(activity_json).await;
 
-        match client_result {
+        let outcome = match client_result {
             Ok(client) => {
                 let connected_payload = serde_json::json!({
                     "app_id": activity.app_id,
@@ -2321,11 +2323,14 @@ fn connect_to_discord_rpc(
                         }
                     }));
                 });
+
+                Ok(())
             }
-            Err(e) => {
-                println!("Failed to set activity: {}", e);
-            }
-        }
+            Err(e) => Err(format!("Failed to connect Discord RPC: {}", e)),
+        };
+
+        // A task aborted by a disconnect has no reader left to report to.
+        let _ = result_sender.send(outcome);
     });
 
     app.listen(event_disconnect, move |_| {
@@ -2333,7 +2338,13 @@ fn connect_to_discord_rpc(
         task.abort();
     });
 
-    Ok(())
+    // A presence only exists once Discord has accepted it, so the caller waits
+    // for the handshake instead of being told the connection succeeded. The
+    // channel has no sender once the task panicked or was aborted by a stop.
+    match result_receiver.await {
+        Ok(outcome) => outcome,
+        Err(_) => Err("Discord RPC connection failed".to_string()),
+    }
 }
 
 #[tauri::command]

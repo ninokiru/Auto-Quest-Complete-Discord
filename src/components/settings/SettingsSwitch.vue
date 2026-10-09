@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 const props = defineProps<{
   modelValue: boolean
   disabled?: boolean
+  label?: string
 }>()
 
 const emit = defineEmits<{
@@ -22,6 +23,7 @@ function toggle() {
     type="button"
     role="switch"
     :aria-checked="modelValue"
+    :aria-label="label"
     :disabled="disabled"
     :class="cn(
       'inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors',

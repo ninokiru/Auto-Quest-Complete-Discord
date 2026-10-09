@@ -23,6 +23,7 @@ const exporting = ref(false)
 const exportSuccess = ref(false)
 const exportError = ref(false)
 const copiedSummary = ref(false)
+const copyError = ref(false)
 
 async function exportLogs() {
   exporting.value = true
@@ -61,9 +62,17 @@ async function copyDiagnosticsSummary() {
     `Quest count: ${questsStore.quests.length}`,
   ].join('\n')
 
-  await navigator.clipboard.writeText(summary)
-  copiedSummary.value = true
-  setTimeout(() => { copiedSummary.value = false }, 2000)
+  // The clipboard can be unavailable (permissions, focus, WebView limits), and
+  // an unhandled rejection there leaves the operator with no feedback at all.
+  try {
+    await navigator.clipboard.writeText(summary)
+    copiedSummary.value = true
+    setTimeout(() => { copiedSummary.value = false }, 2000)
+  } catch (error) {
+    console.error('Failed to copy diagnostics summary:', error)
+    copyError.value = true
+    setTimeout(() => { copyError.value = false }, 5000)
+  }
 }
 </script>
 
@@ -103,6 +112,9 @@ async function copyDiagnosticsSummary() {
       </SettingsStatusPanel>
       <SettingsStatusPanel v-if="exportError" tone="danger">
           {{ t('settings.export_error') }}
+      </SettingsStatusPanel>
+      <SettingsStatusPanel v-if="copyError" tone="danger">
+          {{ t('settings.copy_diagnostics_error') }}
       </SettingsStatusPanel>
   </SettingsSectionCard>
 </template>

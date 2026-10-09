@@ -21,6 +21,20 @@ const emit = defineEmits<{
   selectSection: [section: SettingsSection]
 }>()
 
+// `heartbeat` is still reachable: it is a stored preference and the backend's
+// default for unsupported platforms, so the overview must not read it as
+// Simulate Mode.
+const gameModeLabel = computed(() => {
+  switch (questsStore.gameQuestMode) {
+    case 'cdp':
+      return t('settings.game_mode_cdp')
+    case 'heartbeat':
+      return t('header.mode.heartbeat')
+    default:
+      return t('settings.game_mode_simulate')
+  }
+})
+
 const cards = computed(() => [
   {
     label: t('settings.overview_account'),
@@ -31,7 +45,7 @@ const cards = computed(() => [
   },
   {
     label: t('settings.overview_mode'),
-    value: questsStore.gameQuestMode === 'cdp' ? t('settings.game_mode_cdp') : t('settings.game_mode_simulate'),
+    value: gameModeLabel.value,
     ok: questsStore.gameQuestMode !== 'cdp' || questsStore.cdpAvailable,
     icon: Gamepad2,
     tone: 'violet' as SettingsTone,
@@ -86,10 +100,7 @@ const recommendation = computed<{ text: string, action: string, section: Setting
       <div
         v-for="card in cards"
         :key="card.label"
-        :class="cn(
-          'rounded-lg border bg-card p-4 transition-all hover:-translate-y-0.5 hover:shadow-sm',
-          card.ok ? settingToneClass[card.tone].card : settingToneClass.warning.card,
-        )"
+        class="rounded-lg border bg-card p-4 transition-all hover:-translate-y-0.5 hover:shadow-sm"
       >
         <div class="flex items-center justify-between gap-3">
           <span class="text-xs font-medium text-muted-foreground">{{ card.label }}</span>

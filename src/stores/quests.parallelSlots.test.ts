@@ -121,6 +121,7 @@ describe('parallel quest slots', () => {
       questId: 'first',
       type: 'video',
       targetDuration: 60,
+      progressUnit: 'time',
       serverProgress: 10,
       localProgress: 10,
       gameExe: null,

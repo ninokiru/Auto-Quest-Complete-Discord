@@ -469,7 +469,7 @@
                       {{ getExpiryText(q.config.expires_at) }}
                     </span>
                     <span class="text-xs text-muted-foreground col-span-2 truncate">
-                      {{ q.config.messages.game_title }} • {{ getQuestType(q) === 'video' ? t('filter.video') : t('filter.play') }}
+                      {{ q.config.messages.game_title }} • {{ batchQuestTypeLabel(q) }}
                       <template v-if="props.debugModeEnabled"> • ID: {{ q.id }}</template>
                     </span>
                  </div>
@@ -534,7 +534,17 @@
                the dialog on click, which would run dismissSoftError() — losing
                the error and skipping the paused queue item — while the CDP
                switch is still awaiting initCdpMode(). -->
-          <Button :disabled="switchingToCdp" @click="handleSwitchToCdp">
+          <!-- Deliberately a plain Button, not AlertDialogAction: that closes
+               the dialog on click, which would run dismissSoftError() — losing
+               the error and skipping the paused queue item — while the CDP
+               switch is still awaiting initCdpMode(). Only offered when the
+               store says CDP can actually fix this; a console-only quest stays
+               unstartable in every mode. -->
+          <Button
+            v-if="questsStore.softError?.recommendedMode === 'cdp'"
+            :disabled="switchingToCdp"
+            @click="handleSwitchToCdp"
+          >
             <Loader2 v-if="switchingToCdp" class="w-4 h-4 mr-2 animate-spin" />
             {{ t('quest.soft_error_switch_cdp') }}
           </Button>
@@ -593,6 +603,7 @@ import {
   getQuestKind,
   getQuestTasks,
   isActivityTask,
+  isBatchCompletableQuest,
   isDesktopPlayTask,
   isManualStreamQuest,
   isPlayActivityTask,
@@ -653,7 +664,9 @@ const softErrorMessage = computed(() => {
   const key =
     softError.code === 'SIMULATION_EXECUTABLE_OS_UNSUPPORTED'
       ? 'quest.soft_error_win32_only'
-      : 'quest.soft_error_not_found'
+      : softError.code === 'SIMULATION_PLATFORM_UNSUPPORTED'
+        ? 'quest.soft_error_console_only'
+        : 'quest.soft_error_not_found'
   return t(key, { game: softError.gameName })
 })
 
@@ -872,6 +885,15 @@ function getQuestType(quest: Quest): 'video' | 'stream' | 'activity' {
   return getQuestKind(quest)
 }
 
+// Batch dialogs only ever contain automatable quests, so an `activity`-kind row
+// is a cloud-game Activity — checkpoint Activities never reach them.
+function batchQuestTypeLabel(quest: Quest): string {
+  const kind = getQuestType(quest)
+  if (kind === 'video') return t('filter.video')
+  if (kind === 'activity') return t('filter.activity_cloud_game')
+  return t('filter.play')
+}
+
 // Get button text based on quest type
 function getStartButtonText(quest: Quest): string {
   const task = firstStartableTask(quest)
@@ -1002,9 +1024,12 @@ const enrolledGameCount = computed(() => {
 
 const enrolledAllCount = computed(() => {
   return filteredQuests.value.filter(q => {
-     const questType = getQuestType(q)
-     // Exclude activity (requires manual interaction)
-     if (questType === 'activity') return false
+     // Batch rule: a quest belongs here only when the store has a task it can
+     // drive without a human. Real Streams (actual broadcasting) and checkpoint
+     // Activities (the Activity window) are manual and stay out. Cloud-game
+     // Activities share that `activity` kind but are fully automatable, so
+     // filtering by kind alone would silently drop them from the batch.
+     if (!isBatchCompletableQuest(q)) return false
      const isEnrolled = !!q.user_status?.enrolled_at
      const isCompleted = !!q.user_status?.completed_at
      return isEnrolled && !isCompleted && !isQuestExpired(q)
@@ -1134,8 +1159,9 @@ function handleCompleteAllGame() {
 
 function handleCompleteAllTasks() {
   const toComplete = filteredQuests.value.filter(q => {
-     const questType = getQuestType(q)
-     if (questType === 'activity') return false
+     // Mirrors `enrolledAllCount`: everything startable without a human goes in,
+     // so the listed quests are exactly the quests the queue will dispatch.
+     if (!isBatchCompletableQuest(q)) return false
      const isEnrolled = !!q.user_status?.enrolled_at
      const isCompleted = !!q.user_status?.completed_at
      if (q.config.expires_at) {
@@ -1169,11 +1195,11 @@ async function confirmBatchComplete() {
     }
   }
 
-  // Add all quests to queue with pre-selected exe names. Manual Stream quests
-  // are never queued (startPlay needs application.id), keeping Home's batch
-  // consistent with the store's queue dispatch.
+  // Add all quests to queue with pre-selected exe names. Quests a batch cannot
+  // drive — a real Stream needs a broadcast, a checkpoint Activity needs the
+  // Activity window — are never queued, keeping Home consistent with the store.
   quests.forEach(q => {
-    if (isManualStreamQuest(q)) return
+    if (!isBatchCompletableQuest(q)) return
     const exeName = batchExeSelections.value.get(q.id)
     questsStore.addToQueue(q, exeName)
   })

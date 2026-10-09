@@ -8,7 +8,12 @@
     "logout": "退出登录",
     "loading": "加载中...",
     "refresh": "刷新",
-    "clear": "清除"
+    "clear": "清除",
+    "minimize": "最小化",
+    "maximize": "最大化",
+    "restore": "还原",
+    "close": "关闭",
+    "dismiss": "关闭通知"
   },
   "auth": {
     "cdp_login": "使用 Discord 客户端登录",
@@ -62,7 +67,9 @@
       "restarting_vesktop": "正在重启 Vesktop 并启用 CDP...",
       "restart_cancelled": "已取消重启 Discord，未登录任何账号。",
       "launch_cancelled": "已取消启动客户端，未登录任何账号。"
-    }
+    },
+    "show_token": "显示 Token",
+    "hide_token": "隐藏 Token"
   },
   "nav": {
     "home": "首页",
@@ -159,7 +166,13 @@
     "notify_done_title": "任务已完成",
     "notify_done_body": "{name} 已完成。",
     "notify_failed_title": "任务失败",
-    "notify_failed_body": "{name} 已停止：{error}"
+    "notify_failed_body": "{name} 已停止：{error}",
+    "reward_orbs": "{count} 个 Orbs",
+    "reward_orbs_claimed": "已领取 {count} 个 Orbs",
+    "reward_orbs_premium": "{base} → {premium} 个 Orbs",
+    "reward_nitro_multiplier": "Nitro {multiplier}",
+    "reward_quantity": "{name} x{quantity}",
+    "soft_error_console_only": "{game} 仅在主机构机上运行，本应用无法模拟。请在主机上游玩，Discord 会自动记录进度。"
   },
   "filter": {
     "type": "类型",
@@ -336,7 +349,9 @@
     "debug_already_unlocked": "已开启开发者模式",
     "disable_developer_mode": "关闭开发者模式",
     "disable_debug_confirm_title": "确认关闭开发者模式？",
-    "disable_debug_confirm_desc": "Debug 标签页和开发者工具将被隐藏。你可以通过连续点击版本号 7 次重新启用。"
+    "disable_debug_confirm_desc": "Debug 标签页和开发者工具将被隐藏。你可以通过连续点击版本号 7 次重新启用。",
+    "copy_diagnostics_error": "无法复制诊断摘要。",
+    "super_props_mode_unknown": "未知模式"
   },
   "version": {
     "update_available": "发现新版本！",
@@ -474,7 +489,77 @@
     "loading_status": "正在加载 {command}...",
     "last_load_duration": "上次调试信息加载耗时 {ms}ms",
     "load_failed": "调试信息加载失败",
-    "fetch": "获取"
+    "fetch": "获取",
+    "cdp_diagnostics_title": "Discord CDP 诊断",
+    "cdp_diagnostics_desc": "端点、启动标志、进程和目标就绪情况的本地脱敏快照。",
+    "copy_cdp_diagnostics": "复制 CDP 诊断",
+    "cdp_port": "端口",
+    "cdp_endpoint_status": "端点状态",
+    "cdp_port_listening": "端口监听中",
+    "cdp_http_status": "HTTP 可达 / 状态",
+    "cdp_endpoint_owner": "所有者",
+    "cdp_selected_provider_variant": "已选择的提供商 / 变体",
+    "cdp_selected_installation": "已选择的安装",
+    "cdp_executable_running": "可执行文件 / 运行中",
+    "cdp_targets_discord_main": "目标 / Discord / main",
+    "cdp_runtime_verification": "运行环境验证",
+    "cdp_launch_flags_processes": "启动标志和进程",
+    "cdp_no_processes": "未找到相关的 Discord、Vesktop 或占用端口的进程。",
+    "cdp_process": "进程",
+    "cdp_provider": "提供商",
+    "cdp_selected": "已选择",
+    "cdp_flag": "CDP 标志",
+    "cdp_flag_missing": "缺失",
+    "cdp_executable": "可执行文件",
+    "cdp_targets": "目标",
+    "cdp_no_targets": "没有可解析的 CDP 目标。",
+    "cdp_target_type": "类型",
+    "cdp_target_title": "标题",
+    "cdp_target_classification": "分类",
+    "cdp_target_runtime": "运行环境",
+    "cdp_target_url": "脱敏 URL",
+    "cdp_last_launch_error": "上次 CDP 启动错误",
+    "cdp_launch_error_code": "代码",
+    "cdp_launch_error_timestamp": "时间戳",
+    "cdp_no_launch_error": "本次应用会话中未记录启动错误。",
+    "identity_audit_title": "运行环境身份审计",
+    "identity_audit_desc": "仅在本地收集进程、软件包、助手和原生指纹证据。",
+    "identity_platform_build": "平台 / 构建",
+    "identity_main_executable": "主可执行文件",
+    "identity_runtime_bridge": "运行环境桥接",
+    "identity_helper_not_installed": "未安装",
+    "identity_legacy_migration": "旧版 / 迁移",
+    "identity_checks": "身份检查",
+    "identity_main_path_token": "主路径 Token",
+    "identity_unexpected_path_token": "意外的路径 Token",
+    "identity_helper_path_token": "助手路径 Token",
+    "identity_helper_manifest_hash": "助手清单哈希",
+    "identity_helper_signature": "助手签名",
+    "identity_show_redacted_paths": "显示脱敏路径",
+    "identity_native_fingerprint": "Discord 原生指纹",
+    "fingerprint_status": "状态",
+    "fingerprint_length": "长度",
+    "fingerprint_fields": "字段",
+    "fingerprint_show_raw": "显示本地原始指纹",
+    "platform_details": "平台详情",
+    "compare_release_baseline": "与发布基线比较",
+    "copy_json": "复制 JSON",
+    "export_json": "导出 JSON",
+    "baseline_matches_title": "与发布基线无差异",
+    "baseline_differences_title": "发布基线差异",
+    "baseline_configured_window_identity": "配置的窗口身份",
+    "baseline_observed_window_identity": "观测到的窗口身份",
+    "baseline_identity_matches": "与基线一致",
+    "baseline_matches_configuration": "与配置一致",
+    "baseline_mismatch": "不一致",
+    "baseline_unavailable": "不可用",
+    "baseline_requires_smoke_manifests": "需要外部发布的冒烟清单",
+    "baseline_fingerprint_fields_added": "新增的指纹字段",
+    "baseline_fingerprint_fields_removed": "移除的指纹字段",
+    "base64_encoded": "Base64 已编码",
+    "header_unique_values": "{count} 个唯一值",
+    "decision_placement_label": "投放",
+    "decision_count_label": "决策数量"
   },
   "user": {
     "nitro": "Nitro",
@@ -567,13 +652,16 @@
     "switch_selected": "切换到所选客户端",
     "restore_managed_and_close": "仅恢复由本应用启动的客户端并关闭",
     "restore_all_and_close": "确认外部客户端、全部恢复并关闭",
-    "cdp_owner": "CDP 所有者"
+    "cdp_owner": "CDP 所有者",
+    "current_owner_unavailable": "无法从正在运行的客户端读取当前的 CDP 所有者。",
+    "owner_installation_unmatched": "无法将当前的 CDP 所有者映射到唯一明确的安装。"
   },
   "exit_cdp": {
     "title": "Discord 仍在 CDP 模式下运行",
     "description": "关闭本应用不会停用 Discord 的本地调试接口。你可以仅关闭本应用，或重启 Discord 到一般模式。",
     "close_only": "仅关闭本应用",
     "restore_and_close": "关闭本应用并重启Discord到一般模式",
-    "helper_error": "无法启动 Discord 重启助手。你可能需要手动完全退出并重新打开 Discord。"
+    "helper_error": "无法启动 Discord 重启助手。你可能需要手动完全退出并重新打开 Discord。",
+    "installation_unidentified": "无法识别端口 {port} 上的 {client} 安装。"
   }
 }

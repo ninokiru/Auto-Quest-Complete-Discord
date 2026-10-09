@@ -138,6 +138,9 @@ const JS_INIT_QUEST_MODULES: &str = r#"
 
         // Structural discovery never sends an API request. Reject translation
         // proxies exposing arbitrary methods; accept one unambiguous HTTP facade.
+        // A callable is never the facade: a low-level HTTP library exposes
+        // get/post/put/patch/del as bound functions, and taking one would let a
+        // non-Discord object issue the quest requests.
         function hasConcreteMethod(candidate, name) {
             const seen = new Set();
             for (let owner = candidate; owner && !seen.has(owner); owner = Object.getPrototypeOf(owner)) {
@@ -151,7 +154,8 @@ const JS_INIT_QUEST_MODULES: &str = r#"
         }
         const apiMatches = [...new Set(apiCandidates)].filter(candidate => {
             try {
-                return !Object.hasOwn(candidate, "getRunningGames") &&
+                return typeof candidate === "object" && candidate !== null &&
+                    !Object.hasOwn(candidate, "getRunningGames") &&
                     ["get", "post", "put", "patch", "del"].every(name => hasConcreteMethod(candidate, name));
             } catch (_) { return false; }
         });
@@ -3564,21 +3568,42 @@ pub async fn complete_play_activity_via_cdp(
 
 /// Human-readable tail for an exhausted activity-target discovery, keyed off
 /// what the client window itself shows. `None` means the window could not be
-/// queried, which says nothing about whether an Activity is open.
-fn activity_discovery_exhausted_hint(open_frames: Option<usize>) -> String {
-    match open_frames {
-        Some(0) => "the attached Discord client window itself shows no open Activity. \
-                    Launch the Activity in that same client (Quest Home > Play, or a voice \
-                    channel > Activities); if it is open in a different Discord app, switch \
-                    to that client in Settings and retry."
-            .to_string(),
-        Some(count) => format!(
-            "the client window contains {count} Activity iframe(s), but the CDP target \
-             list exposes none of them. Restart Discord with the debug port and retry."
-        ),
+/// queried, which says nothing about whether an Activity is open. The window
+/// probe is what separates the four answers the user can act on: launch it,
+/// restart the client, report the host Discord used, or accept that the window
+/// could not be read.
+fn activity_discovery_exhausted_hint(probe: Option<&cdp_client::ActivityFrameProbe>) -> String {
+    match probe {
         None => "the client window could not be queried, so whether an Activity is open \
                  is unknown."
             .to_string(),
+        Some(probe) if probe.activity_iframes > 0 => format!(
+            "the client window contains {} Activity iframe(s), but the CDP target \
+             list exposes none of them. Restart Discord with the debug port and retry.",
+            probe.activity_iframes
+        ),
+        Some(probe) if probe.iframes == 0 => "the attached Discord client window has no \
+                                             iframe at all, so no Activity is open in it. \
+                                             Launch the Activity in that same client (Quest \
+                                             Home > Play, or a voice channel > Activities); \
+                                             if it is open in a different Discord app, switch \
+                                             to that client in Settings and retry."
+            .to_string(),
+        Some(probe) => {
+            let hosts = if probe.hosts.is_empty() {
+                "none of them carries a src, so the frame may still be mounting".to_string()
+            } else {
+                probe.hosts.join(", ")
+            };
+            format!(
+                "no iframe in the attached client window belongs to this Activity, though it \
+                 loads {} iframe(s): {}. If the Activity is playing in a different Discord app \
+                 (Stable, PTB, Canary, Vesktop), switch to that client in Settings and retry; if \
+                 it is playing here, Discord served it from a host this build cannot attach to, so \
+                 report the hosts above.",
+                probe.iframes, hosts
+            )
+        }
     }
 }
 
@@ -3594,6 +3619,7 @@ async fn discover_activity_target(
     let mut last_error = None;
     let mut logged_waiting_for_launch = false;
     let mut logged_listing_gap = false;
+    let mut logged_other_frames = false;
     for attempt in 1..=ACTIVITY_DISCOVERY_ATTEMPTS {
         let found = cdp_client::find_activity_iframe_target_for_application(port, app_id).await;
         let error = match found {
@@ -3620,24 +3646,41 @@ async fn discover_activity_target(
         // open. The probe keeps its own short timeout so it cannot fight a renderer
         // that is busy mounting the very frame being waited for.
         if attempt % 5 == 0 && attempt < ACTIVITY_DISCOVERY_ATTEMPTS {
-            match cdp_client::count_open_activity_frames(port).await {
-                Some(0) if !logged_waiting_for_launch => {
-                    logged_waiting_for_launch = true;
-                    log(
-                        LogLevel::Info,
-                        LogCategory::TokenExtraction,
-                        "CDP activity target discovery: no open Activity in the attached client yet — waiting for the user to launch it",
-                        None,
-                    );
-                }
-                Some(count) if count > 0 && !logged_listing_gap => {
+            match cdp_client::probe_activity_frames(port, app_id).await {
+                Some(probe) if probe.activity_iframes > 0 && !logged_listing_gap => {
                     logged_listing_gap = true;
                     log(
                         LogLevel::Warn,
                         LogCategory::TokenExtraction,
                         &format!(
-                            "CDP activity target discovery: client window shows {} Activity iframe(s), but the target list exposes none",
-                            count
+                            "CDP activity target discovery: client window shows {} Activity iframe(s) of {} iframe(s), but the target list exposes none",
+                            probe.activity_iframes, probe.iframes
+                        ),
+                        None,
+                    );
+                }
+                Some(probe) if probe.iframes == 0 && !logged_waiting_for_launch => {
+                    logged_waiting_for_launch = true;
+                    log(
+                        LogLevel::Info,
+                        LogCategory::TokenExtraction,
+                        "CDP activity target discovery: the attached client window has no iframe at all — waiting for the user to launch the Activity",
+                        None,
+                    );
+                }
+                Some(probe) if !logged_other_frames => {
+                    logged_other_frames = true;
+                    log(
+                        LogLevel::Info,
+                        LogCategory::TokenExtraction,
+                        &format!(
+                            "CDP activity target discovery: {} iframe(s) in the attached window, none for this Activity: {}",
+                            probe.iframes,
+                            if probe.hosts.is_empty() {
+                                "no iframe has a src".to_string()
+                            } else {
+                                probe.hosts.join(", ")
+                            }
                         ),
                         None,
                     );
@@ -3653,12 +3696,12 @@ async fn discover_activity_target(
             }
         }
     }
-    let open_frames = cdp_client::count_open_activity_frames(port).await;
+    let probe = cdp_client::probe_activity_frames(port, app_id).await;
     let error = last_error.expect("every failed attempt stores its error");
     Err(error.context(format!(
         "no Activity target appeared after {}s of waiting — {}",
         ACTIVITY_DISCOVERY_ATTEMPTS as u64 * ACTIVITY_DISCOVERY_DELAY_SECS,
-        activity_discovery_exhausted_hint(open_frames)
+        activity_discovery_exhausted_hint(probe.as_ref())
     )))
 }
 
@@ -4044,15 +4087,39 @@ pub async fn complete_activity_quest_via_cdp(
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn activity_discovery_hint_separates_the_three_miss_kinds() {
-        let not_open = activity_discovery_exhausted_hint(Some(0));
-        assert!(not_open.contains("shows no open Activity"));
-        assert!(not_open.contains("different Discord app"));
+    fn probe(
+        iframes: usize,
+        activity_iframes: usize,
+        hosts: &[&str],
+    ) -> cdp_client::ActivityFrameProbe {
+        cdp_client::ActivityFrameProbe {
+            iframes,
+            activity_iframes,
+            hosts: hosts.iter().map(|host| (*host).to_string()).collect(),
+        }
+    }
 
-        let listing_gap = activity_discovery_exhausted_hint(Some(2));
+    #[test]
+    fn activity_discovery_hint_separates_the_four_miss_kinds() {
+        let nothing_open = activity_discovery_exhausted_hint(Some(&probe(0, 0, &[])));
+        assert!(nothing_open.contains("no iframe at all"));
+        assert!(nothing_open.contains("different Discord app"));
+
+        let listing_gap =
+            activity_discovery_exhausted_hint(Some(&probe(4, 2, &["*.discordsays.com"])));
         assert!(listing_gap.contains("2 Activity iframe(s)"));
         assert!(listing_gap.contains("target list exposes none"));
+
+        // The window has frames, just not one for this Activity: naming the hosts is
+        // the only way to tell a wrong-client bind from a Discord host change.
+        let other_frames = activity_discovery_exhausted_hint(Some(&probe(
+            3,
+            0,
+            &["discord.com", "www.youtube.com"],
+        )));
+        assert!(other_frames.contains("3 iframe(s)"));
+        assert!(other_frames.contains("www.youtube.com"));
+        assert!(other_frames.contains("host this build cannot attach to"));
 
         let unknown = activity_discovery_exhausted_hint(None);
         assert!(unknown.contains("could not be queried"));

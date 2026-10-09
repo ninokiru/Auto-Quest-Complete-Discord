@@ -37,11 +37,12 @@ const emit = defineEmits<{
   <div class="rounded-xl border border-border/70 bg-card/72 p-3.5 shadow-[0_10px_28px_-28px_hsl(var(--foreground)/0.45)]">
     <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
       <div class="relative min-w-0 flex-1">
-        <Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
         <Input
           :model-value="query"
           type="text"
           :placeholder="t('home.search_placeholder')"
+          :aria-label="t('home.search_placeholder')"
           class="pl-9"
           @update:model-value="emit('update:query', String($event))"
         />

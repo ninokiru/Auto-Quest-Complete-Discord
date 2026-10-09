@@ -96,6 +96,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside))
     <button
       class="h-8 px-2.5 rounded-md border inline-flex items-center gap-1.5 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring"
       :class="toneClass"
+      :aria-label="modeState.label"
       @click="open = !open"
     >
       <component :is="modeState.icon" class="w-3.5 h-3.5 shrink-0" />

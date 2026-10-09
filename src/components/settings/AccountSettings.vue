@@ -81,7 +81,7 @@ async function handleManualLogin() {
                   type="button"
                   variant="ghost"
                   size="icon"
-                  :aria-label="showToken ? 'Hide token' : 'Show token'"
+                  :aria-label="showToken ? t('auth.hide_token') : t('auth.show_token')"
                   :aria-pressed="showToken"
                   class="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:text-foreground"
                   @click="showToken = !showToken"

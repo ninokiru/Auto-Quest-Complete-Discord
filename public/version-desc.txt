@@ -12,6 +12,18 @@ Auto-complete Discord **video, stream and game quests** from one window. Tauri 2
 - **Filters & diagnostics** — filter by reward type and completion state, then use the built-in connection diagnostics when something refuses to start.
 - **16 interface languages** — English, Vietnamese, Chinese (Simplified and Traditional), Japanese, Korean, Russian, Spanish, German, French, Indonesian, Polish, Portuguese (Brazil and Portugal), Thai, Turkish.
 
+### What's new in 0.0.2
+
+This release is a correctness pass over the parallel-quest engine and the CDP path.
+
+- **Progress bars finally mean what they say.** Each running quest now carries its own unit, so checkpoint Activities read as `2/3` and timed quests as `1:30 / 3:00` instead of both being treated as seconds.
+- **Cloud-game Activities** take the heartbeat path instead of the game-simulation path, so they start, report and stop correctly in the queue.
+- **Console-only quests are skipped, not stalled** — you get a dialog naming the game rather than a queue that quietly never starts.
+- **Rich presence works again.** The RPC payload now uses the field names and epoch-second timestamp the Discord client actually reads.
+- **Better CDP diagnostics** when an Activity frame is not found: the probe reports how many frames the window loads and which hosts it saw, instead of a bare "no activity frame".
+- **Accessibility and i18n.** Window controls, toasts and dialogs now have real names for screen readers, the exit dialog gained a Cancel button, and 88 previously hard-coded English strings moved into all 16 locales.
+- **Race conditions fixed** in the update check (a slow response can no longer overwrite a newer one) and in the token-extraction panel.
+
 ### About this release
 
 Version numbers restart at **0.0.1**. This build is a renamed continuation of `discord-quest-helper` (MIT licensed), rebranded to **Auto Quest Complete Discord** and maintained at [ninokiru/Auto-Quest-Complete-Discord](https://github.com/ninokiru/Auto-Quest-Complete-Discord) — the old numbering does not carry over.
@@ -28,8 +40,8 @@ These binaries are **not code-signed**. The app rewrites its own process identit
 
 | File | Use |
 | --- | --- |
-| `auto-quest-complete-discord-Windows-x64-0.0.1-setup.exe` | Windows installer (NSIS) |
-| `auto-quest-complete-discord-Windows-x64-0.0.1-portable.zip` | Windows portable, no installation |
+| `auto-quest-complete-discord-Windows-x64-0.0.2-setup.exe` | Windows installer (NSIS) |
+| `auto-quest-complete-discord-Windows-x64-0.0.2-portable.zip` | Windows portable, no installation |
 
 This release publishes **Windows x64 only**. macOS (Apple Silicon) and Linux (x86_64 `.deb` / AppImage) builds are still fully supported by the source tree and are compiled and tested in CI — only their release publishing is temporarily switched off to keep a release run on one runner. They will return in a later release. If you need one of them now, build it from source (`pnpm tauri:build`).
 

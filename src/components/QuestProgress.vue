@@ -6,6 +6,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { AlertCircle, ChevronUp, ListChecks, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
+import { formatSlotProgress } from '@/utils/questProgressDisplay'
 
 const { t } = useI18n()
 const questsStore = useQuestsStore()
@@ -166,20 +167,12 @@ function handleCollapsedClick() {
   expanded.value = true
 }
 
-function formatTime(seconds: number): string {
-  const m = Math.floor(seconds / 60)
-  const s = Math.floor(seconds % 60)
-  return `${m}:${s.toString().padStart(2, '0')}`
-}
-
-/** Submitted/required seconds for one running slot. */
-function slotSubmittedTime(slot: RunningQuest): string {
-  return formatSubmittedTime(slot.serverProgress, slot.targetDuration)
-}
-
-function formatSubmittedTime(progress: number, total: number): string {
-  const currentSeconds = (progress / 100) * total
-  return `${formatTime(currentSeconds)} / ${formatTime(total)}`
+/**
+ * Submitted/required text for one running slot: a `2/3` checkpoint count when the
+ * slot counts checkpoints, otherwise the elapsed/total seconds clock.
+ */
+function slotSubmittedText(slot: RunningQuest): string {
+  return formatSlotProgress(slot.serverProgress, slot.targetDuration, slot.progressUnit)
 }
 
 async function handleStop() {
@@ -347,7 +340,7 @@ function slotBarStyle(slot: RunningQuest): Record<string, string> {
                   <div class="truncate font-medium">{{ entry.quest?.config.messages.quest_name ?? entry.slot.questId }}</div>
                   <div class="truncate text-xs text-muted-foreground">{{ entry.quest?.config.messages.game_title }}</div>
                   <span class="font-mono text-xs text-muted-foreground">
-                    {{ slotSubmittedTime(entry.slot) }}
+                    {{ slotSubmittedText(entry.slot) }}
                   </span>
                 </div>
                 <div class="flex shrink-0 flex-col items-end gap-1">

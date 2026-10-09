@@ -18,7 +18,7 @@ const open = ref(props.defaultOpen ?? false)
 </script>
 
 <template>
-  <div :class="cn('overflow-hidden rounded-lg border bg-card/60', settingToneClass[tone].card)">
+  <div class="overflow-hidden rounded-lg border bg-card/60">
     <Button
       type="button"
       variant="ghost"

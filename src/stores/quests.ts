@@ -1,7 +1,16 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import type { Quest, DetectableGame, DesktopClientArg, ExcludedQuest, GameQuestMode, PlatformCapabilities, QuestTaskStatus } from '@/api/tauri'
-import { getQuestKind, isManualStreamQuest, playActivityProgressPercentage } from '@/utils/questTasks'
+import {
+  firstProgressValue,
+  firstStartableTask,
+  getQuestKind,
+  getQuestTasks,
+  isManualActivityQuest,
+  isManualStreamQuest,
+  isPlayActivityQuest,
+  playActivityProgressPercentage,
+} from '@/utils/questTasks'
 import { resolveSimulationExecutable } from '@/utils/executables'
 import { announceQuestEnd } from '@/utils/questNotifier'
 
@@ -27,6 +36,13 @@ export interface RunningQuest {
   questId: string
   type: RunningQuestType
   targetDuration: number
+  /**
+   * Unit of `targetDuration` and of both progress counters. Activity quests are
+   * counted in checkpoints, every other kind in seconds, so the same number
+   * means different things and the unit travels with the slot instead of being
+   * re-derived at render time.
+   */
+  progressUnit: 'time' | 'checkpoints'
   /** Percentage reported by the backend (events or quest-list polling). */
   serverProgress: number
   /** Percentage from the local animation loop, never below `serverProgress`. */
@@ -47,6 +63,9 @@ export interface RunningQuest {
   hasBackendTask: boolean
 }
 
+/** The unit a slot counts its target and its polled progress in. */
+type SlotProgressUnit = RunningQuest['progressUnit']
+
 /**
  * A recoverable, non-fatal quest condition surfaced to the UI.
  *
@@ -55,7 +74,10 @@ export interface RunningQuest {
  * (e.g. CDP) without losing quest context.
  */
 export interface QuestSoftError {
-  code: 'SIMULATION_EXECUTABLE_OS_UNSUPPORTED' | 'SIMULATION_EXECUTABLE_NOT_FOUND'
+  code:
+    | 'SIMULATION_EXECUTABLE_OS_UNSUPPORTED'
+    | 'SIMULATION_EXECUTABLE_NOT_FOUND'
+    | 'SIMULATION_PLATFORM_UNSUPPORTED'
   /** English fallback message; the UI localizes by `code` using `gameName`. */
   message: string
   /** Detectable-game name, so the dialog can render a localized message. */
@@ -142,6 +164,7 @@ export const useQuestsStore = defineStore('quests', () => {
     questId: string,
     type: RunningQuestType,
     targetDuration: number,
+    progressUnit: SlotProgressUnit,
     serverProgress: number,
     hasBackendTask: boolean
   ): RunningQuest {
@@ -149,6 +172,7 @@ export const useQuestsStore = defineStore('quests', () => {
     if (existing) {
       existing.type = type
       existing.targetDuration = targetDuration
+      existing.progressUnit = progressUnit
       existing.serverProgress = serverProgress
       existing.hasBackendTask = hasBackendTask
       return existing
@@ -157,6 +181,7 @@ export const useQuestsStore = defineStore('quests', () => {
       questId,
       type,
       targetDuration,
+      progressUnit,
       serverProgress,
       localProgress: serverProgress,
       gameExe: null,
@@ -650,12 +675,12 @@ export const useQuestsStore = defineStore('quests', () => {
   }
 
   /**
-   * Read the backend's per-quest outcomes. Quest events carry no quest id, so
-   * with several quests running this local registry is the only way to tell
-   * which one finished or failed.
+   * Read the backend's per-quest outcomes. Quest events carry no quest id and
+   * can be missed entirely (a completion that lands while a stop is in flight),
+   * so every running quest is reconciled here by id — with several quests this
+   * registry is the only way to tell which one finished or failed.
    */
   async function pollQuestTaskStatuses() {
-    if (runningQuests.value.length < 2) return
     const tracked = runningQuests.value.filter(slot => slot.hasBackendTask)
     if (tracked.length === 0) return
     let statuses: QuestTaskStatus[]
@@ -852,14 +877,14 @@ export const useQuestsStore = defineStore('quests', () => {
         continue
       }
 
-      const progressObj = quest.user_status?.progress
-      let currentSeconds = 0
-      if (progressObj && typeof progressObj === 'object') {
-        const vals = Object.values(progressObj as Record<string, { value?: number }>)
-        if (vals.length > 0 && vals[0]?.value) currentSeconds = vals[0].value
-      }
+      // The quest list reports the task this slot runs, so read that task's own
+      // value and divide it by the target in the same unit: checkpoint counts
+      // for Activity quests, seconds for everything else.
+      const polledProgress = firstProgressValue(quest, firstStartableTask(quest)?.key) ||
+        quest.user_status?.stream_progress_seconds ||
+        0
       if (slot.targetDuration > 0) {
-        slot.serverProgress = clampProgressPercent((currentSeconds / slot.targetDuration) * 100)
+        slot.serverProgress = playActivityProgressPercentage(polledProgress, slot.targetDuration)
       }
     }
   }
@@ -879,8 +904,10 @@ export const useQuestsStore = defineStore('quests', () => {
     pollingTimerCadence = pollingIntervalMs()
     pollingTimer = setInterval(async () => {
       // Serialize ticks: when a previous tick is still awaiting `fetchQuests`
-      // or completion cleanup, skip this one instead of overlapping it.
-      if (pollingInFlight) return
+      // or completion cleanup, skip this one instead of overlapping it. A stop in
+      // flight owns every teardown, so reconciling here would finalize the same
+      // quest a second time alongside it.
+      if (pollingInFlight || stopping.value) return
       pollingInFlight = true
       try {
         await fetchQuests(true, true)
@@ -902,14 +929,14 @@ export const useQuestsStore = defineStore('quests', () => {
   }
 
   /**
-   * One polling loop serves every running quest. It is needed when a quest has
-   * no backend task to emit events (simulate-mode games) or when several quests
-   * run at once, and stops as soon as nothing needs it.
+   * One polling loop serves every running quest, including a lone one: a quest
+   * with no backend task (a simulate-mode game) has only the quest list to tell
+   * it finished, and a quest event can be missed altogether — a completion that
+   * arrives while a stop is in flight is dropped by the listeners — so the list
+   * plus the backend task registry are what close a slot.
    */
   function syncPolling() {
-    const needsPolling = runningQuests.value.length > 1
-      || runningQuests.value.some(slot => !slot.hasBackendTask)
-    if (!needsPolling) {
+    if (runningQuests.value.length === 0) {
       stopPolling()
       return
     }
@@ -937,6 +964,8 @@ export const useQuestsStore = defineStore('quests', () => {
       const now = Date.now()
       const deltaSeconds = (now - simLastTime) / 1000
       simLastTime = now
+      const averageCheckpointSeconds =
+        (activityCheckpointMin.value + activityCheckpointMax.value) / 2
 
       for (const slot of runningQuests.value) {
         // Never trail the blue (server) bar and never pass 100%.
@@ -947,7 +976,13 @@ export const useQuestsStore = defineStore('quests', () => {
         const speed = slot.type === 'video' && gameQuestMode.value !== 'cdp'
           ? speedMultiplier.value
           : 1.0
-        const addedPercent = (deltaSeconds * speed / slot.targetDuration) * 100
+        // A checkpoint-unit slot counts checkpoints, not seconds: its whole run
+        // is one average checkpoint interval per checkpoint, so dividing the raw
+        // checkpoint count by elapsed seconds would finish the bar in seconds.
+        const slotDurationSeconds = slot.progressUnit === 'checkpoints'
+          ? slot.targetDuration * averageCheckpointSeconds
+          : slot.targetDuration
+        const addedPercent = (deltaSeconds * speed / slotDurationSeconds) * 100
         slot.localProgress = Math.min(
           100,
           Math.max(slot.localProgress + addedPercent, slot.serverProgress)
@@ -1000,7 +1035,7 @@ export const useQuestsStore = defineStore('quests', () => {
         await startVideoQuest(questId, secondsNeeded, progressPct, speedMultiplier.value, heartbeatInterval.value)
       }
 
-      openQuestSlot(questId, 'video', secondsNeeded, progressPct, true)
+      openQuestSlot(questId, 'video', secondsNeeded, 'time', progressPct, true)
 
       // CDP video progress is server-enforced real-time; don't inflate local simulation
       startProgressSimulation()
@@ -1020,7 +1055,7 @@ export const useQuestsStore = defineStore('quests', () => {
     try {
       const progressPct = (secondsNeeded > 0) ? (initialProgress / secondsNeeded) * 100 : 0
       await startStreamQuest(questId, streamKey, secondsNeeded, progressPct)
-      openQuestSlot(questId, 'stream', secondsNeeded, progressPct, true)
+      openQuestSlot(questId, 'stream', secondsNeeded, 'time', progressPct, true)
 
       startProgressSimulation()
       setupListeners()
@@ -1060,7 +1095,7 @@ export const useQuestsStore = defineStore('quests', () => {
           cdpPort.value
         )
 
-        openQuestSlot(quest.id, 'game', secondsNeeded, progressPct, true)
+        openQuestSlot(quest.id, 'game', secondsNeeded, 'time', progressPct, true)
         startProgressSimulation()
         setupListeners()
         syncPolling()
@@ -1076,7 +1111,7 @@ export const useQuestsStore = defineStore('quests', () => {
           progressPct
         )
 
-        openQuestSlot(quest.id, 'game', secondsNeeded, progressPct, true)
+        openQuestSlot(quest.id, 'game', secondsNeeded, 'time', progressPct, true)
         startProgressSimulation()
 
         // Setup listeners for progress/complete/error events
@@ -1136,7 +1171,7 @@ export const useQuestsStore = defineStore('quests', () => {
 
         // Claim the slot before any process exists, so a second click on this
         // quest cannot start a duplicate while the first is still launching.
-        const slot = openQuestSlot(quest.id, 'game', secondsNeeded, progressPct, false)
+        const slot = openQuestSlot(quest.id, 'game', secondsNeeded, 'time', progressPct, false)
 
         // 3. Resolve the configured simulation directory once so create and
         // run always use the same path for this quest.
@@ -1161,7 +1196,9 @@ export const useQuestsStore = defineStore('quests', () => {
             details: `Playing ${game.name}`,
             largeImageKey: "logo",
             largeImageText: game.name,
-            timestamp: Date.now()
+            // Discord RPC reads the presence start time in epoch seconds, so a
+            // millisecond value would render as a date decades away.
+            timestamp: Math.floor(Date.now() / 1000)
           }
 
           await connectToDiscordRpc(JSON.stringify(activity), 'connect')
@@ -1236,13 +1273,9 @@ export const useQuestsStore = defineStore('quests', () => {
         throw new Error('Quest does not contain a supported checkpoint Activity task')
       }
       const checkpointCount = activityTask?.target || 3
-      const currentProgress = quest.user_status?.progress
-      const currentCheckpointValue = activityTaskKey && currentProgress?.[activityTaskKey]?.value != null
-        ? currentProgress[activityTaskKey].value ?? 0
-        : Object.values(currentProgress ?? {})[0]?.value ?? 0
       const completedCheckpoints = Math.min(
         checkpointCount,
-        Math.max(0, Math.floor(currentCheckpointValue))
+        Math.max(0, Math.floor(firstProgressValue(quest, activityTaskKey)))
       )
       const remainingCheckpointCount = Math.max(0, checkpointCount - completedCheckpoints)
 
@@ -1260,7 +1293,9 @@ export const useQuestsStore = defineStore('quests', () => {
       const checkpointTimes = allCheckpointTimes.slice(completedCheckpoints)
       const totalSeconds = allCheckpointTimes.reduce((sum, t) => sum + t, 0)
       const remainingSeconds = checkpointTimes.reduce((sum, t) => sum + t, 0)
-      const progressPct = checkpointCount > 0 ? (completedCheckpoints / checkpointCount) * 100 : 0
+      // The server's own checkpoint count is the only honest seed: a resumed
+      // quest must open its bar there, not at zero.
+      const progressPct = playActivityProgressPercentage(completedCheckpoints, checkpointCount)
 
       console.log(`Starting activity quest via CDP: completed=${completedCheckpoints}/${checkpointCount}, remaining=${remainingCheckpointCount}, times=[${checkpointTimes.join(', ')}], remaining=${remainingSeconds}s, estimatedTotal=${totalSeconds}s`)
 
@@ -1278,7 +1313,7 @@ export const useQuestsStore = defineStore('quests', () => {
         checkpointTimes
       )
 
-      openQuestSlot(quest.id, 'activity', totalSeconds, progressPct, true)
+      openQuestSlot(quest.id, 'activity', checkpointCount, 'checkpoints', progressPct, true)
 
       startProgressSimulation()
       setupListeners()
@@ -1311,7 +1346,9 @@ export const useQuestsStore = defineStore('quests', () => {
         `Starting PLAY_ACTIVITY quest: mode=${gameQuestMode.value}, progress=${initialProgress}/${secondsNeeded}s, heartbeat=${heartbeatInterval.value}s, polling=${gamePollingInterval.value}s`
       )
 
-      const slot = openQuestSlot(quest.id, 'activity', secondsNeeded, progressPct, true)
+      // A cloud-game Activity quest is paced in seconds, unlike a checkpoint
+      // Activity quest, so its slot keeps the time unit its target is written in.
+      const slot = openQuestSlot(quest.id, 'activity', secondsNeeded, 'time', progressPct, true)
       startProgressSimulation()
       setupListeners()
       syncPolling()
@@ -1611,6 +1648,42 @@ export const useQuestsStore = defineStore('quests', () => {
   const questQueue = ref<QueueItem[]>([])
   const isQueueRunning = ref(false)
 
+  /** Task types that only ever progress on console hardware. */
+  const CONSOLE_ONLY_TASK_TYPES = ['PLAY_ON_XBOX', 'PLAY_ON_PLAYSTATION']
+
+  function dropQueueItem(questId: string): void {
+    questQueue.value = questQueue.value.filter(item => item.id !== questId)
+  }
+
+  /**
+   * True when nothing in this quest can be played from this client: no video,
+   * desktop-play or Activity task, but a console-only play task. Discord credits
+   * those tasks only for sessions on the console, so no heartbeat, simulated
+   * process or CDP injection can ever finish them.
+   */
+  function requiresUnsupportedPlatform(quest: Quest): boolean {
+    if (firstStartableTask(quest)) return false
+    return getQuestTasks(quest).some(task => CONSOLE_ONLY_TASK_TYPES.includes(task.type))
+  }
+
+  /**
+   * Drop a queue item that can never complete and record the reason the same way
+   * a simulation-incompatible start does, so the dialog and the paused queue stay
+   * the visible explanation.
+   */
+  function skipUnstartableQuest(quest: Quest): void {
+    const gameName = quest.config.application?.name || quest.config.messages.quest_name || quest.id
+    softError.value = {
+      code: 'SIMULATION_PLATFORM_UNSUPPORTED',
+      message: `"${gameName}" only counts play on a console platform, which this client cannot satisfy. Skipped.`,
+      gameName,
+      questId: quest.id,
+      recoverable: true,
+    }
+    if (isQueueRunning.value) queuePauseReason.value = 'simulation_incompatible'
+    dropQueueItem(quest.id)
+  }
+
   /**
    * Fill every free parallel slot from the queue. A queue item stays in the list
    * until its quest is finalized, so the candidate for the next slot is the first
@@ -1618,6 +1691,7 @@ export const useQuestsStore = defineStore('quests', () => {
    * completion callbacks from starting the same candidate twice.
    */
   async function processQueue() {
+    if (stopping.value) return
     if (questQueue.value.length === 0) {
       isQueueRunning.value = false
       return
@@ -1631,36 +1705,38 @@ export const useQuestsStore = defineStore('quests', () => {
 
     try {
       isQueueRunning.value = true
-      while (questQueue.value.length > 0 && runningQuests.value.length < MAX_PARALLEL_QUESTS) {
+      while (!stopping.value
+        && questQueue.value.length > 0
+        && runningQuests.value.length < MAX_PARALLEL_QUESTS) {
         const queueItem = questQueue.value.find(item => !questSlot(item.id))
         if (!queueItem) return
         console.log(`Queue processing: ${queueItem.id}`)
 
-        // Calculate duration needed
-        let seconds = 0
-        const queueTasks = queueItem.config.task_config_v2?.tasks ?? queueItem.config.task_config?.tasks
-        if (queueTasks) {
-          const taskValues = Object.values(queueTasks)
-          if (taskValues.length > 0) seconds = taskValues[0].target || 0
-        }
-
-        // Check if already partial
-        let progress = 0
-        if (queueItem.user_status?.progress) {
-          const vals = Object.values(queueItem.user_status.progress)
-          if (vals.length > 0) progress = vals[0].value || 0
-        }
+        // The task this quest can run locally decides both its target and the
+        // progress already banked on it, so another task's target — a console
+        // requirement or a checkpoint count — is never read as a duration.
+        const startableTask = firstStartableTask(queueItem)
+        const seconds = startableTask?.target ?? 0
+        const progress = firstProgressValue(queueItem, startableTask?.key)
 
         // Skip without occupying a slot: already done, a real Stream quest,
-        // which needs actual broadcasting, or an Activity quest, whose progress
-        // only comes from checkpoints in the activity window the user launched.
-        // startPlay would pace them by their checkpoint count as if it were
-        // seconds and finalize a quest that never progressed. (Matches how Home
-        // keeps these out of the batch dialogs.)
+        // which needs actual broadcasting, or a checkpoint Activity, whose
+        // progress only comes from checkpoints in the activity window the user
+        // launched. A cloud-game Activity (`PLAY_ACTIVITY`) is NOT in that
+        // group: the backend drives it from heartbeats alone, so dropping it
+        // here would silently discard a quest Home legitimately batch-queued.
         const questKind = getQuestKind(queueItem)
         if (queueItem.user_status?.completed_at || isManualStreamQuest(queueItem)
-          || questKind === 'activity') {
-          questQueue.value = questQueue.value.filter(item => item.id !== queueItem.id)
+          || isManualActivityQuest(queueItem)) {
+          dropQueueItem(queueItem.id)
+          continue
+        }
+
+        // A console-only task needs hardware this client cannot play on, so the
+        // quest can never complete: report why and consume the item instead of
+        // holding a slot until it times out.
+        if (requiresUnsupportedPlatform(queueItem)) {
+          skipUnstartableQuest(queueItem)
           continue
         }
 
@@ -1668,6 +1744,10 @@ export const useQuestsStore = defineStore('quests', () => {
         try {
           if (questKind === 'video') {
             await startVideo(queueItem.id, seconds, progress)
+          } else if (isPlayActivityQuest(queueItem)) {
+            // Cloud-game Activities complete on backend heartbeats, not on the
+            // game-simulation executable, so they must not take the startPlay path.
+            await startPlayActivity(queueItem, seconds, progress)
           } else {
             // Game (play) quests — use startPlay with optional pre-selected exe
             await startPlay(queueItem, seconds, progress, queueItem.selectedExeName)
@@ -1677,7 +1757,7 @@ export const useQuestsStore = defineStore('quests', () => {
           if (generation !== queueGeneration) return
           // The errored quest must leave the queue or the batch stalls silently
           // with the item still queued and Home's bulk buttons stuck disabled.
-          questQueue.value = questQueue.value.filter(item => item.id !== queueItem.id)
+          dropQueueItem(queueItem.id)
           continue
         }
 
@@ -1695,6 +1775,21 @@ export const useQuestsStore = defineStore('quests', () => {
           cleanupListeners()
           return
         }
+
+        // Every iteration has to consume its item. A start that reports a soft
+        // error returns without throwing *and* without a slot; leaving that item
+        // queued would let the next iteration pick the same candidate forever.
+        if (!questSlot(queueItem.id)) {
+          dropQueueItem(queueItem.id)
+          if (softError.value?.questId === queueItem.id) {
+            queuePauseReason.value = 'simulation_incompatible'
+          }
+          continue
+        }
+
+        // A stop started while this quest was launching owns the teardown; the
+        // remaining items are cleared by it, so the queue must not refill here.
+        if (stopping.value) return
       }
     } finally {
       queueFillInFlight = false

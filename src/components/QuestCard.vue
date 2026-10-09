@@ -19,11 +19,16 @@ import { useI18n } from 'vue-i18n'
 import {
   firstProgressValue,
   firstTargetTask,
-  formatDuration,
   getQuestKind,
   getQuestTasks,
   isPlayActivityTask,
 } from '@/utils/questTasks'
+import {
+  clampPercent,
+  formatRequiredTarget,
+  formatSlotProgress,
+  type ProgressUnit,
+} from '@/utils/questProgressDisplay'
 import { getQuestRewardViews, type QuestRewardView } from '@/utils/questRewards'
 
 const { t } = useI18n()
@@ -62,6 +67,14 @@ const runningSlot = computed(
 )
 const isActiveQuest = computed(() => runningSlot.value !== null)
 
+// Only a running slot knows its own unit, and it only governs numbers read from
+// that slot: an idle card, or a slot whose target has not landed yet, falls back to
+// the second-based estimates above.
+const runningProgressUnit = computed<ProgressUnit>(() => {
+  const slot = runningSlot.value
+  return slot && slot.targetDuration > 0 ? slot.progressUnit : 'time'
+})
+
 const targetDuration = computed(() => {
   // For active quests, use the store's target duration (includes calculated checkpoint times)
   if (runningSlot.value && runningSlot.value.targetDuration > 0) {
@@ -92,7 +105,7 @@ const progress = computed(() => {
   const targetTask = firstTargetTask(props.quest)
   const target = targetTask?.target || targetDuration.value
   if (target > 0) {
-    return (firstProgressValue(props.quest, targetTask?.key) / target) * 100
+    return clampPercent((firstProgressValue(props.quest, targetTask?.key) / target) * 100)
   }
   return 0
 })
@@ -122,9 +135,29 @@ const inGameRewards = computed(() => rewardViews.value.filter(reward => reward.k
 const discordRewards = computed(() => rewardViews.value.filter(reward => reward.kind !== 'ingame' || !reward.asset))
 const compactRewardViews = computed(() => rewardViews.value.slice(0, 3))
 
+// Reward wording lives in the locale files: the reward module only says which key
+// and which values to interpolate, so nothing here can leak English into the card.
+function rewardName(reward: QuestRewardView): string {
+  return reward.name || t('filter.reward')
+}
+
+function rewardAmount(reward: QuestRewardView): string {
+  const { amount } = reward
+  if (amount.type === 'name') return rewardName(reward)
+  if (amount.type === 'quantity') {
+    return t('quest.reward_quantity', { name: rewardName(reward), quantity: String(amount.quantity) })
+  }
+  return t(amount.text.key, amount.text.params ?? {})
+}
+
+function rewardBadge(reward: QuestRewardView): string | null {
+  const badge = reward.badge
+  return badge ? t(badge.key, badge.params ?? {}) : null
+}
+
 const rewardSummary = computed(() => {
   if (rewardViews.value.length === 0) return t('filter.reward')
-  return rewardViews.value.map(reward => reward.amountText).join(' + ')
+  return rewardViews.value.map(reward => rewardAmount(reward)).join(' + ')
 })
 
 function formatDate(dateStr: string): string {
@@ -200,20 +233,19 @@ const progressBarStyle = computed(() => {
   }
 })
 
-const activeTimeText = computed(() => {
+const activeProgressText = computed(() => {
   if (!isActiveQuest.value) return ''
-  const total = targetDuration.value
-  const currentSeconds = ((runningSlot.value?.serverProgress ?? 0) / 100) * total // Use confirmed progress for text? Or pending?
-  // Let's match QuestProgress.vue: use confirmed for text 1, total for text 2
-  // Format: "MM:ss / MM:ss"
-  
-  const format = (s: number) => {
-     const m = Math.floor(s / 60)
-     const sec = Math.floor(s % 60)
-     return `${m}:${sec.toString().padStart(2, '0')}`
-  }
-  return `${format(currentSeconds)} / ${format(total)}`
+  // Confirmed progress drives the text, same as the submitted (blue) bar.
+  return formatSlotProgress(
+    runningSlot.value?.serverProgress ?? 0,
+    targetDuration.value,
+    runningProgressUnit.value
+  )
 })
+
+const requiredTargetText = computed(() =>
+  formatRequiredTarget(targetDuration.value, runningProgressUnit.value)
+)
 </script>
 
 <template>
@@ -307,13 +339,13 @@ const activeTimeText = computed(() => {
               <img
                 v-else-if="reward.asset"
                 :src="`https://cdn.discordapp.com/${reward.asset}`"
-                :alt="reward.name"
+                :alt="rewardName(reward)"
                 class="h-full w-full object-contain"
               />
               <img
                 v-else-if="reward.icon === 'orbs'"
                 src="/icons/orbs.png"
-                :alt="reward.name"
+                :alt="rewardName(reward)"
                 class="h-7 w-7 object-contain"
               />
               <Gift v-else class="h-5 w-5 text-pink-400" />
@@ -334,10 +366,10 @@ const activeTimeText = computed(() => {
           <span class="text-muted-foreground">
             {{ t('quest.progress') }}: {{ Math.round(progress) }}%
             <span v-if="isActiveQuest" class="ml-2 font-mono text-xs text-muted-foreground/80">
-               ({{ activeTimeText }})
+               ({{ activeProgressText }})
             </span>
           </span>
-          <span v-if="targetDuration" class="text-muted-foreground">{{ t('quest.required', { duration: formatDuration(targetDuration) }) }}</span>
+          <span v-if="targetDuration" class="text-muted-foreground">{{ t('quest.required', { duration: requiredTargetText }) }}</span>
         </div>
         
         <!-- Progress Bar for Active Quest: single gradient div, blue→green -->
@@ -382,10 +414,10 @@ const activeTimeText = computed(() => {
           <img 
             v-else
             :src="`https://cdn.discordapp.com/${reward.asset}`"
-            :alt="reward.name"
+            :alt="rewardName(reward)"
             class="w-14 h-14 object-contain rounded-md flex-shrink-0"
           />
-          <span class="text-sm font-medium">{{ reward.amountText }}</span>
+          <span class="text-sm font-medium">{{ rewardAmount(reward) }}</span>
         </div>
       </div>
       
@@ -411,27 +443,27 @@ const activeTimeText = computed(() => {
           <img 
             v-else-if="reward.asset"
             :src="`https://cdn.discordapp.com/${reward.asset}`"
-            :alt="reward.name"
+            :alt="rewardName(reward)"
             class="w-14 h-14 object-contain rounded-md flex-shrink-0"
           />
           <!-- Orbs reward -->
           <img 
             v-else-if="reward.icon === 'orbs'"
             src="/icons/orbs.png"
-            :alt="reward.name"
+            :alt="rewardName(reward)"
             class="w-14 h-14 object-contain rounded-md flex-shrink-0"
           />
           <!-- Fallback icon -->
           <Gift v-else class="w-10 h-10 text-pink-400 flex-shrink-0" />
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-2">
-              <span class="text-sm font-medium">{{ reward.amountText }}</span>
-              <Badge v-if="reward.badgeText" variant="secondary" class="text-[10px]">
-                {{ reward.badgeText }}
+              <span class="text-sm font-medium">{{ rewardAmount(reward) }}</span>
+              <Badge v-if="reward.badge" variant="secondary" class="text-[10px]">
+                {{ rewardBadge(reward) }}
               </Badge>
             </div>
-            <div v-if="reward.amountText !== reward.name" class="truncate text-xs text-muted-foreground">
-              {{ reward.name }}
+            <div v-if="rewardAmount(reward) !== rewardName(reward)" class="truncate text-xs text-muted-foreground">
+              {{ rewardName(reward) }}
             </div>
           </div>
         </div>

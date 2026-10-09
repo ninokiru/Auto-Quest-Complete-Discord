@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Loader2, Gamepad2, Search, RefreshCw } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useQuestsStore } from '@/stores/quests'
+import { commandErrorMessage } from '@/utils/commandError'
 import { getSimulationExecutables } from '@/utils/executables'
 
 const { t } = useI18n()
@@ -63,7 +64,7 @@ async function loadGames(force = false) {
   try {
     games.value = await store.getDetectableGames(force)
   } catch (e) {
-    error.value = e as string
+    error.value = commandErrorMessage(e)
   } finally {
     loading.value = false
     refreshing.value = false
@@ -89,15 +90,17 @@ onMounted(async () => {
           class="h-8 w-8" 
           @click="loadGames(true)"
           :disabled="loading || disabled"
+          :aria-label="t('general.refresh')"
         >
           <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': refreshing }" />
         </Button>
       </CardTitle>
       <div class="relative mt-2">
-        <Search class="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+        <Search class="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" aria-hidden="true" />
         <Input 
           v-model="searchQuery" 
           :placeholder="t('game_sim.search')" 
+          :aria-label="t('game_sim.search')"
           class="pl-8"
           :disabled="disabled"
         />
@@ -135,6 +138,7 @@ onMounted(async () => {
              <img 
                v-if="game.icon"
                :src="`https://cdn.discordapp.com/app-icons/${game.id}/${game.icon}.png?size=64`"
+               alt=""
                loading="lazy"
                class="w-full h-full object-cover"
                @error="(e) => (e.target as HTMLImageElement).style.display = 'none'"

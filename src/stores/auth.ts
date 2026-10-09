@@ -213,7 +213,10 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function fetchNitroProgramReward(force = false) {
-    if (programRewardLoading.value) return
+    // A forced refresh has to win over an in-flight fetch: the revision guard
+    // below makes the newest request the only one that can write state, so the
+    // older response is discarded instead of the user's click being dropped.
+    if (!force && programRewardLoading.value) return
     if (!force && programRewardLoaded.value) return
     // CDP auto-login is authenticated on the backend but exposes no frontend
     // token, so gate on the logged-in user rather than the raw token.

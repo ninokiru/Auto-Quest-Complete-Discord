@@ -8,6 +8,7 @@ import { LoaderCircle } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
+  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
@@ -32,7 +33,12 @@ let unlisten: UnlistenFn | undefined
 const guard = createAppExitGuard({
   listSessions: () => listRunningDesktopCdpSessions() as Promise<RunningCdpSession[]>,
   restoreSession: async (session, confirmExternal) => {
-    if (!session.installationId) throw new Error(`Could not identify the ${session.providerId ?? 'desktop client'} installation on port ${session.port}.`)
+    if (!session.installationId) {
+      throw new Error(t('exit_cdp.installation_unidentified', {
+        client: session.providerId ?? t('settings.desktop_client'),
+        port: session.port,
+      }))
+    }
     await restoreDesktopClientSession(session.installationId, session.port, confirmExternal)
   },
   startRestoreHelper: startDiscordNormalRestoreHelper,
@@ -48,6 +54,10 @@ const guard = createAppExitGuard({
   onStateChange: next => { state.value = next },
 })
 
+function handleDialogOpenChange(open: boolean) {
+  if (!open) guard.cancelClose()
+}
+
 onMounted(async () => {
   unlisten = await appWindow.onCloseRequested(event => guard.requestClose(event))
 })
@@ -56,13 +66,16 @@ onUnmounted(() => unlisten?.())
 </script>
 
 <template>
-  <AlertDialog :open="state.dialogOpen">
+  <AlertDialog :open="state.dialogOpen" @update:open="handleDialogOpenChange">
     <AlertDialogContent class="max-w-[560px]">
       <AlertDialogHeader>
         <AlertDialogTitle>{{ t('exit_cdp.title') }}</AlertDialogTitle>
         <AlertDialogDescription>{{ t('exit_cdp.description') }}</AlertDialogDescription>
       </AlertDialogHeader>
       <AlertDialogFooter>
+        <AlertDialogCancel :disabled="state.checking || state.closing">
+          {{ t('dialog.cancel') }}
+        </AlertDialogCancel>
         <Button variant="outline" :disabled="state.checking || state.closing" @click="guard.closeOnly">
           {{ t('exit_cdp.close_only') }}
         </Button>

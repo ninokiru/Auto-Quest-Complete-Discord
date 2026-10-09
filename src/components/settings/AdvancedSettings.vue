@@ -13,6 +13,8 @@ import { cn } from '@/lib/utils'
 import { settingToneClass, type SettingsTone } from './settingTones'
 import { isDebugModeEnabled } from '@/utils/debugMode'
 
+type SuperPropsReadState = 'loading' | 'ready' | 'unavailable'
+
 function goToPortSection() {
   navigateToTab('settings', 'discord_integration')
   nextTick(() => {
@@ -26,13 +28,28 @@ const { t } = useI18n()
 const questsStore = useQuestsStore()
 
 const superPropsMode = ref<SuperPropertiesModeInfo | null>(null)
+const superPropsReadState = ref<SuperPropsReadState>('loading')
 const retryingMode = ref(false)
 const debugModeEnabled = ref(isDebugModeEnabled())
 
 const superPropsTone = computed<SettingsTone>(() => {
+  if (superPropsReadState.value !== 'ready') return 'neutral'
   if (superPropsMode.value?.mode === 'cdp') return 'success'
   if (superPropsMode.value?.mode === 'remote_js') return 'warning'
   return 'danger'
+})
+
+const superPropsLabel = computed<string>(() => {
+  if (superPropsReadState.value === 'loading') return t('general.loading')
+  if (superPropsReadState.value === 'unavailable') return t('settings.super_props_mode_unknown')
+  switch (superPropsMode.value?.mode) {
+    case 'cdp':
+      return 'CDP'
+    case 'remote_js':
+      return t('settings.remote_js')
+    default:
+      return t('settings.default_mode')
+  }
 })
 
 const developerModeTone = computed<SettingsTone>(() => debugModeEnabled.value ? 'success' : 'neutral')
@@ -40,8 +57,11 @@ const developerModeTone = computed<SettingsTone>(() => debugModeEnabled.value ? 
 async function loadSuperPropsMode() {
   try {
     superPropsMode.value = await getSuperPropertiesMode()
+    superPropsReadState.value = 'ready'
   } catch (e) {
     console.error('Failed to get SuperProperties mode:', e)
+    superPropsMode.value = null
+    superPropsReadState.value = 'unavailable'
   }
 }
 
@@ -94,7 +114,7 @@ onMounted(async () => {
               variant="outline"
               :class="settingToneClass[superPropsTone].badge"
             >
-              {{ superPropsMode?.mode === 'cdp' ? 'CDP' : (superPropsMode?.mode === 'remote_js' ? t('settings.remote_js') : t('settings.default_mode')) }}
+              {{ superPropsLabel }}
             </Badge>
             <Button
               variant="outline"

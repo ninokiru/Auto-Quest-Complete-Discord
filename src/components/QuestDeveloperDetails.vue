@@ -43,6 +43,7 @@ async function copyValue(value: string, key: string) {
     <button
       type="button"
       class="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-muted-foreground hover:text-foreground"
+      :aria-expanded="open"
       @click="open = !open"
     >
       <span>{{ t('debug.developer_details') }}</span>
@@ -54,7 +55,7 @@ async function copyValue(value: string, key: string) {
         <dt class="text-muted-foreground">Quest ID</dt>
         <dd class="min-w-0 break-all font-mono">{{ quest.id }}</dd>
         <dd>
-          <Button variant="ghost" size="icon" class="h-6 w-6" @click="copyValue(quest.id, 'quest')">
+          <Button variant="ghost" size="icon" class="h-6 w-6" :aria-label="t('debug.copy')" @click="copyValue(quest.id, 'quest')">
             <Check v-if="copied === 'quest'" class="h-3 w-3 text-green-500" />
             <Copy v-else class="h-3 w-3" />
           </Button>
@@ -90,7 +91,7 @@ async function copyValue(value: string, key: string) {
         <dt class="text-muted-foreground">CTA Link</dt>
         <dd class="min-w-0 break-all font-mono">{{ ctaLink || 'none' }}</dd>
         <dd>
-          <Button v-if="ctaLink" variant="ghost" size="icon" class="h-6 w-6" @click="copyValue(ctaLink, 'cta')">
+          <Button v-if="ctaLink" variant="ghost" size="icon" class="h-6 w-6" :aria-label="t('debug.copy')" @click="copyValue(ctaLink, 'cta')">
             <Check v-if="copied === 'cta'" class="h-3 w-3 text-green-500" />
             <Copy v-else class="h-3 w-3" />
           </Button>
