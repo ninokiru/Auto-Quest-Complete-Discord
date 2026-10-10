@@ -258,6 +258,7 @@
     "about_warning": "Peringatan: Penggunaan alat ini mungkin melanggar Persyaratan Layanan Discord. Gunakan dengan risiko Anda sendiri.",
     "check_prerelease": "Terima Pembaruan Beta",
     "check_prerelease_desc": "Sertakan versi pra-rilis saat memeriksa pembaruan.",
+    "restore_update_reminder": "Tampilkan jendela pembaruan lagi",
     "feedback": "Laporkan Masalah",
     "website": "Situs web",
     "credits": "Kredit",
@@ -575,6 +576,64 @@
       "open_settings": "Buka Pengaturan",
       "fix_in_settings": "Perbaiki di Pengaturan",
       "change_mode": "Ubah Modus"
+    }
+  },
+  "notify": {
+    "bell": "Notifikasi",
+    "bell_unread": "{count} notifikasi belum dibaca",
+    "tab_inbox": "Notifikasi",
+    "tab_log": "Log pembaruan",
+    "empty": "Belum ada notifikasi",
+    "unread": "Belum dibaca",
+    "remove": "Hapus notifikasi ini",
+    "open_release": "Buka rilis",
+    "mark_all_read": "Tandai semua dibaca",
+    "clear_all": "Bersihkan semua",
+    "log_hint": "Catatan rilis diambil otomatis dari GitHub, sehingga pembaruan baru muncul sendiri.",
+    "log_loading": "Memuat catatan rilis",
+    "log_error": "Gagal memuat log pembaruan: {error}",
+    "log_empty": "Belum ada rilis yang ditemukan",
+    "log_latest": "Terbaru",
+    "log_current": "Versi Anda",
+    "log_no_notes": "Rilis ini tidak memiliki catatan.",
+    "dialog": {
+      "title": "Versi {version} tersedia",
+      "body": "Anda memakai {current}. Semua di bawah ini berasal dari halaman rilis.",
+      "published": "Diterbitkan {date}",
+      "notes": "Log pembaruan",
+      "later": "Nanti",
+      "hint": "Anda dapat membacanya lagi dari log pembaruan pada lonceng notifikasi."
+    },
+    "update": {
+      "button": "Perbarui sekarang",
+      "resolving": "Mencari rilis",
+      "downloading": "Mengunduh program instalasi",
+      "verifying": "Memeriksa berkas yang diunduh",
+      "installing": "Memasang pembaruan",
+      "restarting": "Menyalakan ulang aplikasi",
+      "failed": "Pembaruan tidak dapat diselesaikan: {error}"
+    },
+    "items": {
+      "update_available": {
+        "title": "Versi baru {version}",
+        "body": "Buka halaman rilis untuk mengunduhnya. Anda memakai {current}."
+      },
+      "quest_completed": {
+        "title": "Quest selesai",
+        "body": "{name} telah selesai."
+      },
+      "quest_failed": {
+        "title": "Quest gagal",
+        "body": "{name}: {error}"
+      },
+      "new_quests": {
+        "title": "Quest baru tersedia",
+        "body": "Menambahkan {count} quest baru ke daftar Anda."
+      },
+      "error": {
+        "title": "Kesalahan tak terduga",
+        "body": "{error}"
+      }
     }
   },
   "toast": {

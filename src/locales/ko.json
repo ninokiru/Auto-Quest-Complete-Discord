@@ -258,6 +258,7 @@
     "about_warning": "경고: 이 도구의 사용은 Discord 서비스 약관을 위반할 수 있습니다. 본인의 책임 하에 사용하세요.",
     "check_prerelease": "베타 업데이트 받기",
     "check_prerelease_desc": "업데이트 확인 시 사전 출시 버전을 포함합니다.",
+    "restore_update_reminder": "업데이트 대화상자를 다시 표시",
     "feedback": "문제 보고",
     "website": "웹사이트",
     "credits": "크레딧",
@@ -575,6 +576,64 @@
       "open_settings": "설정 열기",
       "fix_in_settings": "설정에서 수정",
       "change_mode": "모드 변경"
+    }
+  },
+  "notify": {
+    "bell": "알림",
+    "bell_unread": "읽지 않은 알림 {count}개",
+    "tab_inbox": "알림",
+    "tab_log": "업데이트 로그",
+    "empty": "아직 알림이 없습니다",
+    "unread": "읽지 않음",
+    "remove": "이 알림 삭제",
+    "open_release": "릴리스 열기",
+    "mark_all_read": "모두 읽음으로 표시",
+    "clear_all": "모두 지우기",
+    "log_hint": "릴리스 노트는 GitHub에서 자동으로 가져오므로 새 업데이트가 자동으로 표시됩니다.",
+    "log_loading": "릴리스 노트 불러오는 중",
+    "log_error": "업데이트 로그를 불러올 수 없습니다: {error}",
+    "log_empty": "아직 릴리스가 없습니다",
+    "log_latest": "최신",
+    "log_current": "현재 버전",
+    "log_no_notes": "이 릴리스에는 노트가 없습니다.",
+    "dialog": {
+      "title": "버전 {version} 사용 가능",
+      "body": "현재 {current}을(를) 사용 중입니다. 아래 내용은 모두 릴리스 페이지의 정보입니다.",
+      "published": "{date} 게시",
+      "notes": "업데이트 로그",
+      "later": "나중에",
+      "hint": "알림 종의 업데이트 로그에서 언제든 다시 볼 수 있습니다."
+    },
+    "update": {
+      "button": "지금 업데이트",
+      "resolving": "릴리스 검색 중",
+      "downloading": "설치 파일 다운로드 중",
+      "verifying": "다운로드한 파일 확인 중",
+      "installing": "업데이트 설치 중",
+      "restarting": "앱 다시 시작 중",
+      "failed": "업데이트를 완료하지 못했습니다: {error}"
+    },
+    "items": {
+      "update_available": {
+        "title": "새 버전 {version}",
+        "body": "릴리스 페이지를 열어 다운로드하세요. 현재 {current}을(를) 사용 중입니다."
+      },
+      "quest_completed": {
+        "title": "퀘스트 완료",
+        "body": "{name}이(가) 완료되었습니다."
+      },
+      "quest_failed": {
+        "title": "퀘스트 실패",
+        "body": "{name}: {error}"
+      },
+      "new_quests": {
+        "title": "새 퀘스트",
+        "body": "목록에 새 퀘스트 {count}개를 추가했습니다."
+      },
+      "error": {
+        "title": "예기치 않은 오류",
+        "body": "{error}"
+      }
     }
   },
   "toast": {

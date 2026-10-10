@@ -4,6 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Minus, Square, X, Copy } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useVersionStore } from '@/stores/version'
+import AppMark from '@/components/icons/AppMark.vue'
 
 const { t } = useI18n()
 const appWindow = getCurrentWindow()
@@ -67,7 +68,7 @@ async function handleDragStart(e: MouseEvent) {
       class="flex-1 flex items-center gap-2 px-3 h-full cursor-default"
       @mousedown="handleDragStart"
     >
-        <img src="/icons/32x32.png" alt="logo" class="w-4 h-4 pointer-events-none" />
+        <AppMark label="" aria-hidden="true" class="h-4 w-4 shrink-0 pointer-events-none" />
         <span class="text-xs font-medium text-muted-foreground pointer-events-none">
           Auto Quest Complete Discord <span class="opacity-70 ml-1">v{{ versionStore.currentVersion }}</span>
         </span>

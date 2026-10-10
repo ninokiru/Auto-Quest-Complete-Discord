@@ -258,6 +258,7 @@
     "about_warning": "Avertissement : L'utilisation de cet outil peut enfreindre les conditions d'utilisation de Discord. Utilisez à vos propres risques.",
     "check_prerelease": "Recevez les mises à jour bêta",
     "check_prerelease_desc": "Incluez les versions préliminaires lors de la recherche de mises à jour.",
+    "restore_update_reminder": "Afficher à nouveau la fenêtre de mise à jour",
     "feedback": "Signaler un problème",
     "website": "Site Web",
     "credits": "Crédits",
@@ -575,6 +576,64 @@
       "open_settings": "Ouvrir les paramètres",
       "fix_in_settings": "Corriger dans les paramètres",
       "change_mode": "Changer de mode"
+    }
+  },
+  "notify": {
+    "bell": "Notifications",
+    "bell_unread": "{count} notifications non lues",
+    "tab_inbox": "Notifications",
+    "tab_log": "Journal des mises à jour",
+    "empty": "Aucune notification pour le moment",
+    "unread": "Non lues",
+    "remove": "Supprimer cette notification",
+    "open_release": "Ouvrir la version",
+    "mark_all_read": "Tout marquer comme lu",
+    "clear_all": "Tout effacer",
+    "log_hint": "Les notes de version proviennent de GitHub, les nouvelles mises à jour s'affichent donc automatiquement.",
+    "log_loading": "Chargement des notes de version",
+    "log_error": "Impossible de charger le journal des mises à jour : {error}",
+    "log_empty": "Aucune version trouvée pour le moment",
+    "log_latest": "Dernière",
+    "log_current": "Votre version",
+    "log_no_notes": "Cette version n'a pas de notes.",
+    "dialog": {
+      "title": "La version {version} est disponible",
+      "body": "Vous utilisez {current}. Tout ce qui suit provient de la page de la version.",
+      "published": "Publiée le {date}",
+      "notes": "Journal des mises à jour",
+      "later": "Plus tard",
+      "hint": "Vous pouvez relire ceci dans le journal des mises à jour de la cloche de notifications."
+    },
+    "update": {
+      "button": "Mettre à jour",
+      "resolving": "Recherche de la version",
+      "downloading": "Téléchargement de l’installeur",
+      "verifying": "Vérification du fichier téléchargé",
+      "installing": "Installation de la mise à jour",
+      "restarting": "Redémarrage de l’application",
+      "failed": "Impossible de terminer la mise à jour : {error}"
+    },
+    "items": {
+      "update_available": {
+        "title": "Nouvelle version {version}",
+        "body": "Ouvrez la page de la version pour la télécharger. Vous utilisez {current}."
+      },
+      "quest_completed": {
+        "title": "Quête terminée",
+        "body": "{name} est terminée."
+      },
+      "quest_failed": {
+        "title": "Échec de la quête",
+        "body": "{name} : {error}"
+      },
+      "new_quests": {
+        "title": "Nouvelles quêtes disponibles",
+        "body": "{count} nouvelles quêtes ajoutées à votre liste."
+      },
+      "error": {
+        "title": "Erreur inattendue",
+        "body": "{error}"
+      }
     }
   },
   "toast": {

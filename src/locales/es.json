@@ -258,6 +258,7 @@
     "about_warning": "Advertencia: El uso de esta herramienta puede violar los Términos de Servicio de Discord. Úsala bajo tu propio riesgo.",
     "check_prerelease": "Recibir actualizaciones beta",
     "check_prerelease_desc": "Incluir versiones preliminares al buscar actualizaciones.",
+    "restore_update_reminder": "Mostrar de nuevo la ventana de actualización",
     "feedback": "Reportar problema",
     "website": "Sitio web",
     "credits": "Créditos",
@@ -575,6 +576,64 @@
       "open_settings": "Abrir ajustes",
       "fix_in_settings": "Corregir en ajustes",
       "change_mode": "Cambiar modo"
+    }
+  },
+  "notify": {
+    "bell": "Notificaciones",
+    "bell_unread": "{count} notificaciones no leídas",
+    "tab_inbox": "Notificaciones",
+    "tab_log": "Registro de actualizaciones",
+    "empty": "Aún no hay notificaciones",
+    "unread": "No leídas",
+    "remove": "Quitar esta notificación",
+    "open_release": "Abrir la versión",
+    "mark_all_read": "Marcar todo como leído",
+    "clear_all": "Borrar todo",
+    "log_hint": "Las notas de la versión provienen de GitHub, así que las nuevas actualizaciones aparecen solas.",
+    "log_loading": "Cargando notas de la versión",
+    "log_error": "No se pudo cargar el registro de actualizaciones: {error}",
+    "log_empty": "Aún no se encontraron versiones",
+    "log_latest": "Última",
+    "log_current": "Tu versión",
+    "log_no_notes": "Esta versión no tiene notas.",
+    "dialog": {
+      "title": "La versión {version} está disponible",
+      "body": "Estás usando {current}. Todo lo siguiente proviene de la página de la versión.",
+      "published": "Publicada el {date}",
+      "notes": "Registro de actualizaciones",
+      "later": "Ahora no",
+      "hint": "Puedes volver a leerlo en el registro de actualizaciones de la campana de notificaciones."
+    },
+    "update": {
+      "button": "Actualizar ahora",
+      "resolving": "Buscando la versión",
+      "downloading": "Descargando el instalador",
+      "verifying": "Comprobando el archivo descargado",
+      "installing": "Instalando la actualización",
+      "restarting": "Reiniciando la aplicación",
+      "failed": "No se pudo completar la actualización: {error}"
+    },
+    "items": {
+      "update_available": {
+        "title": "Nueva versión {version}",
+        "body": "Abre la página de la versión para descargarla. Estás usando {current}."
+      },
+      "quest_completed": {
+        "title": "Misión completada",
+        "body": "{name} se completó."
+      },
+      "quest_failed": {
+        "title": "Misión fallida",
+        "body": "{name}: {error}"
+      },
+      "new_quests": {
+        "title": "Nuevas misiones disponibles",
+        "body": "Se añadieron {count} misiones nuevas a tu lista."
+      },
+      "error": {
+        "title": "Error inesperado",
+        "body": "{error}"
+      }
     }
   },
   "toast": {

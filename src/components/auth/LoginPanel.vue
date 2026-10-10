@@ -16,6 +16,7 @@ import {
 } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import AppMark from '@/components/icons/AppMark.vue'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -634,7 +635,7 @@ watch(() => questsStore.cdpPort, () => {
 
     <div class="login-brand-stage flex justify-center py-2 sm:py-4">
       <div class="flex items-center gap-3 sm:gap-4">
-        <img src="/icons/logo.png" :alt="t('general.title')" class="h-12 w-12 select-none sm:h-14 sm:w-14" />
+        <AppMark class="h-12 w-12 select-none sm:h-14 sm:w-14" :label="t('general.title')" />
         <div>
           <h2 id="login-heading" class="text-2xl font-semibold tracking-tight sm:text-3xl">
             {{ t('general.welcome') }}

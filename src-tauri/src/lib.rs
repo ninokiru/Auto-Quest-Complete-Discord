@@ -19,6 +19,7 @@ mod rate_limit;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod runtime_bridge;
 mod runtime_identity;
+mod self_update;
 mod simulation_history;
 #[cfg(windows)]
 #[cfg_attr(debug_assertions, allow(dead_code))]
@@ -2737,6 +2738,7 @@ pub fn run() {
             capture_discord_headers_cdp,
             navigate_discord_spa,
             platform_capabilities::get_platform_capabilities,
+            self_update::start_self_update,
             runtime_identity::get_runtime_identity_status,
             runtime_identity::get_runtime_identity_audit
         ])

@@ -258,6 +258,7 @@
     "about_warning": "Uyarı: Bu aracın kullanılması Discord Hizmet Şartlarını ihlal edebilir. Riski size ait olmak üzere kullanın.",
     "check_prerelease": "Beta Güncellemelerini Alın",
     "check_prerelease_desc": "Güncellemeleri kontrol ederken yayın öncesi sürümleri dahil edin.",
+    "restore_update_reminder": "Güncelleme penceresini tekrar göster",
     "feedback": "Sorunu Bildir",
     "website": "Web sitesi",
     "credits": "Kredi",
@@ -575,6 +576,64 @@
       "open_settings": "Ayarları Aç",
       "fix_in_settings": "Ayarlar'da düzelt",
       "change_mode": "Modu Değiştir"
+    }
+  },
+  "notify": {
+    "bell": "Bildirimler",
+    "bell_unread": "{count} okunmamış bildirim",
+    "tab_inbox": "Bildirimler",
+    "tab_log": "Güncelleme günlüğü",
+    "empty": "Henüz bildirim yok",
+    "unread": "Okunmamış",
+    "remove": "Bu bildirimi kaldır",
+    "open_release": "Sürüm sayfasını aç",
+    "mark_all_read": "Tümünü okundu işaretle",
+    "clear_all": "Tümünü temizle",
+    "log_hint": "Sürüm notları otomatik olarak GitHub'dan alınır, bu yüzden yeni güncellemeler kendiliğinden görünür.",
+    "log_loading": "Sürüm notları yükleniyor",
+    "log_error": "Güncelleme günlüğü yüklenemedi: {error}",
+    "log_empty": "Henüz sürüm bulunamadı",
+    "log_latest": "En yeni",
+    "log_current": "Sizin sürümünüz",
+    "log_no_notes": "Bu sürümün notları yok.",
+    "dialog": {
+      "title": "{version} sürümü kullanılabilir",
+      "body": "Şu anda {current} kullanıyorsunuz. Aşağıdaki her şey sürüm sayfasından geliyor.",
+      "published": "Yayınlanma: {date}",
+      "notes": "Güncelleme günlüğü",
+      "later": "Şimdi değil",
+      "hint": "Bunu daha sonra bildirim zilindeki güncelleme günlüğünden tekrar okuyabilirsiniz."
+    },
+    "update": {
+      "button": "Şimdi güncelle",
+      "resolving": "Sürüm aranıyor",
+      "downloading": "Yükleyici indiriliyor",
+      "verifying": "İndirilen dosya doğrulanıyor",
+      "installing": "Güncelleme yükleniyor",
+      "restarting": "Uygulama yeniden başlatılıyor",
+      "failed": "Güncelleme tamamlanamadı: {error}"
+    },
+    "items": {
+      "update_available": {
+        "title": "Yeni sürüm {version}",
+        "body": "İndirmek için sürüm sayfasını açın. Şu anda {current} kullanıyorsunuz."
+      },
+      "quest_completed": {
+        "title": "Görev tamamlandı",
+        "body": "{name} bitti."
+      },
+      "quest_failed": {
+        "title": "Görev başarısız",
+        "body": "{name}: {error}"
+      },
+      "new_quests": {
+        "title": "Yeni görevler kullanılabilir",
+        "body": "Listenize {count} yeni görev eklendi."
+      },
+      "error": {
+        "title": "Beklenmeyen hata",
+        "body": "{error}"
+      }
     }
   },
   "toast": {

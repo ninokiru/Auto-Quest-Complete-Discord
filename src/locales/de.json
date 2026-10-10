@@ -258,6 +258,7 @@
     "about_warning": "Warnung: Die Verwendung dieses Tools verstößt möglicherweise gegen die Nutzungsbedingungen von Discord. Die Nutzung erfolgt auf eigene Gefahr.",
     "check_prerelease": "Erhalten Sie Beta-Updates",
     "check_prerelease_desc": "Beziehen Sie bei der Suche nach Updates auch Vorabversionen mit ein.",
+    "restore_update_reminder": "Update-Dialog erneut anzeigen",
     "feedback": "Problem melden",
     "website": "Website",
     "credits": "Credits",
@@ -575,6 +576,64 @@
       "open_settings": "Öffnen Sie Einstellungen",
       "fix_in_settings": "In den Einstellungen beheben",
       "change_mode": "Modus ändern"
+    }
+  },
+  "notify": {
+    "bell": "Benachrichtigungen",
+    "bell_unread": "{count} ungelesene Benachrichtigungen",
+    "tab_inbox": "Benachrichtigungen",
+    "tab_log": "Update-Protokoll",
+    "empty": "Noch keine Benachrichtigungen",
+    "unread": "Ungelesen",
+    "remove": "Diese Benachrichtigung entfernen",
+    "open_release": "Release öffnen",
+    "mark_all_read": "Alle als gelesen markieren",
+    "clear_all": "Alle löschen",
+    "log_hint": "Versionshinweise stammen von GitHub, neue Updates erscheinen daher automatisch.",
+    "log_loading": "Versionshinweise werden geladen",
+    "log_error": "Update-Protokoll konnte nicht geladen werden: {error}",
+    "log_empty": "Noch keine Releases gefunden",
+    "log_latest": "Neueste",
+    "log_current": "Deine Version",
+    "log_no_notes": "Dieses Release hat keine Hinweise.",
+    "dialog": {
+      "title": "Version {version} ist verfügbar",
+      "body": "Du verwendest {current}. Alles unten stammt von der Release-Seite.",
+      "published": "Veröffentlicht am {date}",
+      "notes": "Update-Protokoll",
+      "later": "Nicht jetzt",
+      "hint": "Du kannst dies erneut im Update-Protokoll in der Benachrichtigungsglocke nachlesen."
+    },
+    "update": {
+      "button": "Jetzt aktualisieren",
+      "resolving": "Die Veröffentlichung wird gesucht",
+      "downloading": "Der Installer wird heruntergeladen",
+      "verifying": "Die heruntergeladene Datei wird geprüft",
+      "installing": "Das Update wird installiert",
+      "restarting": "Die App wird neu gestartet",
+      "failed": "Das Update konnte nicht abgeschlossen werden: {error}"
+    },
+    "items": {
+      "update_available": {
+        "title": "Neue Version {version}",
+        "body": "Öffne die Release-Seite, um sie herunterzuladen. Du verwendest {current}."
+      },
+      "quest_completed": {
+        "title": "Quest abgeschlossen",
+        "body": "{name} wurde abgeschlossen."
+      },
+      "quest_failed": {
+        "title": "Quest fehlgeschlagen",
+        "body": "{name}: {error}"
+      },
+      "new_quests": {
+        "title": "Neue Quests verfügbar",
+        "body": "{count} neue Quests zu deiner Liste hinzugefügt."
+      },
+      "error": {
+        "title": "Unerwarteter Fehler",
+        "body": "{error}"
+      }
     }
   },
   "toast": {

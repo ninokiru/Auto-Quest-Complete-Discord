@@ -42,6 +42,20 @@
   --animate-accordion-up: accordion-up 0.2s ease-out;
 }
 
+/* Installed fonts only, in the order the shipped locales need: Segoe UI Variable
+   covers Latin, Vietnamese and Thai; the CJK families catch zh/ja/ko. No webfont
+   download, because the app runs offline inside the Tauri window. */
+@theme {
+  --font-sans:
+    "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Leelawadee UI",
+    "Noto Sans", "PingFang SC", "Microsoft YaHei", "Hiragino Sans", "Yu Gothic UI",
+    "Malgun Gothic", "Helvetica Neue", Arial, sans-serif;
+  --font-display:
+    "Segoe UI Variable Display", "Segoe UI Semibold", "Segoe UI", system-ui, -apple-system,
+    "Leelawadee UI", "PingFang SC", "Microsoft YaHei", "Yu Gothic UI", "Malgun Gothic",
+    sans-serif;
+}
+
 @utility container {
   margin-inline: auto;
   padding-inline: 2rem;
@@ -82,6 +96,9 @@
 
 @layer base {
   :root {
+    /* Follows the app's own theme class, not the OS preference, so native
+       scrollbars and form controls never render against the opposite scheme. */
+    color-scheme: light;
     --background: 0 0% 100%;
     --foreground: 228 45% 13%;
 
@@ -115,6 +132,7 @@
   }
 
   .dark {
+    color-scheme: dark;
     /* Navy taken from the new artwork (#1B2256), darkened so cards and popovers
        read as surfaces above the page instead of matching it exactly. */
     --background: 231 52% 10%;
@@ -154,6 +172,17 @@
 
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: -0.011em;
   }
 }
 
@@ -214,4 +243,18 @@ html.theme-view-transition::view-transition-new(root) {
 /* Improve dark mode card visibility */
 .dark .border-border\/50 {
   border-color: hsl(var(--border) / 0.8);
+}
+
+/* Motion is decorative here, so it yields to the OS preference. Duration rather
+   than `animation: none` keeps animationend handlers (the About version bubbles)
+   firing, which is what removes those nodes. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

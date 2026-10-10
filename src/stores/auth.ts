@@ -11,6 +11,7 @@ import {
 } from '@/api/tauri'
 import { useQuestsStore } from './quests'
 import { useGameIdleStore } from './gameIdle'
+import { useNotificationsStore } from './notifications'
 import { useI18n } from 'vue-i18n'
 import { useNow } from '@vueuse/core'
 import { getNitroOrbsClaim } from '@/utils/nitroOrbsCountdown'
@@ -210,6 +211,7 @@ export const useAuthStore = defineStore('auth', () => {
 
     // Reset quests store to clear all cached data from previous account
     questsStore.resetForLogout()
+    useNotificationsStore().resetForAccount()
   }
 
   async function fetchNitroProgramReward(force = false) {

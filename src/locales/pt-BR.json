@@ -258,6 +258,7 @@
     "about_warning": "Aviso: o uso desta ferramenta pode violar os Termos de Serviço do Discord. Use por sua conta e risco.",
     "check_prerelease": "Receba atualizações beta",
     "check_prerelease_desc": "Inclua versões de pré-lançamento ao verificar atualizações.",
+    "restore_update_reminder": "Mostrar novamente a janela de atualização",
     "feedback": "Reportar problema",
     "website": "Site",
     "credits": "Créditos",
@@ -575,6 +576,64 @@
       "open_settings": "Abra Configurações",
       "fix_in_settings": "Correção nas configurações",
       "change_mode": "Alterar modo"
+    }
+  },
+  "notify": {
+    "bell": "Notificações",
+    "bell_unread": "{count} notificações não lidas",
+    "tab_inbox": "Notificações",
+    "tab_log": "Registro de atualizações",
+    "empty": "Ainda não há notificações",
+    "unread": "Não lidas",
+    "remove": "Excluir esta notificação",
+    "open_release": "Abrir release",
+    "mark_all_read": "Marcar todas como lidas",
+    "clear_all": "Limpar tudo",
+    "log_hint": "As notas de release vêm do GitHub automaticamente, então as novas atualizações aparecem sozinhas.",
+    "log_loading": "Carregando notas de release",
+    "log_error": "Não foi possível carregar o registro de atualizações: {error}",
+    "log_empty": "Nenhuma release encontrada ainda",
+    "log_latest": "Mais recente",
+    "log_current": "Sua versão",
+    "log_no_notes": "Esta release não tem notas.",
+    "dialog": {
+      "title": "A versão {version} está disponível",
+      "body": "Você está na {current}. Tudo abaixo vem da página da release.",
+      "published": "Publicada em {date}",
+      "notes": "Registro de atualizações",
+      "later": "Agora não",
+      "hint": "Você pode ler isso de novo no registro de atualizações, no sino de notificações."
+    },
+    "update": {
+      "button": "Atualizar agora",
+      "resolving": "Procurando a versão",
+      "downloading": "Baixando o instalador",
+      "verifying": "Verificando o arquivo baixado",
+      "installing": "Instalando a atualização",
+      "restarting": "Reiniciando o aplicativo",
+      "failed": "Não foi possível concluir a atualização: {error}"
+    },
+    "items": {
+      "update_available": {
+        "title": "Nova versão {version}",
+        "body": "Abra a página da release para baixar. Você está na {current}."
+      },
+      "quest_completed": {
+        "title": "Quest concluída",
+        "body": "{name} terminou."
+      },
+      "quest_failed": {
+        "title": "Falha na quest",
+        "body": "{name}: {error}"
+      },
+      "new_quests": {
+        "title": "Novas quests disponíveis",
+        "body": "Adicionadas {count} novas quests à sua lista."
+      },
+      "error": {
+        "title": "Erro inesperado",
+        "body": "{error}"
+      }
     }
   },
   "toast": {

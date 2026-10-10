@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref } from 'vue'
-import { AlertTriangle, CheckCircle2, ExternalLink, Info, Link2, ShieldAlert, Sparkles, XCircle } from 'lucide-vue-next'
+import { AlertTriangle, BellRing, CheckCircle2, ExternalLink, Info, Link2, ShieldAlert, Sparkles, XCircle } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { open } from '@tauri-apps/plugin-shell'
 import {
@@ -20,6 +20,7 @@ import { useVersionStore } from '@/stores/version'
 import SettingsSectionCard from './SettingsSectionCard.vue'
 import SettingsStatusPanel from './SettingsStatusPanel.vue'
 import SettingsSwitch from './SettingsSwitch.vue'
+import AppMark from '@/components/icons/AppMark.vue'
 import { cn } from '@/lib/utils'
 import { settingToneClass } from './settingTones'
 import { isDebugModeEnabled, persistDebugMode } from '@/utils/debugMode'
@@ -180,11 +181,11 @@ onUnmounted(clearTapResetTimer)
             title="Version Info"
           >
             Auto Quest Complete Discord v{{ versionStore.currentVersion }}
-            <img
+            <AppMark
               v-for="bubble in logoBubbles"
               :key="bubble.id"
-              src="/icons/logo.png"
-              alt=""
+              label=""
+              aria-hidden="true"
               class="logo-bubble pointer-events-none absolute bottom-0 left-1/2 z-50 -ml-4 h-8 w-8"
               :style="bubble.style"
               @animationend="removeBubble(bubble.id)"
@@ -273,6 +274,23 @@ onUnmounted(clearTapResetTimer)
               @update:model-value="versionStore.setCheckPreRelease"
             />
           </div>
+        </div>
+
+        <!-- Postponing an update silences that tag forever, so the only way back is
+             here. The row hides itself once there is nothing to restore. -->
+        <div
+          v-if="versionStore.dismissedUpdateTags.length > 0 && versionStore.hasUpdate"
+          class="rounded-lg border px-4 py-3"
+        >
+          <Button
+            variant="outline"
+            size="sm"
+            class="gap-2"
+            @click="versionStore.restoreUpdateReminder()"
+          >
+            <BellRing class="h-3.5 w-3.5" />
+            {{ t('settings.restore_update_reminder') }}
+          </Button>
         </div>
 
         <SettingsStatusPanel tone="warning" :icon="AlertTriangle">

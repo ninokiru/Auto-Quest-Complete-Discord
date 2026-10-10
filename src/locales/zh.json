@@ -260,6 +260,7 @@
     "about_warning": "警告：使用此工具可能违反 Discord 的服务条款。请自行承担风险。",
     "check_prerelease": "接收测试版更新",
     "check_prerelease_desc": "检查更新时包含预发布版本。",
+    "restore_update_reminder": "重新显示更新弹窗",
     "feedback": "问题反馈",
     "website": "官方网站",
     "credits": "致谢",
@@ -577,6 +578,64 @@
       "open_settings": "打开设置",
       "fix_in_settings": "前往设置修复",
       "change_mode": "切换模式"
+    }
+  },
+  "notify": {
+    "bell": "通知",
+    "bell_unread": "{count} 条未读通知",
+    "tab_inbox": "通知",
+    "tab_log": "更新日志",
+    "empty": "暂无通知",
+    "unread": "未读",
+    "remove": "删除此通知",
+    "open_release": "打开发布页",
+    "mark_all_read": "全部标为已读",
+    "clear_all": "清空全部",
+    "log_hint": "更新说明会自动从 GitHub 获取，新版本会自行显示。",
+    "log_loading": "正在加载更新说明",
+    "log_error": "无法加载更新日志：{error}",
+    "log_empty": "暂未找到发布版本",
+    "log_latest": "最新",
+    "log_current": "当前版本",
+    "log_no_notes": "此版本没有更新说明。",
+    "dialog": {
+      "title": "发现新版本 {version}",
+      "body": "你当前使用的是 {current}。以下内容均来自发布页。",
+      "published": "发布于 {date}",
+      "notes": "更新日志",
+      "later": "稍后再说",
+      "hint": "你可以随时在通知铃铛的更新日志中重新查看。"
+    },
+    "update": {
+      "button": "立即更新",
+      "resolving": "正在查找版本发布",
+      "downloading": "正在下载安装程序",
+      "verifying": "正在检查已下载的文件",
+      "installing": "正在安装更新",
+      "restarting": "正在重新启动应用",
+      "failed": "无法完成更新：{error}"
+    },
+    "items": {
+      "update_available": {
+        "title": "新版本 {version}",
+        "body": "打开发布页即可下载。你当前使用的是 {current}。"
+      },
+      "quest_completed": {
+        "title": "任务已完成",
+        "body": "{name} 已完成。"
+      },
+      "quest_failed": {
+        "title": "任务失败",
+        "body": "{name}：{error}"
+      },
+      "new_quests": {
+        "title": "有新任务",
+        "body": "已向你的列表添加 {count} 个新任务。"
+      },
+      "error": {
+        "title": "意外错误",
+        "body": "{error}"
+      }
     }
   },
   "toast": {

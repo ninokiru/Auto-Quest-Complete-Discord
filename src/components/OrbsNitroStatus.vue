@@ -5,6 +5,8 @@ import { useQuestsStore } from '@/stores/quests'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { RotateCw } from 'lucide-vue-next'
+import BoostIcon from '@/components/icons/BoostIcon.vue'
+import TokenIcon from '@/components/icons/TokenIcon.vue'
 import { cn } from '@/lib/utils'
 
 const { t, locale } = useI18n()
@@ -72,15 +74,10 @@ const compactClaimText = computed(() => {
 <template>
   <div
     v-if="showOrbs || showNitro"
-    class="orbs-nitro-status inline-flex min-h-[4.5rem] w-fit max-w-full items-center gap-3 rounded-full border border-violet-500/20 bg-violet-500/10 px-4 py-2.5 text-violet-700 transition-colors hover:bg-violet-500/[0.13] dark:text-violet-300"
+    class="orbs-nitro-status inline-flex min-h-[4.5rem] w-fit max-w-full items-center gap-3 rounded-full border border-primary/20 bg-primary/10 px-4 py-2.5 text-primary transition-colors hover:bg-primary/15"
   >
     <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-background/65 shadow-sm">
-      <img
-        :src="showOrbs ? '/icons/orbs.png' : '/icons/nitro.svg'"
-        alt=""
-        class="h-5 w-5 object-contain"
-        aria-hidden="true"
-      />
+      <component :is="showOrbs ? TokenIcon : BoostIcon" class="h-5 w-5" />
     </span>
 
     <div class="min-w-0">
@@ -109,13 +106,7 @@ const compactClaimText = computed(() => {
         :class="['mt-1 flex min-w-0 items-center gap-1 text-[10px] leading-tight', !showOrbs && 'mt-0']"
         :title="claimText || t('home.nitro_next_orbs_title')"
       >
-        <img
-          v-if="showOrbs"
-          src="/icons/nitro.svg"
-          alt=""
-          class="h-3 w-3 shrink-0 object-contain"
-          aria-hidden="true"
-        />
+        <BoostIcon v-if="showOrbs" class="h-3 w-3 shrink-0" />
         <span :class="['shrink-0 font-semibold', authStore.nitroStatus?.class]">
           {{ authStore.nitroStatus?.label }}
         </span>

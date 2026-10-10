@@ -260,6 +260,7 @@
     "about_warning": "Warning: Using this tool may violate Discord's Terms of Service. Use at your own risk.",
     "check_prerelease": "Receive Beta Updates",
     "check_prerelease_desc": "Include pre-release versions when checking for updates.",
+    "restore_update_reminder": "Show the update dialog again",
     "feedback": "Report Issue",
     "website": "Website",
     "credits": "Credits",
@@ -579,7 +580,64 @@
       "change_mode": "Change Mode"
     }
   },
-  "toast": {
+  "notify": {
+    "bell": "Notifications",
+    "bell_unread": "{count} unread notifications",
+    "tab_inbox": "Notifications",
+    "tab_log": "Update log",
+    "empty": "No notifications yet",
+    "unread": "Unread",
+    "remove": "Remove this notification",
+    "open_release": "Open release",
+    "mark_all_read": "Mark all as read",
+    "clear_all": "Clear all",
+    "log_hint": "Release notes come from GitHub, so new updates appear by themselves.",
+    "log_loading": "Loading release notes",
+    "log_error": "Could not load the update log: {error}",
+    "log_empty": "No releases found yet",
+    "log_latest": "Latest",
+    "log_current": "Your version",
+    "log_no_notes": "This release has no notes.",
+    "dialog": {
+      "title": "Version {version} is available",
+      "body": "You are on {current}. Everything below comes from the release page.",
+      "published": "Published {date}",
+      "notes": "Update log",
+      "later": "Not now",
+      "hint": "You can read this again from the update log in the notification bell."
+    },
+    "update": {
+      "button": "Update now",
+      "resolving": "Looking up the release",
+      "downloading": "Downloading the installer",
+      "verifying": "Checking the downloaded file",
+      "installing": "Installing the update",
+      "restarting": "Restarting the app",
+      "failed": "Could not finish the update: {error}"
+    },
+    "items": {
+      "update_available": {
+        "title": "New version {version}",
+        "body": "Open the release page to download it. You are on {current}."
+      },
+      "quest_completed": {
+        "title": "Quest completed",
+        "body": "{name} finished."
+      },
+      "quest_failed": {
+        "title": "Quest failed",
+        "body": "{name}: {error}"
+      },
+      "new_quests": {
+        "title": "New quests available",
+        "body": "Added {count} new quests to your list."
+      },
+      "error": {
+        "title": "Unexpected error",
+        "body": "{error}"
+      }
+    }
+  },  "toast": {
     "error": "Error",
     "warning": "Warning",
     "info": "Notice",

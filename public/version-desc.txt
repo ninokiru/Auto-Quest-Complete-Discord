@@ -2,35 +2,25 @@
 
 Auto-complete Discord **video, stream and game quests** from one window. Tauri 2 + Rust behind the scenes, Vue 3 on the surface, and no cloud service in between: everything runs on your machine.
 
-### What it does
+### What's new in 0.0.3
 
-- **Three ways to sign in** — auto-detect the Discord profiles on your computer, connect over CDP to Discord or Vesktop, or paste a token yourself.
-- **Video & stream quests** — press start once; progress keeps updating in the background while you keep using Discord.
-- **Game quests without the game** — the built-in simulator pretends to be the game client, so nothing has to be downloaded or installed.
-- **Up to 5 quests in parallel** — start several at once and stop any single one of them without touching the others.
-- **Multi-account** — switch between Discord accounts, each with its own quest list and history.
-- **Filters & diagnostics** — filter by reward type and completion state, then use the built-in connection diagnostics when something refuses to start.
-- **16 interface languages** — English, Vietnamese, Chinese (Simplified and Traditional), Japanese, Korean, Russian, Spanish, German, French, Indonesian, Polish, Portuguese (Brazil and Portugal), Thai, Turkish.
+This release is about knowing what is happening — inside the app and about the app itself.
 
-### What's new in 0.0.2
+- **Notification bell in the title bar.** One inbox for everything the app wants you to know: a new version is out, a quest finished, a quest failed, and how many new quests appeared while you were away. Unread count on the icon, per-item actions, mark-all-read and clear-all.
+- **Update log tab.** Right next to the inbox, the release history of this project is read live from the GitHub Releases API — your installed version and the latest one are both labelled, and the notes render as full release text. Refresh it whenever you like.
+- **Update dialog with the changelog built in.** When a newer version exists the dialog opens on its own, shows what changed, and its **Update** button now installs the release for you: it downloads the Windows installer, checks its SHA-256 against what GitHub reports, runs the installer silently, and relaunches the app. You keep your settings and your sign-in.
+- **No more delete-and-reinstall.** Updating overwrites the previous install in place. If you would rather stay on this build for now, postpone — and restore the reminder from **Settings → About** at any time.
+- **Stability.** Errors in the notification, version and release-log paths are caught and surfaced as inbox items instead of breaking the window; a slow version check can no longer overwrite a newer result; the bell follows a language switch immediately.
+- **All 16 interface languages** carry the new strings.
 
-This release is a correctness pass over the parallel-quest engine and the CDP path.
+### How the in-app update works
 
-- **Progress bars finally mean what they say.** Each running quest now carries its own unit, so checkpoint Activities read as `2/3` and timed quests as `1:30 / 3:00` instead of both being treated as seconds.
-- **Cloud-game Activities** take the heartbeat path instead of the game-simulation path, so they start, report and stop correctly in the queue.
-- **Console-only quests are skipped, not stalled** — you get a dialog naming the game rather than a queue that quietly never starts.
-- **Rich presence works again.** The RPC payload now uses the field names and epoch-second timestamp the Discord client actually reads.
-- **Better CDP diagnostics** when an Activity frame is not found: the probe reports how many frames the window loads and which hosts it saw, instead of a bare "no activity frame".
-- **Accessibility and i18n.** Window controls, toasts and dialogs now have real names for screen readers, the exit dialog gained a Cancel button, and 88 previously hard-coded English strings moved into all 16 locales.
-- **Race conditions fixed** in the update check (a slow response can no longer overwrite a newer one) and in the token-extraction panel.
+1. The app compares its own version with the newest release of this repository.
+2. Choosing **Update** downloads the `*-setup.exe` asset over HTTPS from GitHub.
+3. The download's SHA-256 is compared with the digest GitHub publishes for that asset; a mismatch aborts before anything runs.
+4. A small helper waits for this app to quit, runs the installer silently, and starts the new build.
 
-### About this release
-
-Version numbers restart at **0.0.1**. This build is a renamed continuation of `discord-quest-helper` (MIT licensed), rebranded to **Auto Quest Complete Discord** and maintained at [ninokiru/Auto-Quest-Complete-Discord](https://github.com/ninokiru/Auto-Quest-Complete-Discord) — the old numbering does not carry over.
-
-- Application name, window title, executable, installers and data directory all use the new name.
-- Update checks and issue links now point at this repository.
-- Settings are stored under the new identifier, so sign in once again after upgrading.
+Only Windows is self-updating in this release; other platforms still get the release page link. Downloads are restricted to GitHub hosts.
 
 ### Windows SmartScreen / Defender
 
@@ -40,8 +30,8 @@ These binaries are **not code-signed**. The app rewrites its own process identit
 
 | File | Use |
 | --- | --- |
-| `auto-quest-complete-discord-Windows-x64-0.0.2-setup.exe` | Windows installer (NSIS) |
-| `auto-quest-complete-discord-Windows-x64-0.0.2-portable.zip` | Windows portable, no installation |
+| `auto-quest-complete-discord-Windows-x64-0.0.3-setup.exe` | Windows installer (NSIS) |
+| `auto-quest-complete-discord-Windows-x64-0.0.3-portable.zip` | Windows portable, no installation |
 
 This release publishes **Windows x64 only**. macOS (Apple Silicon) and Linux (x86_64 `.deb` / AppImage) builds are still fully supported by the source tree and are compiled and tested in CI — only their release publishing is temporarily switched off to keep a release run on one runner. They will return in a later release. If you need one of them now, build it from source (`pnpm tauri:build`).
 

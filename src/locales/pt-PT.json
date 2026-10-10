@@ -258,6 +258,7 @@
     "about_warning": "Aviso: a utilização desta ferramenta pode violar os Termos de Serviço do Discord. Utilize por sua conta e risco.",
     "check_prerelease": "Receba atualizações beta",
     "check_prerelease_desc": "Inclua versões de pré-lançamento ao verificar atualizações.",
+    "restore_update_reminder": "Voltar a mostrar a janela de atualização",
     "feedback": "Reportar problema",
     "website": "Site",
     "credits": "Créditos",
@@ -575,6 +576,64 @@
       "open_settings": "Abra as Definições",
       "fix_in_settings": "Correção nas definições",
       "change_mode": "Alterar modo"
+    }
+  },
+  "notify": {
+    "bell": "Notificações",
+    "bell_unread": "{count} notificações por ler",
+    "tab_inbox": "Notificações",
+    "tab_log": "Registo de atualizações",
+    "empty": "Ainda não existem notificações",
+    "unread": "Por ler",
+    "remove": "Eliminar esta notificação",
+    "open_release": "Abrir a release",
+    "mark_all_read": "Marcar todas como lidas",
+    "clear_all": "Limpar tudo",
+    "log_hint": "As notas da release são obtidas automaticamente do GitHub, por isso as novas atualizações aparecem sozinhas.",
+    "log_loading": "A carregar as notas da release",
+    "log_error": "Não foi possível carregar o registo de atualizações: {error}",
+    "log_empty": "Ainda não foram encontradas releases",
+    "log_latest": "Mais recente",
+    "log_current": "A sua versão",
+    "log_no_notes": "Esta release não tem notas.",
+    "dialog": {
+      "title": "A versão {version} está disponível",
+      "body": "Está a usar a {current}. Tudo o que se segue vem da página da release.",
+      "published": "Publicada a {date}",
+      "notes": "Registo de atualizações",
+      "later": "Agora não",
+      "hint": "Pode ler isto novamente no registo de atualizações, no sino das notificações."
+    },
+    "update": {
+      "button": "Atualizar agora",
+      "resolving": "A procurar a versão",
+      "downloading": "A transferir o instalador",
+      "verifying": "A verificar o ficheiro transferido",
+      "installing": "A instalar a atualização",
+      "restarting": "A reiniciar a aplicação",
+      "failed": "Não foi possível concluir a atualização: {error}"
+    },
+    "items": {
+      "update_available": {
+        "title": "Nova versão {version}",
+        "body": "Abra a página da release para a descarregar. Está a usar a {current}."
+      },
+      "quest_completed": {
+        "title": "Quest concluída",
+        "body": "A {name} foi concluída."
+      },
+      "quest_failed": {
+        "title": "Falha na quest",
+        "body": "{name}: {error}"
+      },
+      "new_quests": {
+        "title": "Novas quests disponíveis",
+        "body": "Foram adicionadas {count} novas quests à sua lista."
+      },
+      "error": {
+        "title": "Erro inesperado",
+        "body": "{error}"
+      }
     }
   },
   "toast": {

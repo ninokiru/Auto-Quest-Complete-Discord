@@ -258,6 +258,7 @@
     "about_warning": "Cảnh báo: Sử dụng công cụ này có thể vi phạm Điều khoản dịch vụ của Discord. Sử dụng có nguy cơ của riêng bạn.",
     "check_prerelease": "Nhận bản cập nhật Beta",
     "check_prerelease_desc": "Bao gồm các phiên bản tiền phát hành khi kiểm tra các bản cập nhật.",
+    "restore_update_reminder": "Hiện lại hộp thoại cập nhật",
     "feedback": "Báo cáo vấn đề",
     "website": "Trang web",
     "credits": "Tín dụng",
@@ -575,6 +576,64 @@
       "open_settings": "Mở Cài đặt",
       "fix_in_settings": "Khắc phục trong Cài đặt",
       "change_mode": "Thay đổi chế độ"
+    }
+  },
+  "notify": {
+    "bell": "Thông báo",
+    "bell_unread": "{count} thông báo chưa đọc",
+    "tab_inbox": "Thông báo",
+    "tab_log": "Nhật ký cập nhật",
+    "empty": "Chưa có thông báo nào",
+    "unread": "Chưa đọc",
+    "remove": "Xóa thông báo này",
+    "open_release": "Mở trang phát hành",
+    "mark_all_read": "Đánh dấu tất cả đã đọc",
+    "clear_all": "Xóa tất cả",
+    "log_hint": "Ghi chú phát hành được tải tự động từ GitHub, nên bản cập nhật mới sẽ tự xuất hiện.",
+    "log_loading": "Đang tải ghi chú phát hành",
+    "log_error": "Không tải được nhật ký cập nhật: {error}",
+    "log_empty": "Chưa tìm thấy bản phát hành nào",
+    "log_latest": "Mới nhất",
+    "log_current": "Phiên bản của bạn",
+    "log_no_notes": "Bản phát hành này không có ghi chú.",
+    "dialog": {
+      "title": "Đã có phiên bản {version}",
+      "body": "Bạn đang dùng {current}. Mọi thông tin bên dưới đều lấy từ trang phát hành.",
+      "published": "Đăng ngày {date}",
+      "notes": "Nhật ký cập nhật",
+      "later": "Để sau",
+      "hint": "Bạn có thể xem lại nội dung này trong nhật ký cập nhật ở chuông thông báo."
+    },
+    "update": {
+      "button": "Cập nhật ngay",
+      "resolving": "Đang tìm bản phát hành",
+      "downloading": "Đang tải bộ cài đặt",
+      "verifying": "Đang kiểm tra tệp vừa tải",
+      "installing": "Đang cài bản cập nhật",
+      "restarting": "Đang khởi động lại ứng dụng",
+      "failed": "Không hoàn tất được bản cập nhật: {error}"
+    },
+    "items": {
+      "update_available": {
+        "title": "Phiên bản mới {version}",
+        "body": "Mở trang phát hành để tải xuống. Bạn đang dùng {current}."
+      },
+      "quest_completed": {
+        "title": "Hoàn thành nhiệm vụ",
+        "body": "{name} đã hoàn tất."
+      },
+      "quest_failed": {
+        "title": "Nhiệm vụ thất bại",
+        "body": "{name}: {error}"
+      },
+      "new_quests": {
+        "title": "Có nhiệm vụ mới",
+        "body": "Đã thêm {count} nhiệm vụ mới vào danh sách của bạn."
+      },
+      "error": {
+        "title": "Lỗi bất ngờ",
+        "body": "{error}"
+      }
     }
   },
   "toast": {

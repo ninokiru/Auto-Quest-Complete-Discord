@@ -3,6 +3,7 @@ import { Palette } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { Badge } from '@/components/ui/badge'
 import { useQuestsStore } from '@/stores/quests'
+import TokenIcon from '@/components/icons/TokenIcon.vue'
 import SettingsSectionCard from './SettingsSectionCard.vue'
 import SettingsSwitch from './SettingsSwitch.vue'
 import { settingToneClass } from './settingTones'
@@ -21,7 +22,7 @@ const questsStore = useQuestsStore()
     <div class="flex items-center justify-between gap-4 rounded-lg border border-border bg-card p-4 transition-colors hover:bg-muted/40">
       <div class="flex min-w-0 items-start gap-3">
         <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10">
-          <img src="/icons/orbs.png" alt="" class="h-6 w-6 object-contain" />
+          <TokenIcon class="h-6 w-6 text-primary" />
         </div>
         <div class="min-w-0">
           <p class="flex flex-wrap items-center gap-2 text-sm font-semibold">

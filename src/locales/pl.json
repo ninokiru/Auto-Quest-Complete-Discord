@@ -258,6 +258,7 @@
     "about_warning": "Ostrzeżenie: użycie tego narzędzia może naruszyć Warunki korzystania z usługi Discord. Używaj na własne ryzyko.",
     "check_prerelease": "Otrzymuj aktualizacje wersji beta",
     "check_prerelease_desc": "Podczas sprawdzania dostępności aktualizacji uwzględnij wersje wstępne.",
+    "restore_update_reminder": "Pokaż ponownie okno aktualizacji",
     "feedback": "Zgłoś problem",
     "website": "Strona internetowa",
     "credits": "Kredyty",
@@ -575,6 +576,64 @@
       "open_settings": "Otwórz Ustawienia",
       "fix_in_settings": "Napraw w Ustawieniach",
       "change_mode": "Zmień tryb"
+    }
+  },
+  "notify": {
+    "bell": "Powiadomienia",
+    "bell_unread": "{count} nieprzeczytanych powiadomień",
+    "tab_inbox": "Powiadomienia",
+    "tab_log": "Dziennik aktualizacji",
+    "empty": "Brak powiadomień",
+    "unread": "Nieprzeczytane",
+    "remove": "Usuń to powiadomienie",
+    "open_release": "Otwórz wydanie",
+    "mark_all_read": "Oznacz wszystkie jako przeczytane",
+    "clear_all": "Wyczyść wszystko",
+    "log_hint": "Uwagi do wydań pobierane są z GitHub, więc nowe aktualizacje pojawiają się automatycznie.",
+    "log_loading": "Ładowanie uwag do wydań",
+    "log_error": "Nie udało się załadować dziennika aktualizacji: {error}",
+    "log_empty": "Nie znaleziono jeszcze żadnych wydań",
+    "log_latest": "Najnowsze",
+    "log_current": "Twoja wersja",
+    "log_no_notes": "To wydanie nie ma uwag.",
+    "dialog": {
+      "title": "Dostępna jest wersja {version}",
+      "body": "Korzystasz z wersji {current}. Wszystko poniżej pochodzi ze strony wydania.",
+      "published": "Opublikowano {date}",
+      "notes": "Dziennik aktualizacji",
+      "later": "Nie teraz",
+      "hint": "Możesz to przeczytać ponownie w dzienniku aktualizacji pod dzwonkiem powiadomień."
+    },
+    "update": {
+      "button": "Aktualizuj teraz",
+      "resolving": "Wyszukiwanie wydania",
+      "downloading": "Pobieranie instalatora",
+      "verifying": "Sprawdzanie pobranego pliku",
+      "installing": "Instalowanie aktualizacji",
+      "restarting": "Ponowne uruchamianie aplikacji",
+      "failed": "Nie udało się ukończyć aktualizacji: {error}"
+    },
+    "items": {
+      "update_available": {
+        "title": "Nowa wersja {version}",
+        "body": "Otwórz stronę wydania, aby ją pobrać. Korzystasz z wersji {current}."
+      },
+      "quest_completed": {
+        "title": "Zadanie ukończone",
+        "body": "{name} zostało ukończone."
+      },
+      "quest_failed": {
+        "title": "Zadanie nieudane",
+        "body": "{name}: {error}"
+      },
+      "new_quests": {
+        "title": "Dostępne nowe zadania",
+        "body": "Dodano {count} nowych zadań do Twojej listy."
+      },
+      "error": {
+        "title": "Nieoczekiwany błąd",
+        "body": "{error}"
+      }
     }
   },
   "toast": {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, onErrorCaptured, ref, watch } from 'vue'
 import Home from './views/Home.vue'
 import GameSimulator from './views/GameSimulator.vue'
 import Settings from './views/Settings.vue'
@@ -13,8 +13,11 @@ import { useI18n } from 'vue-i18n'
 import { Moon, Sun, Languages } from 'lucide-vue-next'
 import AccountMenu from './components/AccountMenu.vue'
 import AppNavigation, { type AppTab } from './components/AppNavigation.vue'
+import AppMark from './components/icons/AppMark.vue'
 import QuestModeIndicator from './components/QuestModeIndicator.vue'
 import Toaster from './components/Toaster.vue'
+import NotificationCenter from './components/NotificationCenter.vue'
+import UpdateDialog from './components/UpdateDialog.vue'
 import DiscordCdpExitDialog from './components/DiscordCdpExitDialog.vue'
 import LoginPanel from './components/auth/LoginPanel.vue'
 import { persistSettingsSection } from '@/composables/useSettingsNavigation'
@@ -22,6 +25,7 @@ import { supportedLocales } from '@/locales/meta'
 import { isDebugModeEnabled } from '@/utils/debugMode'
 import { notifyQuestFinished } from '@/api/tauri'
 import { setQuestAnnouncer } from '@/utils/questNotifier'
+import { useNotificationsStore } from '@/stores/notifications'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,12 +40,47 @@ const gameIdleStore = useGameIdleStore()
 const authTransitioning = ref(false)
 const immersiveGameIdle = computed(() => currentTab.value === 'game' && (gameIdleStore.isActive || gameIdleStore.loading))
 const showStandardShell = computed(() => (Boolean(authStore.user) || currentTab.value !== 'home') && !immersiveGameIdle.value)
+const notifications = useNotificationsStore()
+
+/**
+ * A silent failure is worse than a loud one. Anything the app does not catch itself —
+ * a rejection in a fire-and-forget call, a component that throws while rendering —
+ * lands in the notification bell so it can be read later, instead of vanishing into a
+ * console nobody has open when the quest "just stops".
+ */
+function reportRuntimeError(error: unknown, source: string) {
+  console.error(`[unhandled:${source}]`, error)
+  const message = error instanceof Error ? error.message : String(error)
+  if (!message || !message.trim()) return
+  notifications.push('error', { error: message })
+}
+
+function handleWindowError(event: ErrorEvent) {
+  // A missing image or font also raises this on the window, without an Error object.
+  // Those are resource misses, not app faults, and would flood the panel.
+  if (event.target !== window && !(event.error instanceof Error)) return
+  reportRuntimeError(event.error ?? event.message, 'window')
+}
+
+function handleRejection(event: PromiseRejectionEvent) {
+  reportRuntimeError(event.reason, 'promise')
+}
+
+onErrorCaptured((error) => {
+  reportRuntimeError(error, 'component')
+  return false
+})
 
 // Theme Logic
 const isDark = ref(true) // Default to dark
 
 // Debug mode state
 const debugModeEnabled = ref(false)
+
+// Releases can land while the window is open; re-check on this interval instead of
+// only at startup.
+const UPDATE_RECHECK_MS = 6 * 60 * 60 * 1000
+let updateRecheckTimer: number | null = null
 
 
 
@@ -148,6 +187,14 @@ onMounted(() => {
   // Check for updates
   const versionStore = useVersionStore()
   versionStore.initialize()
+  // A window can stay open for days, so an update published after launch should still
+  // surface instead of waiting for a restart.
+  updateRecheckTimer = window.setInterval(() => {
+    void versionStore.checkForUpdate()
+  }, UPDATE_RECHECK_MS)
+
+  window.addEventListener('error', handleWindowError)
+  window.addEventListener('unhandledrejection', handleRejection)
 
   // Listen for tab navigation events from toast actions
   window.addEventListener('app:navigate', handleAppNavigate)
@@ -155,6 +202,12 @@ onMounted(() => {
 
 onUnmounted(() => {
   setQuestAnnouncer(null)
+  if (updateRecheckTimer !== null) {
+    window.clearInterval(updateRecheckTimer)
+    updateRecheckTimer = null
+  }
+  window.removeEventListener('error', handleWindowError)
+  window.removeEventListener('unhandledrejection', handleRejection)
   window.removeEventListener('app:navigate', handleAppNavigate)
 })
 
@@ -220,10 +273,9 @@ watch(
           >
             <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
               <div class="app-brand-lockup flex min-w-0 items-center gap-3 px-1">
-                <img
-                  src="/icons/logo.png"
-                  :alt="t('general.title')"
+                <AppMark
                   class="h-10 w-10 shrink-0"
+                  :label="t('general.title')"
                 />
                 <div class="min-w-0">
                   <h1 class="whitespace-nowrap text-lg font-semibold tracking-tight text-foreground">
@@ -270,6 +322,8 @@ watch(
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
+
+                <NotificationCenter />
 
                 <AccountMenu v-if="authStore.user" @logout="authStore.logout" />
               </div>
@@ -327,6 +381,8 @@ watch(
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
+
+                    <NotificationCenter />
                   </div>
                 </div>
               </template>
@@ -346,6 +402,7 @@ watch(
         </main>
       </div>
     </div>
+    <UpdateDialog />
     <Toaster />
   </div>
 </template>

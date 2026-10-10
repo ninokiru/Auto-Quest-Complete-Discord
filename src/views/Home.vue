@@ -676,9 +676,11 @@ const props = defineProps<{
 
 // Open update page in browser
 async function openUpdatePage() {
-  if (versionStore.latestRelease?.html_url) {
-    await open(versionStore.latestRelease.html_url)
-  }
+  const url = versionStore.latestRelease?.html_url
+  if (!url) return
+  // A missing browser handler is not a quest failure, so it is logged rather than
+  // left to reject out of a template click.
+  await open(url).catch(error => console.error('Could not open the release page:', error))
 }
 
 const VIEW_PRESET_STORAGE_KEY = 'questHelper_viewPreset'

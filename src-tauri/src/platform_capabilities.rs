@@ -22,6 +22,10 @@ pub struct PlatformCapabilities {
     pub game_simulation: bool,
     /// Token auto-detection level: `full`, `manual_only`, or `unavailable`.
     pub token_auto_detection: &'static str,
+    /// Whether `self_update::start_self_update` can install a release in place.
+    /// Only the Windows build ships a silent installer; other platforms are pointed
+    /// at the release page instead.
+    pub self_update: bool,
     /// Executable `os` values to try, in priority order, when resolving a
     /// detectable game's simulation executable.
     pub executable_os_priority: Vec<&'static str>,
@@ -46,6 +50,7 @@ impl PlatformCapabilities {
                 launcher_entry: true,
                 game_simulation: true,
                 token_auto_detection: "full",
+                self_update: true,
                 executable_os_priority: vec!["win32"],
                 default_game_quest_mode: "simulate",
             },
@@ -56,6 +61,7 @@ impl PlatformCapabilities {
                 launcher_entry: true,
                 game_simulation: true,
                 token_auto_detection: "full",
+                self_update: false,
                 executable_os_priority: vec!["win32"],
                 default_game_quest_mode: "simulate",
             },
@@ -66,6 +72,7 @@ impl PlatformCapabilities {
                 launcher_entry: true,
                 game_simulation: true,
                 token_auto_detection: "full",
+                self_update: false,
                 executable_os_priority: vec!["linux", "win32"],
                 default_game_quest_mode: "cdp",
             },
@@ -76,6 +83,7 @@ impl PlatformCapabilities {
                 launcher_entry: false,
                 game_simulation: false,
                 token_auto_detection: "unavailable",
+                self_update: false,
                 executable_os_priority: vec!["win32"],
                 default_game_quest_mode: "heartbeat",
             },
@@ -134,6 +142,14 @@ mod tests {
         assert_eq!(caps.default_game_quest_mode, "heartbeat");
         assert_eq!(caps.token_auto_detection, "unavailable");
         assert!(!caps.cdp_launcher && !caps.launcher_entry && !caps.game_simulation);
+    }
+
+    #[test]
+    fn only_windows_can_install_a_release_in_place() {
+        for os in ["windows", "macos", "linux", "freebsd"] {
+            let caps = PlatformCapabilities::for_os(os, "x86_64");
+            assert_eq!(caps.self_update, os == "windows", "{os}");
+        }
     }
 
     #[test]

@@ -13,6 +13,7 @@ import {
 } from '@/utils/questTasks'
 import { resolveSimulationExecutable } from '@/utils/executables'
 import { announceQuestEnd } from '@/utils/questNotifier'
+import { useNotificationsStore } from '@/stores/notifications'
 
 /** Clamp a 0..100 percentage so no consumer renders a value outside its range. */
 function clampProgressPercent(value: number): number {
@@ -578,6 +579,12 @@ export const useQuestsStore = defineStore('quests', () => {
         // Keep unchanged quest props stable; keyed cards retain their local state
         // and only cards whose server data changed need to update.
         const previous = new Map(quests.value.map(quest => [quest.id, quest]))
+        // Report arrivals, not the first list: going from no quests to four is a
+        // login, not four new quests the user needs telling about.
+        if (hasLoadedQuests.value) {
+          const added = response.quests.filter(quest => !previous.has(quest.id)).length
+          if (added > 0) useNotificationsStore().push('new_quests', { count: added })
+        }
         const next = response.quests.map(quest => {
           const existing = previous.get(quest.id)
           return existing && JSON.stringify(existing) === JSON.stringify(quest) ? existing : quest
@@ -749,6 +756,7 @@ export const useQuestsStore = defineStore('quests', () => {
 
     releaseQuestSlot(questId)
     announceQuestEnd(questName)
+    useNotificationsStore().push('quest_completed', { name: questName })
     questQueue.value = questQueue.value.filter(item => item.id !== questId)
     syncPolling()
     if (runningQuests.value.length === 0) cleanupListeners()
@@ -781,6 +789,7 @@ export const useQuestsStore = defineStore('quests', () => {
     }
     releaseQuestSlot(questId)
     announceQuestEnd(questName)
+    useNotificationsStore().push('quest_completed', { name: questName })
     syncPolling()
     if (runningQuests.value.length === 0) cleanupListeners()
     void fetchQuests(true, true)
@@ -807,6 +816,7 @@ export const useQuestsStore = defineStore('quests', () => {
     if (wasQueued) questQueue.value = questQueue.value.filter(item => item.id !== questId)
     error.value = message
     announceQuestEnd(questName, message)
+    useNotificationsStore().push('quest_failed', { name: questName, error: message })
     syncPolling()
     if (runningQuests.value.length === 0) cleanupListeners()
     if (wasQueued) {

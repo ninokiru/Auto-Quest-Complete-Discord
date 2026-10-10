@@ -1036,6 +1036,8 @@ export interface PlatformCapabilities {
   launcherEntry: boolean
   gameSimulation: boolean
   tokenAutoDetection: CapabilityLevel
+  /** Whether this build can install a release over itself and relaunch. */
+  selfUpdate: boolean
   /** Preferred order of GameExecutable.os values when picking an executable. */
   executableOsPriority: string[]
   defaultGameQuestMode: GameQuestMode
@@ -1093,4 +1095,27 @@ export async function prepareAppExit(): Promise<void> {
 
 export async function exitAppNow(): Promise<void> {
   return await invoke('exit_app_now')
+}
+
+// In-app update. The Rust side downloads the release installer, checks the SHA-256
+// GitHub publishes for that asset, and only then arms a helper that waits for this
+// process to leave, installs silently and relaunches. The command resolves once the
+// helper is armed — the caller is responsible for exiting, which is what lets the
+// installer overwrite the running executable.
+export type SelfUpdatePhase = 'resolving' | 'downloading' | 'verifying' | 'installing'
+
+export interface SelfUpdateProgress {
+  phase: SelfUpdatePhase
+  /** Installer size in bytes as GitHub reports it; 0 when the release omits it. */
+  totalBytes: number
+}
+
+export type SelfUpdateHandler = (progress: SelfUpdateProgress) => void
+
+export async function startSelfUpdate(
+  tag: string,
+  onProgress?: SelfUpdateHandler,
+): Promise<void> {
+  const channel = new Channel<SelfUpdateProgress>(progress => onProgress?.(progress))
+  return await invoke('start_self_update', { tag, onProgress: channel })
 }

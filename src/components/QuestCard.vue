@@ -5,6 +5,7 @@ import { useQuestsStore } from '@/stores/quests'
 import { useAuthStore } from '@/stores/auth'
 import QuestDeveloperDetails from '@/components/QuestDeveloperDetails.vue'
 import QuestTaskBadges from '@/components/QuestTaskBadges.vue'
+import TokenIcon from '@/components/icons/TokenIcon.vue'
 import {
   Card,
   CardHeader,
@@ -342,11 +343,9 @@ const requiredTargetText = computed(() =>
                 :alt="rewardName(reward)"
                 class="h-full w-full object-contain"
               />
-              <img
+              <TokenIcon
                 v-else-if="reward.icon === 'orbs'"
-                src="/icons/orbs.png"
-                :alt="rewardName(reward)"
-                class="h-7 w-7 object-contain"
+                class="h-7 w-7 text-primary"
               />
               <Gift v-else class="h-5 w-5 text-pink-400" />
             </div>
@@ -447,11 +446,9 @@ const requiredTargetText = computed(() =>
             class="w-14 h-14 object-contain rounded-md flex-shrink-0"
           />
           <!-- Orbs reward -->
-          <img 
+          <TokenIcon
             v-else-if="reward.icon === 'orbs'"
-            src="/icons/orbs.png"
-            :alt="rewardName(reward)"
-            class="w-14 h-14 object-contain rounded-md flex-shrink-0"
+            class="h-14 w-14 shrink-0 text-primary"
           />
           <!-- Fallback icon -->
           <Gift v-else class="w-10 h-10 text-pink-400 flex-shrink-0" />
