@@ -110,6 +110,10 @@ jobs:
         run: pnpm test
 
       - name: Validate runtime identity policy and audit tools
+        # Without this the Windows matrix entry runs the block in PowerShell, where
+        # only the last command's exit code decides the step, so a failure of the
+        # first two scripts would be a silent pass.
+        shell: bash
         run: |
           pnpm run check:runtime-identity
           pnpm run test:identity-audit

@@ -100,13 +100,15 @@ try {
     );
 
     // Anchored on this crate's own `[[package]]` block so a dependency that
-    // happens to be listed first is never the one rewritten.
+    // happens to be listed first is never the one rewritten. Windows runners check
+    // this file out with CRLF, so the line break between the two fields is matched
+    // as `\r?\n` rather than assumed.
     patch(
         'Cargo.lock',
         resolve(rootDir, 'Cargo.lock'),
-        /(name = "auto-quest-complete-discord"\nversion = ")[^"]+(")/,
+        /(name = "auto-quest-complete-discord"\r?\nversion = ")[^"]+(")/,
         `$1${semver}$2`,
-        (content) => /name = "auto-quest-complete-discord"\nversion = "([^"]+)"/.exec(content)?.[1]
+        (content) => /name = "auto-quest-complete-discord"\r?\nversion = "([^"]+)"/.exec(content)?.[1]
     );
 } catch (error) {
     console.error(`❌ ${error.message}`);
