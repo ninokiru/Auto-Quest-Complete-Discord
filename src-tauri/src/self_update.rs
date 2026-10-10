@@ -437,7 +437,9 @@ mod tests {
 
     #[test]
     fn selects_only_the_windows_installer() {
-        assert!(is_windows_installer("auto-quest-complete-discord-Windows-x64-0.0.3-setup.exe"));
+        assert!(is_windows_installer(
+            "auto-quest-complete-discord-Windows-x64-0.0.3-setup.exe"
+        ));
         assert!(!is_windows_installer(
             "auto-quest-complete-discord-Windows-x64-0.0.3-portable.zip"
         ));
@@ -502,7 +504,10 @@ mod tests {
         for host in ALLOWED_DOWNLOAD_HOSTS {
             let text = format!("https://{host}/a/b");
             let url = reqwest::Url::parse(&text).unwrap();
-            assert!(ensure_allowed_host(&url).is_ok(), "{host} should be allowed");
+            assert!(
+                ensure_allowed_host(&url).is_ok(),
+                "{host} should be allowed"
+            );
         }
 
         // A host that merely ends with an allowed name is not that host.
