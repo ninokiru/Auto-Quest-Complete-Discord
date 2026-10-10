@@ -86,14 +86,16 @@ function fingerprint(kind: NotificationKind, params: NotificationParams): string
   return [kind, params.name ?? '', params.version ?? '', params.current ?? '', params.count ?? '', params.error ?? ''].join('|')
 }
 
-function toNotification(value: unknown): AppNotification | null {
+function toNotification(value: unknown, index: number): AppNotification | null {
   if (value === null || typeof value !== 'object') return null
   const raw = value as Record<string, unknown>
   if (typeof raw.kind !== 'string' || !KINDS.has(raw.kind)) return null
   const createdAt = typeof raw.createdAt === 'number' && Number.isFinite(raw.createdAt) ? raw.createdAt : 0
   if (createdAt <= 0) return null
   return {
-    id: typeof raw.id === 'string' && raw.id ? raw.id : `restored-${createdAt}`,
+    // Two records restored in the same millisecond would otherwise share an id, and
+    // the panel keys on it.
+    id: typeof raw.id === 'string' && raw.id ? raw.id : `restored-${createdAt}-${index}`,
     kind: raw.kind as NotificationKind,
     params: sanitizeParams(raw.params),
     createdAt,

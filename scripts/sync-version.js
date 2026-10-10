@@ -6,6 +6,10 @@
  *   - package.json           (npm "version" field)
  *   - src-tauri/Cargo.toml   (Cargo [package] version)
  *   - src-tauri/tauri.conf.json (Tauri "version" field)
+ *   - Cargo.lock             (the lock entry for this crate)
+ *
+ * The lock file matters because CI builds with `cargo --locked`, which fails
+ * outright when Cargo.toml and Cargo.lock disagree.
  *
  * This ensures the Windows PE binary's FILEVERSION / PRODUCTVERSION
  * and the Rust env!("CARGO_PKG_VERSION") always match the real release
@@ -93,6 +97,16 @@ try {
         /("version"\s*:\s*")[\d.]+(")/,
         `$1${semver}$2`,
         (content) => JSON.parse(content).version
+    );
+
+    // Anchored on this crate's own `[[package]]` block so a dependency that
+    // happens to be listed first is never the one rewritten.
+    patch(
+        'Cargo.lock',
+        resolve(rootDir, 'Cargo.lock'),
+        /(name = "auto-quest-complete-discord"\nversion = ")[^"]+(")/,
+        `$1${semver}$2`,
+        (content) => /name = "auto-quest-complete-discord"\nversion = "([^"]+)"/.exec(content)?.[1]
     );
 } catch (error) {
     console.error(`❌ ${error.message}`);

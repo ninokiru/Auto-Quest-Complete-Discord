@@ -206,10 +206,7 @@ async fn fetch_release(client: &reqwest::Client, tag: &str) -> Result<TaggedRele
     release.context("The release information is unreadable")
 }
 
-async fn download_installer(
-    client: &reqwest::Client,
-    asset: &ReleaseAsset,
-) -> Result<reqwest::Bytes> {
+async fn download_installer(client: &reqwest::Client, asset: &ReleaseAsset) -> Result<Vec<u8>> {
     let address = asset.browser_download_url.clone();
     let parsed = reqwest::Url::parse(&address);
     let url = parsed.context("The download address is not a URL")?;
@@ -236,7 +233,7 @@ async fn download_installer(
     if bytes.len() as u64 > MAX_INSTALLER_BYTES {
         bail!("The downloaded file is larger than an installer should be");
     }
-    Ok(bytes)
+    Ok(bytes.to_vec())
 }
 
 /// An unverified executable never reaches a path at which something could run, so

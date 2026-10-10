@@ -88,6 +88,9 @@ export function parseReleaseNotes(body: unknown): NoteBlock[] {
   let codeLines: string[] | null = null
 
   for (const rawLine of lines) {
+    // Checked before any branch, because closing a fence pushes a block too.
+    if (blocks.length >= MAX_BLOCKS) break
+
     const line = rawLine.slice(0, MAX_LINE)
 
     if (FENCE_RE.test(line)) {
@@ -108,8 +111,6 @@ export function parseReleaseNotes(body: unknown): NoteBlock[] {
       }
       continue
     }
-
-    if (blocks.length >= MAX_BLOCKS) break
 
     const trimmed = line.trim()
     if (!trimmed || RULE_RE.test(trimmed)) continue
@@ -145,7 +146,9 @@ export function parseReleaseNotes(body: unknown): NoteBlock[] {
   }
 
   // An unterminated fence still needs its content shown.
-  if (codeLines !== null && codeLines.length > 0) blocks.push(codeBlock(codeLines))
+  if (codeLines !== null && codeLines.length > 0 && blocks.length < MAX_BLOCKS) {
+    blocks.push(codeBlock(codeLines))
+  }
 
   // A line that was only a markdown comment or only link markup leaves nothing behind,
   // and an empty paragraph would still take vertical space in the panel.

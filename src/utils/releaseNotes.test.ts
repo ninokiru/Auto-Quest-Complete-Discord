@@ -74,7 +74,7 @@ describe('parseReleaseNotes', () => {
 
     expect(blocks.some(block => JSON.stringify(block).includes('internal note'))).toBe(false)
     expect(blocks.some(block => JSON.stringify(block).includes('---'))).toBe(false)
-    expect(blocks.at(-1)?.runs[0].text).toBe('After the table.')
+    expect(blocks[blocks.length - 1]?.runs[0].text).toBe('After the table.')
     expect(blocks[0].runs[0].text).toBe('Column Value')
   })
 
