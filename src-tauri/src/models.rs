@@ -107,6 +107,12 @@ pub struct ManualCdpGameSimulation {
     pub app_id: String,
     pub app_name: String,
     pub cdp_port: u16,
+    /// The account the page was on when the spoof was installed. The desktop
+    /// client keeps showing that account's activity, so another account's Stop
+    /// must not clear this session: a direct-API play quest of the owning
+    /// account still depends on the presence it supplies. `None` is a session
+    /// started before any account was signed in, which any Stop may end.
+    pub owner_account_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -172,7 +172,9 @@
     "reward_orbs_premium": "{base} -> {premium} Orbs",
     "reward_nitro_multiplier": "Nitro {multiplier}",
     "reward_quantity": "{name} x{quantity}",
-    "soft_error_console_only": "{game} only runs on consoles, which this app cannot simulate. Play it on a console and Discord will record the progress."
+    "soft_error_console_only": "{game} only runs on consoles, which this app cannot simulate. Play it on a console and Discord will record the progress.",
+    "background_title": "Quests running on other accounts",
+    "background_hint": "They keep going after you switch accounts. Stop one to end its quest."
   },
   "filter": {
     "type": "Type",
@@ -415,7 +417,15 @@
     "type_app": "App"
   },
   "account": {
-    "select_desc": "Found multiple valid Discord tokens. Please select which account to use:"
+    "select_desc": "Found multiple valid Discord tokens. Please select which account to use:",
+    "switch_title": "Switch account",
+    "active": "Current",
+    "running_quests": "{count} running",
+    "idle": "No quests running",
+    "remove": "Remove account",
+    "add": "Add another account",
+    "add_hint": "Sign in without stopping this account's quests.",
+    "add_action": "Add"
   },
   "dialog": {
     "accept_quests_title": "Accept Quests",

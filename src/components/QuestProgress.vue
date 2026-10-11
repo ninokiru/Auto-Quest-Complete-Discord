@@ -252,8 +252,8 @@ function barStyleFor(local: number, submitted: number): Record<string, string> {
     width: `${local}%`,
     background: bg,
     boxShadow: hasPending
-      ? '0 0 4px 1px hsl(var(--primary) / 0.6), 0 0 8px 2px hsl(var(--primary) / 0.25), 2px 0 6px 1px rgb(74 222 128 / 0.35)'
-      : '0 0 4px 1px hsl(var(--primary) / 0.6), 0 0 8px 2px hsl(var(--primary) / 0.25)',
+      ? '0 1px 3px hsl(var(--primary) / 0.35), 1px 0 5px rgb(74 222 128 / 0.25)'
+      : '0 1px 3px hsl(var(--primary) / 0.35)',
   }
 }
 
@@ -273,13 +273,19 @@ function slotBarStyle(slot: RunningQuest): Record<string, string> {
     class="fixed bottom-5 right-5 z-50 w-[calc(100vw-2rem)] max-w-sm"
     :style="floatingStyle"
   >
-    <button
-      v-if="!expanded"
-      type="button"
-      class="w-full cursor-grab rounded-lg border bg-card px-4 py-3 text-left shadow-lg transition-all hover:-translate-y-0.5 hover:shadow-xl active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      @pointerdown="startDrag"
-      @click="handleCollapsedClick"
-    >
+    <!-- The two states differ a lot in height, so they swap out-and-in rather
+         than flashing straight between them. The clamp re-runs once the new
+         panel has its final size, otherwise a drag-placed widget can expand
+         past the bottom edge. -->
+    <Transition name="float-panel" mode="out-in" @after-enter="reconcileFloatingPosition">
+      <button
+        v-if="!expanded"
+        key="collapsed"
+        type="button"
+        class="w-full cursor-grab rounded-lg border bg-card px-4 py-3 text-left shadow-lg transition-all hover:-translate-y-0.5 hover:shadow-xl active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        @pointerdown="startDrag"
+        @click="handleCollapsedClick"
+      >
       <div class="flex items-center gap-3">
         <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
           <AlertCircle v-if="questsStore.error && questsStore.runningQuests.length === 0" class="h-4 w-4" />
@@ -312,7 +318,7 @@ function slotBarStyle(slot: RunningQuest): Record<string, string> {
       </div>
     </button>
 
-    <Card v-else class="border-border/50 shadow-xl">
+    <Card v-else key="expanded" class="border-border/50 shadow-xl">
       <CardHeader
         class="flex cursor-grab flex-row items-center justify-between space-y-0 pb-3 active:cursor-grabbing"
         @pointerdown="startDrag"
@@ -329,7 +335,7 @@ function slotBarStyle(slot: RunningQuest): Record<string, string> {
       </CardHeader>
       <CardContent>
         <div v-if="runningSlots.length > 0" class="space-y-4">
-          <div class="max-h-[320px] space-y-3 overflow-y-auto pr-1">
+          <TransitionGroup name="slot-row" tag="div" class="max-h-[320px] space-y-3 overflow-y-auto pr-1">
             <div
               v-for="entry in runningSlots"
               :key="entry.slot.questId"
@@ -348,7 +354,7 @@ function slotBarStyle(slot: RunningQuest): Record<string, string> {
                   <Button
                     variant="ghost"
                     size="sm"
-                    class="h-6 px-2 text-destructive hover:text-destructive"
+                    class="h-7 shrink-0 gap-1.5 px-2 text-xs text-error hover:bg-destructive/10 hover:text-error"
                     :disabled="questsStore.stopping"
                     @click="handleStopQuest(entry.slot.questId)"
                   >
@@ -364,7 +370,7 @@ function slotBarStyle(slot: RunningQuest): Record<string, string> {
                 />
               </div>
             </div>
-          </div>
+          </TransitionGroup>
 
           <div class="flex justify-between px-1 text-[10px] text-muted-foreground">
             <div class="flex items-center gap-1">
@@ -393,7 +399,7 @@ function slotBarStyle(slot: RunningQuest): Record<string, string> {
             <Button
               variant="ghost"
               size="sm"
-              class="h-6 px-2 text-destructive hover:text-destructive"
+              class="h-7 shrink-0 gap-1.5 px-2 text-xs text-error hover:bg-destructive/10 hover:text-error"
               @click="questsStore.clearQueue"
             >
               {{ t('general.clear') }}
@@ -415,11 +421,61 @@ function slotBarStyle(slot: RunningQuest): Record<string, string> {
           </div>
         </div>
 
-        <div v-if="questsStore.error" class="mt-4 flex items-start gap-2 rounded border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-500">
+        <div v-if="questsStore.error" class="mt-4 flex items-start gap-2 rounded-lg border border-destructive/25 bg-destructive/10 p-3 text-sm text-error">
           <AlertCircle class="mt-0.5 h-4 w-4 shrink-0" />
           <span class="break-words">{{ questsStore.error }}</span>
         </div>
       </CardContent>
     </Card>
+    </Transition>
   </div>
 </template>
+
+<style scoped>
+/* A quest slot appearing or finishing should ease in rather than snap the
+   panel's height. */
+.slot-row-enter-active,
+.slot-row-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.slot-row-move {
+  transition: transform 0.2s ease;
+}
+.slot-row-enter-from,
+.slot-row-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.float-panel-enter-active {
+  transition:
+    opacity 160ms ease-out,
+    transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.float-panel-leave-active {
+  transition:
+    opacity 110ms ease-in,
+    transform 110ms ease-in;
+}
+.float-panel-enter-from,
+.float-panel-leave-to {
+  opacity: 0;
+  transform: translateY(6px) scale(0.98);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slot-row-enter-active,
+  .slot-row-leave-active,
+  .slot-row-move,
+  .float-panel-enter-active,
+  .float-panel-leave-active {
+    transition: none;
+  }
+  .slot-row-enter-from,
+  .slot-row-leave-to,
+  .float-panel-enter-from,
+  .float-panel-leave-to {
+    transform: none;
+  }
+}
+</style>

@@ -77,7 +77,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Card class="bg-card flex flex-col h-[600px]">
+  <Card class="flex h-[600px] max-h-[calc(100vh-11rem)] flex-col bg-card">
     <CardHeader>
        <CardTitle class="text-lg flex items-center justify-between gap-2">
         <div class="flex items-center gap-2">
@@ -96,12 +96,12 @@ onMounted(async () => {
         </Button>
       </CardTitle>
       <div class="relative mt-2">
-        <Search class="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" aria-hidden="true" />
-        <Input 
-          v-model="searchQuery" 
-          :placeholder="t('game_sim.search')" 
+        <Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+        <Input
+          v-model="searchQuery"
+          :placeholder="t('game_sim.search')"
           :aria-label="t('game_sim.search')"
-          class="pl-8"
+          class="pl-9"
           :disabled="disabled"
         />
       </div>
@@ -112,7 +112,7 @@ onMounted(async () => {
         <Loader2 class="w-6 h-6 animate-spin text-muted-foreground" />
       </div>
       
-      <div v-else-if="error" class="p-3 bg-destructive/10 text-destructive rounded-md text-sm">
+      <div v-else-if="error" class="p-3 bg-destructive/10 text-error rounded-md text-sm">
         {{ error }}
       </div>
 
@@ -156,7 +156,7 @@ onMounted(async () => {
             <div
               v-if="compatibleExeCount(game) !== null"
               class="text-xs font-normal"
-              :class="compatibleExeCount(game) === 0 ? 'text-yellow-500' : 'text-muted-foreground'"
+              :class="compatibleExeCount(game) === 0 ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground'"
             >
               {{ t('game_sim.exe_count', { count: compatibleExeCount(game) }) }}
             </div>

@@ -48,10 +48,10 @@ const kindIcon: Record<NotificationKind, Component> = {
 
 const kindTone: Record<NotificationKind, string> = {
   update_available: 'text-primary',
-  quest_completed: 'text-green-600 dark:text-green-400',
-  quest_failed: 'text-destructive',
+  quest_completed: 'text-green-700 dark:text-green-400',
+  quest_failed: 'text-error',
   new_quests: 'text-primary',
-  error: 'text-amber-600 dark:text-amber-400',
+  error: 'text-amber-700 dark:text-amber-400',
 }
 
 const badgeText = computed(() => {
@@ -231,7 +231,7 @@ const latestTag = computed(() => versionStore.latestRelease?.tag_name ?? '')
           <Button
             variant="ghost"
             size="sm"
-            class="h-7 gap-1.5 text-xs text-muted-foreground hover:text-destructive"
+            class="h-7 gap-1.5 text-xs text-muted-foreground hover:text-error"
             @click="notifications.clearAll()"
           >
             <Trash2 class="h-3.5 w-3.5" />
@@ -262,7 +262,7 @@ const latestTag = computed(() => versionStore.latestRelease?.tag_name ?? '')
             {{ t('notify.log_loading') }}
           </p>
 
-          <p v-else-if="versionStore.releaseLogError" class="py-6 text-center text-xs text-destructive">
+          <p v-else-if="versionStore.releaseLogError" class="py-6 text-center text-xs text-error">
             {{ t('notify.log_error', { error: versionStore.releaseLogError }) }}
           </p>
 
@@ -285,7 +285,7 @@ const latestTag = computed(() => versionStore.latestRelease?.tag_name ?? '')
                 <Badge v-if="release.tag_name.replace(/^v/, '') === currentTag" variant="outline" class="text-[10px] text-muted-foreground">
                   {{ t('notify.log_current') }}
                 </Badge>
-                <span v-if="release.prerelease" class="text-[10px] text-amber-500">{{ t('settings.version_prerelease') }}</span>
+                <span v-if="release.prerelease" class="text-[10px] text-amber-700 dark:text-amber-300">{{ t('settings.version_prerelease') }}</span>
                 <span v-if="formatPublishedDate(release.published_at, appLocale)" class="text-[11px] text-muted-foreground">
                   {{ formatPublishedDate(release.published_at, appLocale) }}
                 </span>

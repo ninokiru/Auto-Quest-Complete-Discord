@@ -31,8 +31,9 @@ import {
   type ProgressUnit,
 } from '@/utils/questProgressDisplay'
 import { getQuestRewardViews, type QuestRewardView } from '@/utils/questRewards'
+import { formatDateTime } from '@/utils/relativeTime'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const props = defineProps<{
   quest: Quest
@@ -126,12 +127,12 @@ const statusLabel = computed(() => {
 
 const statusClass = computed(() => {
   if (isNotAccepted.value) return 'border-gray-400/60 bg-gray-500/10 text-gray-600 dark:text-gray-400'
-  if (isPendingClaim.value) return 'border-orange-400/60 bg-orange-500/10 text-orange-600 dark:text-orange-400'
-  if (isClaimed.value) return 'border-green-500/30 bg-green-500/15 text-green-600 dark:text-green-400'
-  return 'border-sky-400/60 bg-sky-500/10 text-sky-600 dark:text-sky-400' // In Progress
+  if (isPendingClaim.value) return 'border-orange-400/60 bg-orange-500/10 text-orange-700 dark:text-orange-400'
+  if (isClaimed.value) return 'border-green-500/30 bg-green-500/15 text-green-800 dark:text-green-400'
+  return 'border-sky-400/60 bg-sky-500/10 text-sky-700 dark:text-sky-400' // In Progress
 })
 
-const rewardViews = computed(() => getQuestRewardViews(props.quest, authStore.user?.premium_type))
+const rewardViews = computed(() => getQuestRewardViews(props.quest, authStore.user?.premium_type, locale.value))
 const inGameRewards = computed(() => rewardViews.value.filter(reward => reward.kind === 'ingame' && reward.asset))
 const discordRewards = computed(() => rewardViews.value.filter(reward => reward.kind !== 'ingame' || !reward.asset))
 const compactRewardViews = computed(() => rewardViews.value.slice(0, 3))
@@ -162,9 +163,8 @@ const rewardSummary = computed(() => {
 })
 
 function formatDate(dateStr: string): string {
-  if (!dateStr) return 'N/A'
-  const date = new Date(dateStr)
-  return date.toLocaleDateString()
+  if (!dateStr) return t('quest.na')
+  return formatDateTime(dateStr, locale.value, false) || t('quest.na')
 }
 
 function formatExpirySummary(dateStr: string | null | undefined): string {
@@ -229,8 +229,8 @@ const progressBarStyle = computed(() => {
     width: `${local}%`,
     background: bg,
     boxShadow: hasPending
-      ? '0 0 4px 1px hsl(var(--primary) / 0.6), 0 0 8px 2px hsl(var(--primary) / 0.25), 2px 0 6px 1px rgb(74 222 128 / 0.35)'
-      : '0 0 4px 1px hsl(var(--primary) / 0.6), 0 0 8px 2px hsl(var(--primary) / 0.25)',
+      ? '0 1px 3px hsl(var(--primary) / 0.35), 1px 0 5px rgb(74 222 128 / 0.25)'
+      : '0 1px 3px hsl(var(--primary) / 0.35)',
   }
 })
 
@@ -253,8 +253,10 @@ const requiredTargetText = computed(() =>
   <Card
     :aria-busy="busy || undefined"
     :class="[
-      'overflow-hidden border-border/50 transition-all hover:shadow-md',
-      density === 'compact' && 'hover:shadow-sm',
+      'overflow-hidden border-border/50 transition-[border-color,box-shadow,transform] duration-200',
+      density === 'compact'
+        ? 'hover:border-primary/35 hover:shadow-[0_6px_18px_-14px_hsl(var(--foreground)/0.55)]'
+        : 'hover:-translate-y-0.5 hover:shadow-lg',
       (busy || isActiveQuest) && 'border-primary/50',
     ]"
   >
@@ -283,9 +285,9 @@ const requiredTargetText = computed(() =>
                 variant="outline"
                 :class="[
                   density === 'compact' ? 'mb-0.5' : 'mb-1',
-                  questType === 'video' && 'border-sky-400/60 bg-sky-500/10 text-sky-600 dark:text-sky-400',
+                  questType === 'video' && 'border-sky-400/60 bg-sky-500/10 text-sky-700 dark:text-sky-400',
                   questType === 'stream' && 'border-violet-400/60 bg-violet-500/10 text-violet-600 dark:text-violet-400',
-                  questType === 'activity' && !isCloudGameActivity && 'border-amber-400/60 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+                  questType === 'activity' && !isCloudGameActivity && 'border-amber-400/60 bg-amber-500/10 text-amber-700 dark:text-amber-400',
                   isCloudGameActivity && 'border-violet-400/60 bg-violet-500/10 text-violet-600 dark:text-violet-400',
                 ]"
               >
@@ -385,7 +387,7 @@ const requiredTargetText = computed(() =>
             class="absolute inset-y-0 left-0 rounded-full bg-primary transition-all duration-300"
             :style="{
               width: `${progress}%`,
-          boxShadow: progress > 0 ? '0 0 4px 1px hsl(var(--primary) / 0.6), 0 0 8px 2px hsl(var(--primary) / 0.25)' : 'none'
+          boxShadow: progress > 0 ? '0 1px 3px hsl(var(--primary) / 0.35)' : 'none'
             }"
           />
         </div>

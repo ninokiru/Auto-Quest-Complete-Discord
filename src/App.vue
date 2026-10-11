@@ -26,6 +26,7 @@ import { isDebugModeEnabled } from '@/utils/debugMode'
 import { notifyQuestFinished } from '@/api/tauri'
 import { setQuestAnnouncer } from '@/utils/questNotifier'
 import { useNotificationsStore } from '@/stores/notifications'
+import { useQuestsStore } from '@/stores/quests'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,6 +42,7 @@ const authTransitioning = ref(false)
 const immersiveGameIdle = computed(() => currentTab.value === 'game' && (gameIdleStore.isActive || gameIdleStore.loading))
 const showStandardShell = computed(() => (Boolean(authStore.user) || currentTab.value !== 'home') && !immersiveGameIdle.value)
 const notifications = useNotificationsStore()
+const questsStore = useQuestsStore()
 
 /**
  * A silent failure is worse than a loud one. Anything the app does not catch itself —
@@ -202,6 +204,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   setQuestAnnouncer(null)
+  questsStore.stopIdleRefresh()
   if (updateRecheckTimer !== null) {
     window.clearInterval(updateRecheckTimer)
     updateRecheckTimer = null
@@ -229,6 +232,19 @@ function openSettingsSection(section: 'discord_integration' | 'quest_behavior' |
   persistSettingsSection(section)
   currentTab.value = 'settings'
 }
+
+// The quest list is the only source for newly published quests, claim states and
+// the Orbs balance, and it used to refresh on login or a click only — so a window
+// left open went stale. Owned here rather than in Home, which unmounts on a tab
+// switch, and by the login state rather than the quest lifecycle.
+watch(
+  () => Boolean(authStore.user),
+  (authenticated) => {
+    if (authenticated) questsStore.startIdleRefresh()
+    else questsStore.stopIdleRefresh()
+  },
+  { immediate: true }
+)
 
 watch(
   () => Boolean(authStore.user),

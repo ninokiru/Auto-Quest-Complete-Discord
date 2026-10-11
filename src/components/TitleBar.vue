@@ -75,26 +75,26 @@ async function handleDragStart(e: MouseEvent) {
     </div>
 
     <div class="flex h-full">
-      <button 
-        @click="handleMinimize" 
-        class="titlebar-button hover:bg-accent hover:text-accent-foreground inline-flex items-center justify-center h-full w-[46px] transition-colors"
+      <button
+        @click="handleMinimize"
+        class="titlebar-button inline-flex h-full w-[46px] items-center justify-center outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         :aria-label="t('general.minimize')"
       >
         <Minus class="w-4 h-4" />
       </button>
 
-      <button 
-        @click="handleToggleMaximize" 
-        class="titlebar-button hover:bg-accent hover:text-accent-foreground inline-flex items-center justify-center h-full w-[46px] transition-colors"
+      <button
+        @click="handleToggleMaximize"
+        class="titlebar-button inline-flex h-full w-[46px] items-center justify-center outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         :aria-label="isMaximized ? t('general.restore') : t('general.maximize')"
       >
         <Copy v-if="isMaximized" class="w-4 h-4 rotate-180" />
         <Square v-else class="w-3.5 h-3.5" />
       </button>
 
-      <button 
-        @click="handleClose" 
-        class="titlebar-button hover:bg-destructive hover:text-white inline-flex items-center justify-center h-full w-[46px] transition-colors"
+      <button
+        @click="handleClose"
+        class="titlebar-button inline-flex h-full w-[46px] items-center justify-center outline-none text-muted-foreground transition-colors hover:bg-red-700 dark:hover:bg-destructive hover:text-white focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         :aria-label="t('general.close')"
       >
         <X class="w-4 h-4" />

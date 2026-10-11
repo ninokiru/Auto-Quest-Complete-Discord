@@ -43,21 +43,49 @@ onMounted(() => {
       <SettingsNav :selected="selectedSection" @update:selected="setSection" />
 
       <div class="min-w-0">
-        <AccountSettings
-          v-if="selectedSection === 'account'"
-          @navigate-to-home="emit('navigate-to-home')"
-        />
-        <QuestBehaviorSettings v-else-if="selectedSection === 'quest_behavior'" />
-        <DiscordIntegrationSettings v-else-if="selectedSection === 'discord_integration'" />
-        <AppearanceSettings v-else-if="selectedSection === 'appearance'" />
-        <DiagnosticsSettings v-else-if="selectedSection === 'diagnostics'" />
-        <AdvancedSettings v-else-if="selectedSection === 'advanced'" />
-        <AboutSettings
-          v-else
-          @debug-unlocked="emit('debug-unlocked')"
-          @debug-disabled="emit('debug-disabled')"
-        />
+        <Transition name="settings-panel" mode="out-in">
+          <AccountSettings
+            v-if="selectedSection === 'account'"
+            key="account"
+            @navigate-to-home="emit('navigate-to-home')"
+          />
+          <QuestBehaviorSettings v-else-if="selectedSection === 'quest_behavior'" key="quest_behavior" />
+          <DiscordIntegrationSettings v-else-if="selectedSection === 'discord_integration'" key="discord_integration" />
+          <AppearanceSettings v-else-if="selectedSection === 'appearance'" key="appearance" />
+          <DiagnosticsSettings v-else-if="selectedSection === 'diagnostics'" key="diagnostics" />
+          <AdvancedSettings v-else-if="selectedSection === 'advanced'" key="advanced" />
+          <AboutSettings
+            v-else
+            key="about"
+            @debug-unlocked="emit('debug-unlocked')"
+            @debug-disabled="emit('debug-disabled')"
+          />
+        </Transition>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+/* A section swap used to change the whole column instantly; the short slide
+   keeps the nav and the panel reading as one motion. */
+.settings-panel-enter-active,
+.settings-panel-leave-active {
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.settings-panel-enter-from,
+.settings-panel-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-panel-enter-active,
+  .settings-panel-leave-active {
+    transition: none;
+  }
+  .settings-panel-enter-from,
+  .settings-panel-leave-to {
+    transform: none;
+  }
+}
+</style>

@@ -30,10 +30,10 @@
       class="mb-6 p-4 bg-destructive/10 border border-destructive/30 rounded-lg flex items-start gap-3"
     >
       <div class="w-10 h-10 rounded-full bg-destructive/20 flex items-center justify-center shrink-0">
-        <ShieldAlert class="w-5 h-5 text-destructive" />
+        <ShieldAlert class="w-5 h-5 text-error" />
       </div>
       <div class="min-w-0 space-y-1">
-        <p class="font-semibold text-destructive">{{ t('home.enrollment_blocked_title') }}</p>
+        <p class="font-semibold text-error">{{ t('home.enrollment_blocked_title') }}</p>
         <p class="text-sm text-muted-foreground text-pretty">
           {{ t('home.enrollment_blocked_desc', { until: enrollmentBlockedUntilText }) }}
         </p>
@@ -76,7 +76,7 @@
           @complete-game="handleCompleteAllGame"
         />
 
-        <Card v-if="showFilters" class="animate-in slide-in-from-top-2 duration-200">
+        <Card v-if="showFilters" class="animate-in fade-in slide-in-from-top-2 duration-200">
           <CardHeader class="pb-3">
             <div class="flex justify-between items-center gap-3">
               <CardTitle class="text-base">{{ t('home.advanced_filters') }}</CardTitle>
@@ -99,35 +99,32 @@
                   <button
                     @click="advancedFilters.types.video = !advancedFilters.types.video"
                     :class="cn(
-                      'inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors',
-                      advancedFilters.types.video
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border bg-background hover:bg-accent hover:text-accent-foreground'
+                      filterChipClass,
+                      advancedFilters.types.video ? filterChipOnClass : filterChipOffClass,
                     )"
                   >
-                    🎬 {{ t('filter.video') }}
+                    <MonitorPlay class="h-4 w-4 shrink-0" />
+                    {{ t('filter.video') }}
                   </button>
                   <button
                     @click="advancedFilters.types.play = !advancedFilters.types.play"
                     :class="cn(
-                      'inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors',
-                      advancedFilters.types.play
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border bg-background hover:bg-accent hover:text-accent-foreground'
+                      filterChipClass,
+                      advancedFilters.types.play ? filterChipOnClass : filterChipOffClass,
                     )"
                   >
-                    🎮 {{ t('filter.play') }}
+                    <Gamepad2 class="h-4 w-4 shrink-0" />
+                    {{ t('filter.play') }}
                   </button>
                   <button
                     @click="advancedFilters.types.activity = !advancedFilters.types.activity"
                     :class="cn(
-                      'inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors',
-                      advancedFilters.types.activity
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border bg-background hover:bg-accent hover:text-accent-foreground'
+                      filterChipClass,
+                      advancedFilters.types.activity ? filterChipOnClass : filterChipOffClass,
                     )"
                   >
-                    🎯 {{ t('filter.activity') }}
+                    <Activity class="h-4 w-4 shrink-0" />
+                    {{ t('filter.activity') }}
                   </button>
                 </div>
               </div>
@@ -138,45 +135,44 @@
                   <button
                     @click="advancedFilters.rewards.orbs = !advancedFilters.rewards.orbs"
                     :class="cn(
-                      'inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors',
-                      advancedFilters.rewards.orbs
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border bg-background hover:bg-accent hover:text-accent-foreground'
+                      filterChipClass,
+                      advancedFilters.rewards.orbs ? filterChipOnClass : filterChipOffClass,
                     )"
                   >
-                    💎 {{ t('filter.orbs') }}
+                    <Gem class="h-4 w-4 shrink-0" />
+                    {{ t('filter.orbs') }}
                   </button>
                   <button
                     @click="advancedFilters.rewards.avatarDecoration = !advancedFilters.rewards.avatarDecoration"
                     :class="cn(
-                      'inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors',
-                      advancedFilters.rewards.avatarDecoration
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border bg-background hover:bg-accent hover:text-accent-foreground'
+                      filterChipClass,
+                      advancedFilters.rewards.avatarDecoration ? filterChipOnClass : filterChipOffClass,
                     )"
                   >
-                    🌟 {{ t('filter.decoration') }}
+                    <Sparkles class="h-4 w-4 shrink-0" />
+                    {{ t('filter.decoration') }}
                   </button>
                   <button
                     @click="advancedFilters.rewards.ingame = !advancedFilters.rewards.ingame"
                     :class="cn(
-                      'inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors',
-                      advancedFilters.rewards.ingame
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border bg-background hover:bg-accent hover:text-accent-foreground'
+                      filterChipClass,
+                      advancedFilters.rewards.ingame ? filterChipOnClass : filterChipOffClass,
                     )"
                   >
-                    🎁 {{ t('filter.in_game') }}
+                    <Gift class="h-4 w-4 shrink-0" />
+                    {{ t('filter.in_game') }}
                   </button>
                 </div>
               </div>
             </div>
 
-            <label class="flex items-start gap-3 rounded-lg border border-border p-3">
+            <label
+              class="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-background p-3 transition-colors hover:bg-accent/50"
+            >
               <input
                 v-model="advancedFilters.includeExpired"
                 type="checkbox"
-                class="mt-1 h-4 w-4 accent-primary"
+                class="mt-1 h-4 w-4 shrink-0 accent-primary"
               />
               <span class="min-w-0 flex-1">
                 <span class="text-sm font-medium">{{ t('home.include_expired') }}</span>
@@ -188,11 +184,17 @@
           </CardContent>
         </Card>
 
-        <div v-if="!authStore.user" class="text-center py-12">
-           <p class="text-muted-foreground">{{ t('general.login_prompt') }}</p>
+        <div v-if="!authStore.user" class="flex flex-col items-center gap-2 rounded-xl border border-dashed px-4 py-14 text-center">
+          <LogIn class="h-6 w-6 text-muted-foreground/60" />
+          <p class="text-sm text-muted-foreground">{{ t('general.login_prompt') }}</p>
         </div>
 
-        <div v-else-if="questsStore.loading && !questsStore.hasLoadedQuests && questsStore.quests.length === 0" class="text-center py-12 text-muted-foreground" role="status">
+        <div
+          v-else-if="questsStore.loading && !questsStore.hasLoadedQuests && questsStore.quests.length === 0"
+          class="flex flex-col items-center gap-2.5 rounded-xl border border-dashed px-4 py-14 text-center text-sm text-muted-foreground"
+          role="status"
+        >
+          <Loader2 class="h-6 w-6 animate-spin text-primary" />
           {{ t('general.loading') }}
         </div>
         
@@ -250,34 +252,39 @@
                     </Button>
                     <span
                       v-if="claimedNoticeQuestId === quest.id"
-                      class="absolute top-full right-0 mt-1.5 whitespace-nowrap text-[11px] text-green-600 dark:text-green-400 notice-fade"
+                      class="absolute top-full right-0 mt-1.5 whitespace-nowrap text-[11px] text-green-700 dark:text-green-400 notice-fade"
                     >
                       {{ t('home.claim_navigated') }}
                     </span>
                   </div>
-                   <span v-else-if="quest.user_status?.completed_at" class="self-center px-2 text-sm font-medium text-green-500">
+                   <span v-else-if="quest.user_status?.completed_at" class="self-center px-2 text-sm font-medium text-green-700 dark:text-green-400">
                     {{ t('home.completed') }}
                   </span>
                 </Transition>
               </template>
             </QuestCard>
           </TransitionGroup>
-          <div v-if="filteredQuests.length === 0" class="rounded-lg border border-dashed p-8 text-center">
-            <p class="font-medium">{{ emptyStateText }}</p>
-            <div class="mt-3 flex justify-center gap-2">
-              <Button v-if="hasActiveFilters" variant="outline" @click="clearFilters">
+          <div v-if="filteredQuests.length === 0" class="rounded-xl border border-dashed px-4 py-12 text-center">
+            <SearchX class="mx-auto h-6 w-6 text-muted-foreground/60" />
+            <p class="mt-3 text-sm font-medium">{{ emptyStateText }}</p>
+            <div class="mt-4 flex flex-wrap justify-center gap-2">
+              <Button v-if="hasActiveFilters" variant="outline" size="sm" class="h-8 text-xs" @click="clearFilters">
                 {{ t('home.reset_filters') }}
               </Button>
-              <Button v-else-if="selectedPreset !== 'recommended'" variant="outline" @click="backToRecommended">
+              <Button v-else-if="selectedPreset !== 'recommended'" variant="outline" size="sm" class="h-8 text-xs" @click="backToRecommended">
                 {{ t('home.back_to_recommended') }}
               </Button>
-              <Button variant="ghost" @click="refreshQuests">
+              <Button variant="ghost" size="sm" class="h-8 gap-1.5 text-xs" @click="refreshQuests">
+                <RotateCw class="h-3.5 w-3.5" />
                 {{ t('general.refresh') }}
               </Button>
             </div>
           </div>
         </template>
       </div>
+
+      <!-- The only way to stop a quest the page no longer drives. -->
+      <BackgroundQuestsPanel />
     </div>
 
     <QuestProgress />
@@ -294,7 +301,7 @@
                 <div v-for="quest in pendingAcceptQuests" :key="quest.id" class="flex justify-between items-center gap-4">
                   <span class="font-medium truncate flex-1">{{ quest.config.messages.quest_name }}</span>
                   <span class="text-muted-foreground whitespace-nowrap font-mono">
-                    {{ quest.config.expires_at ? new Date(quest.config.expires_at).toLocaleString() : t('quest.no_expiry') }}
+                    {{ quest.config.expires_at ? formatDateTime(quest.config.expires_at, locale) : t('quest.no_expiry') }}
                   </span>
                 </div>
               </div>
@@ -374,7 +381,7 @@
           </DialogDescription>
         </DialogHeader>
         <div class="space-y-4 py-2">
-          <div class="p-3 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 rounded-md text-sm border border-yellow-500/20 space-y-1">
+          <div class="p-3 bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 rounded-md text-sm border border-yellow-500/20 space-y-1">
             <p>{{ t('game_sim.no_exe_hint') }}</p>
             <p>{{ t('game_sim.no_exe_custom_warning') }}</p>
           </div>
@@ -422,7 +429,7 @@
               <p>{{ t('home.activity_launch_step4') }}</p>
             </div>
           </div>
-          <div v-if="activityLaunchError" class="p-3 bg-destructive/10 text-destructive rounded-md text-sm border border-destructive/20">
+          <div v-if="activityLaunchError" class="p-3 bg-destructive/10 text-error rounded-md text-sm border border-destructive/20">
             {{ activityLaunchError }}
           </div>
         </div>
@@ -523,7 +530,7 @@
         </AlertDialogHeader>
         <!-- A failed "switch to CDP" keeps the dialog open; surface the reason
              here since the modal hides the page-level error banner. -->
-        <p v-if="questsStore.error" class="text-sm text-destructive">
+        <p v-if="questsStore.error" class="text-sm text-error">
           {{ questsStore.error }}
         </p>
         <AlertDialogFooter>
@@ -562,6 +569,7 @@ import { useQuestsStore } from '@/stores/quests'
 import { useVersionStore } from '@/stores/version'
 import { useGameIdleStore } from '@/stores/gameIdle'
 import OrbsNitroStatus from '@/components/OrbsNitroStatus.vue'
+import BackgroundQuestsPanel from '@/components/BackgroundQuestsPanel.vue'
 import QuestListHeader from '@/components/home/QuestListHeader.vue'
 import QuestViewTabs from '@/components/home/QuestViewTabs.vue'
 import QuestCard from '@/components/QuestCard.vue'
@@ -593,7 +601,21 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
-import { ArrowUpCircle, ExternalLink, Gift, Loader2, ShieldAlert } from 'lucide-vue-next'
+import {
+  Activity,
+  ArrowUpCircle,
+  ExternalLink,
+  Gamepad2,
+  Gem,
+  Gift,
+  Loader2,
+  LogIn,
+  MonitorPlay,
+  RotateCw,
+  SearchX,
+  ShieldAlert,
+  Sparkles,
+} from 'lucide-vue-next'
 import { Input } from '@/components/ui/input'
 import { useI18n } from 'vue-i18n'
 import { open } from '@tauri-apps/plugin-shell'
@@ -611,6 +633,7 @@ import {
   isVideoTask,
 } from '@/utils/questTasks'
 import { getQuestRewardCategory } from '@/utils/questRewards'
+import { formatDateTime } from '@/utils/relativeTime'
 import { getSimulationExecutables } from '@/utils/executables'
 import { useToastStore } from '@/stores/toast'
 import { navigateToTab } from '@/utils/navigate'
@@ -623,7 +646,16 @@ import {
   useHomeQuestState,
 } from '@/composables/useHomeQuestState'
 
-const { t } = useI18n()
+/** A filter chip's frame, then exactly one state class per render. The state
+ *  strings stay separate so tailwind-merge cannot leave an idle hover tint
+ *  painted over an active chip. */
+const filterChipClass =
+  'inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring'
+const filterChipOnClass = 'border-primary bg-primary/10 text-primary hover:bg-primary/15'
+const filterChipOffClass =
+  'border-border bg-background text-foreground hover:bg-accent hover:text-accent-foreground'
+
+const { t, locale } = useI18n()
 const authStore = useAuthStore()
 const questsStore = useQuestsStore()
 const gameIdleStore = useGameIdleStore()
@@ -843,7 +875,7 @@ const { buckets: questBuckets, recommendedQuests } = useHomeQuestState(
 // it turns into) clears itself once Discord's cooldown expires without a refetch.
 const enrollmentBlockedUntilText = computed(() => {
   const until = questBuckets.value.blockedUntil
-  return until ? new Date(until).toLocaleString() : ''
+  return until ? formatDateTime(until, locale.value) : ''
 })
 
 function selectPreset(preset: QuestViewPreset) {
@@ -1352,9 +1384,9 @@ function getExpiryColor(dateStr: string | null | undefined): string {
   const now = new Date()
   const diff = expires.getTime() - now.getTime()
   
-  if (diff < 0) return 'text-destructive font-bold' // Expired
-  if (diff < 1000 * 60 * 60 * 24) return 'text-orange-500' // < 24h
-  return 'text-green-600'
+  if (diff < 0) return 'text-error font-bold' // Expired
+  if (diff < 1000 * 60 * 60 * 24) return 'text-orange-700 dark:text-orange-400' // < 24h
+  return 'text-green-700 dark:text-green-400'
 }
 
 function getExpiryText(dateStr: string | null | undefined): string {
@@ -1363,7 +1395,7 @@ function getExpiryText(dateStr: string | null | undefined): string {
   const now = new Date()
   const diff = expires.getTime() - now.getTime()
 
-  const dateText = expires.toLocaleString()
+  const dateText = formatDateTime(dateStr, locale.value)
 
   if (diff < 0) return `${dateText} (${t('quest.expired')})`
 

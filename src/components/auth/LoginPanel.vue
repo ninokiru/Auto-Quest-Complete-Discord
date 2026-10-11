@@ -136,7 +136,7 @@ const cdpStatusClass = computed(() => ({
   ready: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
   starting: 'bg-amber-500/10 text-amber-700 dark:text-amber-300',
   offline: 'bg-muted text-muted-foreground',
-  error: 'bg-destructive/10 text-destructive',
+  error: 'bg-destructive/10 text-error',
 })[cdpAvailability.value])
 const progressText = computed(() => {
   if (!progress.value) return ''
@@ -702,7 +702,7 @@ watch(() => questsStore.cdpPort, () => {
         <div class="login-methods">
           <article v-if="showAutoDetect" class="login-method bg-primary/[0.045] px-5 py-5 sm:px-6 sm:py-6">
             <div class="login-method-copy flex min-w-0 items-start gap-4">
-              <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/12 text-primary">
+              <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                 <HardDriveDownload class="h-5 w-5" />
               </div>
               <div class="min-w-0">
@@ -808,7 +808,7 @@ watch(() => questsStore.cdpPort, () => {
             aria-atomic="true"
             :class="[
               'progress-status-row flex items-start gap-2.5 border-t px-5 py-3 text-sm sm:px-6',
-              progress.state === 'error' && 'bg-destructive/5 text-destructive',
+              progress.state === 'error' && 'bg-destructive/5 text-error',
               progress.state === 'success' && 'bg-emerald-500/5 text-emerald-700 dark:text-emerald-300',
               (progress.state === 'running' || progress.state === 'waiting' || progress.state === 'neutral') && 'text-muted-foreground',
             ]"

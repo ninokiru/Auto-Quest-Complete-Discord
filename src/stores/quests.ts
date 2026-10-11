@@ -26,6 +26,17 @@ interface QueueItem extends Quest {
   selectedExeName?: string
 }
 
+/**
+ * A quest the backend tracks that this page is not driving: a direct-API task
+ * started for another account, which keeps running across an account switch
+ * because its task holds that account's own client.
+ */
+export interface AccountQuestTask {
+  accountId: string | null
+  questId: string
+  state: QuestTaskStatus['state']
+}
+
 export type RunningQuestType = 'video' | 'stream' | 'game' | 'activity'
 
 /**
@@ -646,6 +657,18 @@ export const useQuestsStore = defineStore('quests', () => {
    *  down the same quest — or another quest's work. */
   const claimedCompletions = new Set<string>()
 
+  /** Quests another account is running, kept in step with the backend registry. */
+  const accountTasks = ref<AccountQuestTask[]>([])
+
+  /** The registry read that is currently awaiting, if any. */
+  let statusReadInFlight: Promise<void> | null = null
+
+  /** Tasks are addressed by the pair (account, quest id), because two accounts
+   *  can each run their own enrollment of the same quest. */
+  function accountTaskKey(accountId: string | null, questId: string): string {
+    return `${accountId ?? ''}|${questId}`
+  }
+
   function errorMessage(value: unknown): string {
     return value instanceof Error ? value.message : String(value)
   }
@@ -686,10 +709,29 @@ export const useQuestsStore = defineStore('quests', () => {
    * can be missed entirely (a completion that lands while a stop is in flight),
    * so every running quest is reconciled here by id — with several quests this
    * registry is the only way to tell which one finished or failed.
+   *
+   * Ownership decides the routing, not the id: a record the backend does not
+   * credit to this account is another account's work, whether or not this page
+   * happens to run a quest of the same id. Those are reported in `accountTasks`
+   * and left alone, because their client, activity and history segment are not
+   * this account's to tear down.
    */
-  async function pollQuestTaskStatuses() {
+  function pollQuestTaskStatuses(): Promise<void> {
+    // The idle tick and the run poll read the same registry. A read that spans a
+    // tick would run both against the same previous list, so a foreign ending
+    // would be announced twice; the shared in-flight read keeps one pass per set
+    // of results.
+    if (statusReadInFlight) return statusReadInFlight
+    const inFlight = readQuestTaskStatuses().finally(() => {
+      if (statusReadInFlight === inFlight) statusReadInFlight = null
+    })
+    statusReadInFlight = inFlight
+    return inFlight
+  }
+
+  async function readQuestTaskStatuses() {
     const tracked = runningQuests.value.filter(slot => slot.hasBackendTask)
-    if (tracked.length === 0) return
+    if (tracked.length === 0 && accountTasks.value.length === 0) return
     let statuses: QuestTaskStatus[]
     try {
       statuses = await getQuestTaskStatuses()
@@ -697,14 +739,102 @@ export const useQuestsStore = defineStore('quests', () => {
       console.error('Failed to read quest task statuses:', statusError)
       return
     }
+    const localIds = new Set(tracked.map(slot => slot.questId))
+    const reportedRunning = new Set(
+      accountTasks.value.map(task => accountTaskKey(task.accountId, task.questId)),
+    )
+    const running: AccountQuestTask[] = []
     for (const status of statuses) {
-      if (status.state === 'running') continue
-      if (!tracked.some(slot => slot.questId === status.questId)) continue
-      await handleQuestEnd(
-        status.questId,
-        status.state === 'failed' ? status.error ?? undefined : undefined
+      // Only a record the backend says this account owns can end a local slot.
+      // Another account can run the same quest id at the same time, and the two
+      // records differ by nothing but ownership, so the registry's order cannot
+      // tell them apart.
+      if (localIds.has(status.questId) && status.own) {
+        if (status.state === 'running') continue
+        await handleQuestEnd(
+          status.questId,
+          status.state === 'failed' ? status.error ?? undefined : undefined
+        )
+        continue
+      }
+      const key = accountTaskKey(status.accountId, status.questId)
+      if (status.state === 'running') {
+        running.push({ accountId: status.accountId, questId: status.questId, state: status.state })
+        continue
+      }
+      // Only a task this page saw running reports an ending: the backend keeps a
+      // finished record until Stop, so an old one must not re-announce itself.
+      if (!reportedRunning.has(key)) continue
+      const questName = questDisplayName(status.questId)
+      announceQuestEnd(questName, status.error ?? undefined)
+      useNotificationsStore().push(
+        status.state === 'failed' ? 'quest_failed' : 'quest_completed',
+        status.state === 'failed' ? { name: questName, error: status.error ?? undefined } : { name: questName },
       )
     }
+    accountTasks.value = running
+  }
+
+  /**
+   * Prepare the store for another account taking over the page.
+   *
+   *  The quests this page was driving are not stopped: a direct-API task posts
+   *  with the client it captured at start, so it carries on for the account that
+   *  began it. Their slots still have to leave `runningQuests`, or the next
+   *  account's progress panel would show another account's quest and its Stop
+   *  would tear down work the page no longer owns. Everything cached per account
+   *  is dropped, and the fetch generations are bumped so an in-flight request of
+   *  the account being left cannot commit into this one's list.
+   */
+  function resetForAccountSwitch(leavingAccountId: string | null) {
+    const carried = [...accountTasks.value]
+    for (const slot of runningQuests.value) {
+      if (!slot.hasBackendTask) continue
+      const key = accountTaskKey(leavingAccountId, slot.questId)
+      if (carried.some(task => accountTaskKey(task.accountId, task.questId) === key)) continue
+      carried.push({ accountId: leavingAccountId, questId: slot.questId, state: 'running' })
+    }
+    accountTasks.value = carried
+    questsFetchGeneration++
+    orbsFetchGeneration++
+    queueGeneration++
+    questsFetchInFlight = null
+    quests.value = []
+    excludedQuests.value = []
+    questEnrollmentBlockedUntil.value = null
+    lastQuestsFetchTime.value = 0
+    loading.value = false
+    refreshing.value = false
+    hasLoadedQuests.value = false
+    error.value = null
+    orbsBalance.value = null
+    orbsBalanceFetchedAt.value = null
+    orbsBalanceLoading.value = false
+    orbsBalanceError.value = null
+    runningQuests.value = []
+    claimedCompletions.clear()
+    questQueue.value = []
+    isQueueRunning.value = false
+    startingQuestId.value = null
+    softError.value = null
+    queuePauseReason.value = null
+    lastPlayRequest.value = null
+    stopping.value = false
+    detectableGames.value = []
+    fetchingGames.value = false
+    cdpAvailable.value = false
+    stopProgressSimulation()
+    cleanupListeners()
+    stopPolling()
+  }
+
+  /** Stop one quest that another account is running. `accountId` is what keeps
+   *  the cancel from hitting this account's quest of the same id. */
+  async function stopAccountQuest(task: AccountQuestTask): Promise<void> {
+    await stopQuest(task.questId, task.accountId)
+    accountTasks.value = accountTasks.value.filter(
+      item => accountTaskKey(item.accountId, item.questId) !== accountTaskKey(task.accountId, task.questId),
+    )
   }
 
   /**
@@ -936,6 +1066,36 @@ export const useQuestsStore = defineStore('quests', () => {
     }
     pollingTimerCadence = 0
     pollingInFlight = false
+  }
+
+  /** Logged in with nothing running, the quest list is the only source for newly
+   *  published quests, claim states, and the Orbs balance. Own timer, so the
+   *  teardown a running quest does (`cleanupListeners` stops the poll) cannot
+   *  silently freeze the list at whatever was fetched at login. */
+  const IDLE_REFRESH_MS = 10000
+  let idleRefreshTimer: ReturnType<typeof setInterval> | null = null
+
+  function startIdleRefresh() {
+    if (idleRefreshTimer) return
+    idleRefreshTimer = setInterval(() => {
+      // A running quest's poll refetches the list on its own cadence; yield to it
+      // instead of issuing the same request twice as often.
+      if (pollingTimer || stopping.value) return
+      void fetchQuests(true, true)
+      // A quest another account is running has no local slot, so nothing else
+      // reads the backend registry once this page's own quests have ended.
+      void pollQuestTaskStatuses().catch(() => undefined)
+      if (showOrbsBalance.value) {
+        // The panel surfaces `orbsBalanceError`; a background tick must not reject.
+        void fetchOrbsBalance(true).catch(() => {})
+      }
+    }, IDLE_REFRESH_MS)
+  }
+
+  function stopIdleRefresh() {
+    if (!idleRefreshTimer) return
+    clearInterval(idleRefreshTimer)
+    idleRefreshTimer = null
   }
 
   /**
@@ -1455,8 +1615,10 @@ export const useQuestsStore = defineStore('quests', () => {
     }
   }
 
-  /** Stop everything: every running quest, the queue, and the manual CDP game
-   *  simulation. Use `stopRunningQuest` to end a single quest in parallel. */
+  /** Stop this account: its running quests, the queue, and the manual CDP game
+   *  simulation. Another account's quests keep running and end from
+   *  `BackgroundQuestsPanel`. Use `stopRunningQuest` to end a single quest in
+   *  parallel. */
   async function stop() {
     stopping.value = true
     console.log('questsStore.stop() called')
@@ -1487,9 +1649,10 @@ export const useQuestsStore = defineStore('quests', () => {
       // listeners, polling and active state must be torn down regardless.
       const stopFailures: string[] = []
 
-      // Cancel every backend task and the manual CDP session in one call, before
-      // the processes go away, so no quest loop re-publishes an activity that is
-      // already being torn down.
+      // Cancel this account's backend tasks and the manual CDP session in one
+      // call, before the processes go away, so no quest loop re-publishes an
+      // activity that is already being torn down. Logout and app exit reach
+      // `stopAllGameSimulations` first, which ends every account's work.
       try {
         await stopQuest()
       } catch {
@@ -1866,6 +2029,7 @@ export const useQuestsStore = defineStore('quests', () => {
     orbsBalanceError.value = null
     runningQuests.value = []
     claimedCompletions.clear()
+    accountTasks.value = []
     questQueue.value = []
     isQueueRunning.value = false
     stopping.value = false
@@ -1880,6 +2044,7 @@ export const useQuestsStore = defineStore('quests', () => {
     stopProgressSimulation()
     cleanupListeners()
     stopPolling()
+    stopIdleRefresh()
   }
 
   // Check CDP availability and auto-fallback if mode is 'cdp' but CDP isn't reachable
@@ -1992,6 +2157,9 @@ export const useQuestsStore = defineStore('quests', () => {
     activeQuestTargetDuration,
     localProgress, // Export local progress
     runningQuests,
+    accountTasks,
+    resetForAccountSwitch,
+    stopAccountQuest,
     maxParallelQuests: MAX_PARALLEL_QUESTS,
     speedMultiplier,
     heartbeatInterval,
@@ -2007,6 +2175,8 @@ export const useQuestsStore = defineStore('quests', () => {
     isQueueRunning,
     fetchQuests,
     fetchOrbsBalance,
+    startIdleRefresh,
+    stopIdleRefresh,
     updateQuestEnrollment,
     startVideo,
     startStream,

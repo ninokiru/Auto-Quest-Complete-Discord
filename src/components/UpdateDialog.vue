@@ -175,7 +175,7 @@ watch(() => versionStore.pendingUpdateTag, (tag) => {
         <span>{{ phaseText }}</span>
         <span v-if="sizeText" class="text-xs">· {{ sizeText }}</span>
       </p>
-      <p v-else-if="updateError" class="text-sm text-destructive">
+      <p v-else-if="updateError" class="text-sm text-error">
         {{ t('notify.update.failed', { error: updateError }) }}
       </p>
       <p v-else class="text-xs text-muted-foreground">{{ t('notify.dialog.hint') }}</p>

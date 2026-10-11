@@ -286,9 +286,9 @@ onBeforeUnmount(() => {
 
     <div v-if="!immersive" class="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted-foreground">
       <span>{{ t('game_idle.candidate_count', { count: candidateCount }) }}</span>
-      <span v-if="!auth.user" class="text-amber-600 dark:text-amber-300">{{ t('game_idle.sign_in_required') }}</span>
-      <span v-else-if="configError" class="text-destructive">{{ t(`game_idle.${configError}_error`) }}</span>
-      <span v-else-if="idle.mode === 'cdp' && !quests.cdpAvailable" class="text-amber-600 dark:text-amber-300">{{ t('game_idle.cdp_unavailable') }}</span>
+      <span v-if="!auth.user" class="text-amber-700 dark:text-amber-300">{{ t('game_idle.sign_in_required') }}</span>
+      <span v-else-if="configError" class="text-error">{{ t(`game_idle.${configError}_error`) }}</span>
+      <span v-else-if="idle.mode === 'cdp' && !quests.cdpAvailable" class="text-amber-700 dark:text-amber-300">{{ t('game_idle.cdp_unavailable') }}</span>
     </div>
 
     <div v-if="idle.error || idle.status?.warning" class="idle-warning" role="status">

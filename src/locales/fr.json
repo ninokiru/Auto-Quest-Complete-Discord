@@ -170,7 +170,9 @@
     "reward_orbs_premium": "{base} -> {premium} Orbs",
     "reward_nitro_multiplier": "Nitro {multiplier}",
     "reward_quantity": "{name} x{quantity}",
-    "soft_error_console_only": "{game} ne fonctionne que sur consoles, ce que cette application ne peut pas simuler. Jouez-y sur une console et Discord enregistrera votre progression."
+    "soft_error_console_only": "{game} ne fonctionne que sur consoles, ce que cette application ne peut pas simuler. Jouez-y sur une console et Discord enregistrera votre progression.",
+    "background_title": "Quêtes en cours sur d’autres comptes",
+    "background_hint": "Elles continuent après le changement de compte. Arrêtez-en une pour mettre fin à sa quête."
   },
   "filter": {
     "type": "Type",
@@ -413,7 +415,15 @@
     "type_app": "Application"
   },
   "account": {
-    "select_desc": "Plusieurs jetons Discord valides ont été trouvés. Veuillez sélectionner le compte à utiliser :"
+    "select_desc": "Plusieurs jetons Discord valides ont été trouvés. Veuillez sélectionner le compte à utiliser :",
+    "switch_title": "Changer de compte",
+    "active": "Actuel",
+    "running_quests": "{count} en cours",
+    "idle": "Aucune quête en cours",
+    "remove": "Supprimer le compte",
+    "add": "Ajouter un autre compte",
+    "add_hint": "Connectez-vous sans arrêter les quêtes de ce compte.",
+    "add_action": "Ajouter"
   },
   "dialog": {
     "accept_quests_title": "Accepter Quests",

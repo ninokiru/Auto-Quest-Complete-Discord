@@ -172,7 +172,7 @@ onUnmounted(clearTapResetTimer)
     >
         <div class="flex flex-wrap items-center gap-2">
           <span
-            class="relative cursor-pointer select-none text-base font-semibold text-foreground transition-transform active:scale-95"
+            class="relative cursor-pointer select-none rounded-sm text-base font-semibold text-foreground outline-none transition-transform active:scale-95 focus-visible:ring-2 focus-visible:ring-ring"
             role="button"
             tabindex="0"
             @click="handleVersionTapWithBubble"

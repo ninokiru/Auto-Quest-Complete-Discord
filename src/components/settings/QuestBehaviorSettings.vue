@@ -119,9 +119,10 @@ onMounted(() => {
         <Label>{{ t('settings.game_quest_mode') }}</Label>
         <div class="grid gap-3 md:grid-cols-2">
           <button
+            type="button"
             @click="questsStore.gameQuestMode = 'simulate'"
             :class="cn(
-              'rounded-lg border-2 p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-sm',
+              'rounded-lg border-2 p-4 text-left outline-none transition-all hover:-translate-y-0.5 hover:shadow-sm focus-visible:ring-2 focus-visible:ring-ring',
               questsStore.gameQuestMode === 'simulate'
                 ? 'border-primary bg-primary/10 text-primary'
                 : 'border-border bg-card hover:border-primary/40 hover:bg-primary/5',
@@ -140,7 +141,7 @@ onMounted(() => {
               <Badge
                 v-if="questsStore.gameQuestMode === 'simulate'"
                 variant="outline"
-                :class="cn('shrink-0 text-[10px]', settingToneClass.primary.badge)"
+                :class="cn('shrink-0 text-[10px]', settingToneClass.primary.badge, 'bg-background')"
               >
                 {{ t('settings.status_ok') }}
               </Badge>
@@ -148,9 +149,10 @@ onMounted(() => {
           </button>
 
           <button
+            type="button"
             @click="questsStore.cdpAvailable ? questsStore.gameQuestMode = 'cdp' : navigateToTab('settings', 'discord_integration')"
             :class="cn(
-              'rounded-lg border-2 p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-sm',
+              'rounded-lg border-2 p-4 text-left outline-none transition-all hover:-translate-y-0.5 hover:shadow-sm focus-visible:ring-2 focus-visible:ring-ring',
               questsStore.gameQuestMode === 'cdp'
                 ? 'border-emerald-500 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
                 : questsStore.cdpAvailable
@@ -277,7 +279,7 @@ onMounted(() => {
             <Copy v-else class="h-3.5 w-3.5" />
           </Button>
         </div>
-        <p v-if="simulationDirectoryError" class="text-sm text-destructive">{{ simulationDirectoryError }}</p>
+        <p v-if="simulationDirectoryError" class="text-sm text-error">{{ simulationDirectoryError }}</p>
         <div class="flex flex-wrap gap-2">
           <Button variant="outline" :class="cn('gap-2', settingToneClass.info.buttonSoft)" @click="selectSimulationDirectory">
             <FolderOpen class="h-4 w-4" />

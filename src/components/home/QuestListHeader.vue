@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { Filter, RotateCw, Search } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
@@ -50,19 +49,27 @@ const emit = defineEmits<{
 
         <Button
           variant="outline"
-          :class="cn('gap-2', (showFilters || activeFilterCount > 0) && 'border-primary text-primary')"
+          :class="cn(
+            'gap-2',
+            (showFilters || activeFilterCount > 0)
+              ? 'border-primary/50 bg-primary/[0.06] text-primary hover:bg-primary/[0.1] hover:text-primary'
+              : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+          )"
           @click="emit('toggleFilters')"
         >
           <Filter class="h-4 w-4" />
           {{ t('home.advanced_filters') }}
-          <Badge v-if="activeFilterCount > 0" variant="secondary" class="ml-1 h-5 px-1.5">
+          <span
+            v-if="activeFilterCount > 0"
+            class="ml-0.5 rounded-full bg-primary/15 px-1.5 text-[10px] font-semibold leading-4 text-primary tabular-nums"
+          >
             {{ activeFilterCount }}
-          </Badge>
+          </span>
         </Button>
 
         <Button
           variant="outline"
-          class="gap-2"
+          class="gap-2 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
           :disabled="refreshDisabled"
           @click="emit('refresh')"
         >

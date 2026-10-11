@@ -170,7 +170,9 @@
     "reward_orbs_premium": "จาก {base} เป็น {premium} Orbs",
     "reward_nitro_multiplier": "Nitro {multiplier}",
     "reward_quantity": "{name} x{quantity}",
-    "soft_error_console_only": "{game} มีให้เล่นบนคอนโซลเท่านั้นซึ่งแอปนี้ไม่สามารถจำลองได้ โปรดเล่นบนคอนโซลแล้ว Discord จะบันทึกความคืบหน้าให้"
+    "soft_error_console_only": "{game} มีให้เล่นบนคอนโซลเท่านั้นซึ่งแอปนี้ไม่สามารถจำลองได้ โปรดเล่นบนคอนโซลแล้ว Discord จะบันทึกความคืบหน้าให้",
+    "background_title": "เควสต์ที่กำลังทำงานในบัญชีอื่น",
+    "background_hint": "เควสต์ยังทำงานต่อหลังสลับบัญชี หยุดหนึ่งรายการเพื่อจบเควสต์นั้น"
   },
   "filter": {
     "type": "ประเภท",
@@ -413,7 +415,15 @@
     "type_app": "แอพ"
   },
   "account": {
-    "select_desc": "พบโทเค็น Discord ที่ถูกต้องหลายรายการ โปรดเลือกบัญชีที่จะใช้:"
+    "select_desc": "พบโทเค็น Discord ที่ถูกต้องหลายรายการ โปรดเลือกบัญชีที่จะใช้:",
+    "switch_title": "สลับบัญชี",
+    "active": "ปัจจุบัน",
+    "running_quests": "{count} กำลังทำงาน",
+    "idle": "ไม่มีเควสต์กำลังทำงาน",
+    "remove": "ลบบัญชี",
+    "add": "เพิ่มบัญชีอื่น",
+    "add_hint": "เข้าสู่ระบบโดยไม่หยุดเควสต์ของบัญชีนี้",
+    "add_action": "เพิ่ม"
   },
   "dialog": {
     "accept_quests_title": "ยอมรับ Quests",

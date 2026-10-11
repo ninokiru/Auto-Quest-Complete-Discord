@@ -60,11 +60,16 @@ function formatMultiplier(multiplier: number): string {
   return Number(multiplier.toFixed(2)).toString()
 }
 
-function formatOrbCount(count: number): string {
-  return count.toLocaleString()
+function formatOrbCount(count: number, locale: string): string {
+  return new Intl.NumberFormat(locale).format(count)
 }
 
-export function formatQuestReward(reward: QuestReward, userStatus?: QuestUserStatus | null, userPremiumType?: number | null): QuestRewardView {
+export function formatQuestReward(
+  reward: QuestReward,
+  userStatus?: QuestUserStatus | null,
+  userPremiumType?: number | null,
+  locale = 'en',
+): QuestRewardView {
   const name = reward.messages?.name || ''
   const hasNitro = !!userPremiumType && userPremiumType > 0
   const multiplier = hasNitro ? getPremiumMultiplier(reward) : null
@@ -75,11 +80,11 @@ export function formatQuestReward(reward: QuestReward, userStatus?: QuestUserSta
     const base = reward.orb_quantity
     const premium = reward.premium_orb_quantity
     const amount: QuestRewardAmount = claimed && claimedOrbs != null
-      ? { type: 'text', text: { key: 'quest.reward_orbs_claimed', params: { count: formatOrbCount(claimedOrbs) } } }
+      ? { type: 'text', text: { key: 'quest.reward_orbs_claimed', params: { count: formatOrbCount(claimedOrbs, locale) } } }
       : hasNitro && base != null && premium != null && premium > base
-        ? { type: 'text', text: { key: 'quest.reward_orbs_premium', params: { base: formatOrbCount(base), premium: formatOrbCount(premium) } } }
+        ? { type: 'text', text: { key: 'quest.reward_orbs_premium', params: { base: formatOrbCount(base, locale), premium: formatOrbCount(premium, locale) } } }
         : base != null
-          ? { type: 'text', text: { key: 'quest.reward_orbs', params: { count: formatOrbCount(base) } } }
+          ? { type: 'text', text: { key: 'quest.reward_orbs', params: { count: formatOrbCount(base, locale) } } }
           : { type: 'name' }
 
     return {
@@ -120,8 +125,12 @@ export function formatQuestReward(reward: QuestReward, userStatus?: QuestUserSta
   }
 }
 
-export function getQuestRewardViews(quest: Quest, userPremiumType?: number | null): QuestRewardView[] {
-  return (quest.config.rewards_config?.rewards || []).map(reward => formatQuestReward(reward, quest.user_status, userPremiumType))
+export function getQuestRewardViews(
+  quest: Quest,
+  userPremiumType?: number | null,
+  locale = 'en',
+): QuestRewardView[] {
+  return (quest.config.rewards_config?.rewards || []).map(reward => formatQuestReward(reward, quest.user_status, userPremiumType, locale))
 }
 
 export function getQuestRewardCategory(quest: Quest): 'orbs' | 'avatar' | 'ingame' {

@@ -628,7 +628,7 @@ onMounted(() => {
       </template>
     </div>
 
-    <div v-if="error" class="p-4 bg-destructive/10 text-destructive rounded-lg">
+    <div v-if="error" class="p-4 bg-destructive/10 text-error rounded-lg">
       <div class="font-medium">{{ t('debug.load_failed') }}</div>
       <pre class="mt-2 whitespace-pre-wrap text-xs">{{ error }}</pre>
     </div>
@@ -651,14 +651,14 @@ onMounted(() => {
               size="sm"
               @click="copyToClipboard(cdpDiagnosticsJson(), 'cdp_diagnostics')"
             >
-              <Check v-if="copied === 'cdp_diagnostics'" class="w-4 h-4 mr-1 text-green-500" />
+              <Check v-if="copied === 'cdp_diagnostics'" class="w-4 h-4 mr-1 text-green-700 dark:text-green-400" />
               <Copy v-else class="w-4 h-4 mr-1" />
               {{ t('debug.copy_cdp_diagnostics') }}
             </Button>
           </div>
         </CardHeader>
         <CardContent class="space-y-4">
-          <div v-if="cdpDiagnosticsError" class="rounded bg-destructive/10 p-3 text-sm text-destructive">
+          <div v-if="cdpDiagnosticsError" class="rounded bg-destructive/10 p-3 text-sm text-error">
             {{ cdpDiagnosticsError }}
           </div>
           <template v-if="cdpDiagnostics">
@@ -737,10 +737,10 @@ onMounted(() => {
               :class="[
                 'px-3 py-1 text-xs font-medium rounded-full capitalize',
                 identityAudit.status.level === 'full'
-                  ? 'bg-green-500/10 text-green-500'
+                  ? 'bg-green-500/10 text-green-700 dark:text-green-400'
                   : identityAudit.status.level === 'disabled'
                     ? 'bg-muted text-muted-foreground'
-                    : 'bg-yellow-500/10 text-yellow-600'
+                    : 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-300'
               ]"
             >
               {{ identityAudit.status.level }}
@@ -825,7 +825,7 @@ onMounted(() => {
               {{ t('debug.compare_release_baseline') }}
             </Button>
             <Button variant="outline" size="sm" @click="copyToClipboard(identityAuditJson(), 'identity_audit')">
-              <Check v-if="copied === 'identity_audit'" class="w-4 h-4 mr-1 text-green-500" />
+              <Check v-if="copied === 'identity_audit'" class="w-4 h-4 mr-1 text-green-700 dark:text-green-400" />
               <Copy v-else class="w-4 h-4 mr-1" />
               {{ t('debug.copy_json') }}
             </Button>
@@ -835,7 +835,7 @@ onMounted(() => {
             </Button>
           </div>
 
-          <div v-if="showIdentityBaseline" :class="['rounded p-3 text-sm', identityAudit.baseline.matches ? 'bg-green-500/10 text-green-600' : 'bg-yellow-500/10 text-yellow-700']">
+          <div v-if="showIdentityBaseline" :class="['rounded p-3 text-sm', identityAudit.baseline.matches ? 'bg-green-500/10 text-green-700 dark:text-green-400' : 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-300']">
             <div class="font-medium">{{ identityAudit.baseline.matches ? t('debug.baseline_matches_title') : t('debug.baseline_differences_title') }}</div>
             <div v-if="identityAudit.baseline.configuredWindowIdentityMatches !== null" class="mt-2 text-xs">
               {{ t('debug.baseline_configured_window_identity') }}:
@@ -860,7 +860,7 @@ onMounted(() => {
             </div>
           </div>
 
-          <div v-if="identityAudit.status.reasons.length" class="rounded bg-yellow-500/10 p-3 text-xs text-yellow-700">
+          <div v-if="identityAudit.status.reasons.length" class="rounded bg-yellow-500/10 p-3 text-xs text-yellow-700 dark:text-yellow-300">
             {{ identityAudit.status.reasons.join('\n') }}
           </div>
         </CardContent>
@@ -881,8 +881,8 @@ onMounted(() => {
               :class="[
                 'px-3 py-1 text-xs font-medium rounded-full',
                 runnerInfo?.embedded 
-                  ? 'bg-green-500/10 text-green-500' 
-                  : 'bg-yellow-500/10 text-yellow-500'
+                  ? 'bg-green-500/10 text-green-700 dark:text-green-400' 
+                  : 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-300'
               ]"
             >
               {{ runnerInfo?.embedded ? t('debug.runner_ready') : t('debug.runner_not_built') }}
@@ -930,7 +930,7 @@ onMounted(() => {
                 size="sm"
                 @click="copyToClipboard(JSON.stringify(runningGamesSnapshot, null, 2), 'running_games_json')"
               >
-                <Check v-if="copied === 'running_games_json'" class="w-4 h-4 mr-1 text-green-500" />
+                <Check v-if="copied === 'running_games_json'" class="w-4 h-4 mr-1 text-green-700 dark:text-green-400" />
                 <Copy v-else class="w-4 h-4 mr-1" />
                 JSON
               </Button>
@@ -938,7 +938,7 @@ onMounted(() => {
           </div>
         </CardHeader>
         <CardContent class="space-y-4">
-          <div v-if="runningGamesError" class="p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
+          <div v-if="runningGamesError" class="p-3 bg-destructive/10 text-error rounded-lg text-sm">
             {{ runningGamesError }}
           </div>
 
@@ -974,7 +974,7 @@ onMounted(() => {
               </div>
             </div>
 
-            <div v-if="runningGamesSnapshot.errors.length" class="p-3 bg-yellow-500/10 text-yellow-600 rounded-lg text-sm">
+            <div v-if="runningGamesSnapshot.errors.length" class="rounded-lg bg-yellow-500/10 p-3 text-sm text-yellow-700 dark:text-yellow-300">
               <div class="font-medium mb-1">{{ t('debug.running_games_warnings') }}</div>
               <pre class="whitespace-pre-wrap text-xs">{{ runningGamesSnapshot.errors.join('\n') }}</pre>
             </div>
@@ -1060,7 +1060,7 @@ onMounted(() => {
               </code>
             </div>
             <Button variant="outline" size="sm" @click="copyToClipboard(authStore.token, 'token')">
-              <Check v-if="copied === 'token'" class="w-4 h-4 mr-1 text-green-500" />
+              <Check v-if="copied === 'token'" class="w-4 h-4 mr-1 text-green-700 dark:text-green-400" />
               <Copy v-else class="w-4 h-4 mr-1" />
               {{ t('debug.copy') }}
             </Button>
@@ -1080,9 +1080,9 @@ onMounted(() => {
               :class="[
                 'px-3 py-1 text-xs font-medium rounded-full',
                 debugInfo.source === 'Default'
-                  ? 'bg-blue-500/10 text-blue-500'
+                  ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300'
                   : debugInfo.source
-                    ? 'bg-green-500/10 text-green-500'
+                    ? 'bg-green-500/10 text-green-700 dark:text-green-400'
                     : 'bg-muted text-muted-foreground'
               ]"
             >
@@ -1097,7 +1097,7 @@ onMounted(() => {
               <code class="text-xs text-muted-foreground break-all">{{ debugText(debugInfo.launch_signature) }}</code>
             </div>
             <Button variant="ghost" size="icon" :aria-label="t('debug.copy')" @click="copyToClipboard(debugText(debugInfo.launch_signature), 'launch_signature')">
-              <Check v-if="copied === 'launch_signature'" class="w-4 h-4 text-green-500" />
+              <Check v-if="copied === 'launch_signature'" class="w-4 h-4 text-green-700 dark:text-green-400" />
               <Copy v-else class="w-4 h-4" />
             </Button>
           </div>
@@ -1108,7 +1108,7 @@ onMounted(() => {
               <code class="text-xs text-muted-foreground break-all">{{ debugText(debugInfo.client_launch_id) }}</code>
             </div>
             <Button variant="ghost" size="icon" :aria-label="t('debug.copy')" @click="copyToClipboard(debugText(debugInfo.client_launch_id), 'client_launch_id')">
-              <Check v-if="copied === 'client_launch_id'" class="w-4 h-4 text-green-500" />
+              <Check v-if="copied === 'client_launch_id'" class="w-4 h-4 text-green-700 dark:text-green-400" />
               <Copy v-else class="w-4 h-4" />
             </Button>
           </div>
@@ -1119,7 +1119,7 @@ onMounted(() => {
               <code class="text-xs text-muted-foreground break-all">{{ debugText(debugInfo.client_heartbeat_session_id) }}</code>
             </div>
             <Button variant="ghost" size="icon" :aria-label="t('debug.copy')" @click="copyToClipboard(debugText(debugInfo.client_heartbeat_session_id), 'client_heartbeat_session_id')">
-              <Check v-if="copied === 'client_heartbeat_session_id'" class="w-4 h-4 text-green-500" />
+              <Check v-if="copied === 'client_heartbeat_session_id'" class="w-4 h-4 text-green-700 dark:text-green-400" />
               <Copy v-else class="w-4 h-4" />
             </Button>
           </div>
@@ -1164,7 +1164,7 @@ onMounted(() => {
             </div>
             <div class="p-2 bg-muted rounded col-span-2">
               <span class="text-muted-foreground">has_client_mods:</span> 
-              <span :class="debugInfo.super_properties?.has_client_mods ? 'text-destructive' : 'text-green-500'">
+              <span :class="debugInfo.super_properties?.has_client_mods ? 'text-error' : 'text-green-700 dark:text-green-400'">
                 {{ debugText(debugInfo.super_properties?.has_client_mods) }}
               </span>
             </div>
@@ -1175,7 +1175,7 @@ onMounted(() => {
             <div class="flex items-center justify-between">
               <span class="text-sm font-medium">{{ t('debug.base64_encoded') }}</span>
               <Button variant="ghost" size="sm" @click="copyToClipboard(debugText(debugInfo.x_super_properties_base64), 'base64')">
-                <Check v-if="copied === 'base64'" class="w-4 h-4 mr-1 text-green-500" />
+                <Check v-if="copied === 'base64'" class="w-4 h-4 mr-1 text-green-700 dark:text-green-400" />
                 <Copy v-else class="w-4 h-4 mr-1" />
                 {{ t('debug.copy') }}
               </Button>
@@ -1277,7 +1277,7 @@ onMounted(() => {
           <div class="grid gap-3 md:grid-cols-2">
             <div class="space-y-2 rounded border border-border p-3">
               <div class="text-sm font-medium">/quests/decision</div>
-              <div v-if="decisionError" class="p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
+              <div v-if="decisionError" class="p-3 bg-destructive/10 text-error rounded-lg text-sm">
                 {{ decisionError }}
               </div>
               <div class="flex items-center gap-2">
@@ -1292,7 +1292,7 @@ onMounted(() => {
 
             <div class="space-y-2 rounded border border-border p-3">
               <div class="text-sm font-medium">/quests/get-decisions</div>
-              <div v-if="decisionsError" class="p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
+              <div v-if="decisionsError" class="p-3 bg-destructive/10 text-error rounded-lg text-sm">
                 {{ decisionsError }}
               </div>
               <div class="flex items-center gap-2">
@@ -1344,7 +1344,7 @@ onMounted(() => {
           </div>
         </CardHeader>
         <CardContent class="space-y-4">
-          <div v-if="captureError" class="p-3 bg-destructive/10 text-destructive rounded-lg text-sm">
+          <div v-if="captureError" class="p-3 bg-destructive/10 text-error rounded-lg text-sm">
             {{ captureError }}
           </div>
 
@@ -1366,7 +1366,7 @@ onMounted(() => {
               <div class="flex items-center justify-between">
                 <div class="text-sm font-medium">{{ t('debug.header_key_counts') }}</div>
                 <Button variant="ghost" size="sm" @click="copyToClipboard(JSON.stringify(capturedHeaders.header_kv_counts, null, 2), 'kv_json')">
-                  <Check v-if="copied === 'kv_json'" class="w-4 h-4 mr-1 text-green-500" />
+                  <Check v-if="copied === 'kv_json'" class="w-4 h-4 mr-1 text-green-700 dark:text-green-400" />
                   <Copy v-else class="w-4 h-4 mr-1" />
                   JSON
                 </Button>
@@ -1426,7 +1426,7 @@ onMounted(() => {
               <div class="flex items-center justify-between">
                 <div class="text-sm font-medium">{{ t('debug.request_list') }} <span class="text-muted-foreground font-normal">({{ filteredRequests.length }}/{{ capturedRequests.length }})</span></div>
                 <Button variant="ghost" size="sm" @click="copyToClipboard(JSON.stringify(capturedRequests, null, 2), 'requests_json')">
-                  <Check v-if="copied === 'requests_json'" class="w-4 h-4 mr-1 text-green-500" />
+                  <Check v-if="copied === 'requests_json'" class="w-4 h-4 mr-1 text-green-700 dark:text-green-400" />
                   <Copy v-else class="w-4 h-4 mr-1" />
                   JSON
                 </Button>
@@ -1464,13 +1464,13 @@ onMounted(() => {
                 <div v-if="filteredRequests.length === 0" class="text-xs text-muted-foreground text-center py-4">{{ t('debug.request_no_match') }}</div>
                 <div v-for="row in filteredRequests" :key="row.id" class="p-3 bg-muted rounded-lg text-xs space-y-1">
                   <div class="flex items-center gap-2">
-                    <span class="px-1.5 py-0.5 rounded text-[10px] font-bold" :class="row.request.method === 'GET' ? 'bg-blue-500/20 text-blue-500' : row.request.method === 'POST' ? 'bg-green-500/20 text-green-500' : 'bg-yellow-500/20 text-yellow-500'">
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-bold" :class="row.request.method === 'GET' ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300' : row.request.method === 'POST' ? 'bg-green-500/15 text-green-800 dark:text-green-300' : 'bg-yellow-500/15 text-yellow-800 dark:text-yellow-300'">
                       {{ row.request.method }}
                     </span>
                     <span class="px-1.5 py-0.5 rounded text-[10px] bg-muted-foreground/20 text-muted-foreground">{{ inferRequestType(row.request.url, row.request.headers) }}</span>
                     <code class="break-all text-muted-foreground flex-1 min-w-0">{{ row.request.url }}</code>
                     <Button variant="ghost" size="icon" class="h-5 w-5 shrink-0" @click="copyToClipboard(JSON.stringify(row.request, null, 2), row.id)" :title="t('debug.copy')" :aria-label="t('debug.copy')">
-                      <Check v-if="copied === row.id" class="w-3 h-3 text-green-500" />
+                      <Check v-if="copied === row.id" class="w-3 h-3 text-green-700 dark:text-green-400" />
                       <Copy v-else class="w-3 h-3" />
                     </Button>
                   </div>
@@ -1513,14 +1513,14 @@ onMounted(() => {
             />
             <Button size="sm" @click="decodeBase64">{{ t('debug.decoder_decode') }}</Button>
           </div>
-          <div v-if="decoderError" class="text-sm text-destructive bg-destructive/10 p-2 rounded">
+          <div v-if="decoderError" class="text-sm text-error bg-destructive/10 p-2 rounded">
             {{ decoderError }}
           </div>
           <div v-if="decoderResult" class="space-y-2">
             <div class="flex items-center justify-between">
               <span class="text-sm font-medium">{{ t('debug.decoder_result') }}</span>
               <Button variant="ghost" size="sm" @click="copyToClipboard(JSON.stringify(decoderResult, null, 2), 'decoder_json')">
-                <Check v-if="copied === 'decoder_json'" class="w-4 h-4 mr-1 text-green-500" />
+                <Check v-if="copied === 'decoder_json'" class="w-4 h-4 mr-1 text-green-700 dark:text-green-400" />
                 <Copy v-else class="w-4 h-4 mr-1" />
                 Copy
               </Button>

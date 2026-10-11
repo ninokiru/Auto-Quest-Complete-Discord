@@ -49,10 +49,10 @@ function handleSelect(event: Event) {
         :key="section.key"
         type="button"
         :class="cn(
-          'mb-1 flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors last:mb-0',
+          'mb-1 flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left text-sm outline-none transition-colors last:mb-0 focus-visible:ring-2 focus-visible:ring-ring',
           props.selected === section.key
-            ? 'border border-primary/30 bg-primary/10 text-primary shadow-sm'
-            : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+            ? 'border-primary/30 bg-primary/10 font-medium text-primary shadow-sm'
+            : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground',
         )"
         @click="emit('update:selected', section.key)"
       >

@@ -172,7 +172,9 @@
     "reward_orbs_premium": "{base} → {premium} 个 Orbs",
     "reward_nitro_multiplier": "Nitro {multiplier}",
     "reward_quantity": "{name} x{quantity}",
-    "soft_error_console_only": "{game} 仅在主机构机上运行，本应用无法模拟。请在主机上游玩，Discord 会自动记录进度。"
+    "soft_error_console_only": "{game} 仅在主机构机上运行，本应用无法模拟。请在主机上游玩，Discord 会自动记录进度。",
+    "background_title": "其他账号上正在运行的任务",
+    "background_hint": "切换账号后它们仍会继续运行。停止其中一个即可结束对应的任务。"
   },
   "filter": {
     "type": "类型",
@@ -415,7 +417,15 @@
     "type_app": "应用"
   },
   "account": {
-    "select_desc": "发现了多个有效的 Discord Token，请选择要使用的账号："
+    "select_desc": "发现了多个有效的 Discord Token，请选择要使用的账号：",
+    "switch_title": "切换账号",
+    "active": "当前",
+    "running_quests": "{count} 个进行中",
+    "idle": "没有进行中的任务",
+    "remove": "移除账号",
+    "add": "添加其他账号",
+    "add_hint": "登录，且不停止此账号的任务。",
+    "add_action": "添加"
   },
   "dialog": {
     "accept_quests_title": "接受任务",

@@ -34,7 +34,7 @@ const items = [
       variant="ghost"
       :aria-current="props.current === item.key ? 'page' : undefined"
       :class="cn(
-        'relative shrink-0 rounded-md px-3 text-muted-foreground transition-colors',
+        'relative shrink-0 rounded-md px-3 text-muted-foreground shadow-[inset_0_-2px_0_transparent] transition-[background-color,color,box-shadow] duration-200',
         'hover:bg-primary/[0.055] hover:text-foreground',
         props.current === item.key && [
           'bg-primary/[0.075] text-primary hover:bg-primary/[0.1] hover:text-primary',

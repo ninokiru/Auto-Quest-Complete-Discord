@@ -300,12 +300,48 @@ export type QuestTaskState = 'running' | 'finished' | 'failed'
 
 export interface QuestTaskStatus {
   questId: string
+  /** The account the task posts for. It survives an account switch, so a status
+   *  can belong to an account the page is not currently showing. */
+  accountId: string | null
+  /** Whether the account the page is on owns this task. Two accounts can run the
+   *  same quest id at once and the registry lists both, so ownership comes from
+   *  the backend rather than from the order the records arrive in. */
+  own: boolean
   state: QuestTaskState
   error: string | null
 }
 
-export async function stopQuest(questId?: string | null): Promise<void> {
-  return await invoke('stop_quest', questId ? { questId } : {})
+/** What the page may know about an account this run has signed in. No token. */
+export interface AccountSummary {
+  user: DiscordUser
+  active: boolean
+  runningQuests: number
+}
+
+export async function listAccounts(): Promise<AccountSummary[]> {
+  return await invoke('list_accounts')
+}
+
+/** Sign in an extra account without touching the active one. */
+export async function addAccount(token: string): Promise<AccountSummary> {
+  return await invoke('add_account', { token })
+}
+
+export async function switchAccount(userId: string): Promise<DiscordUser> {
+  return await invoke('switch_account', { userId })
+}
+
+export async function forgetAccount(userId: string): Promise<void> {
+  return await invoke('forget_account', { userId })
+}
+
+export async function stopQuest(
+  questId?: string | null,
+  accountId?: string | null
+): Promise<void> {
+  // The optional key stays absent unless an account is named: a quest id the page
+  // stops for itself must keep matching the backend's active account.
+  return await invoke('stop_quest', questId ? { questId, ...(accountId ? { accountId } : {}) } : {})
 }
 
 /** Outcome of every quest task the backend still tracks, keyed by quest id.

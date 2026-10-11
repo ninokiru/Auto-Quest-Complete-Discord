@@ -170,7 +170,9 @@
     "reward_orbs_premium": "{base} -> {premium} Orbs",
     "reward_nitro_multiplier": "Nitro {multiplier}",
     "reward_quantity": "{name} x{quantity}",
-    "soft_error_console_only": "{game} só funciona em consolas, que esta aplicação não consegue simular. Jogue-o numa consola e o Discord vai registar o progresso."
+    "soft_error_console_only": "{game} só funciona em consolas, que esta aplicação não consegue simular. Jogue-o numa consola e o Discord vai registar o progresso.",
+    "background_title": "Missões em execução noutras contas",
+    "background_hint": "Continuam depois de mudar de conta. Pare uma para terminar a respetiva missão."
   },
   "filter": {
     "type": "Tipo",
@@ -413,7 +415,15 @@
     "type_app": "Aplicativo"
   },
   "account": {
-    "select_desc": "Foram encontrados vários tokens Discord válidos. Selecione qual a conta a utilizar:"
+    "select_desc": "Foram encontrados vários tokens Discord válidos. Selecione qual a conta a utilizar:",
+    "switch_title": "Mudar de conta",
+    "active": "Atual",
+    "running_quests": "{count} em execução",
+    "idle": "Nenhuma missão em execução",
+    "remove": "Remover conta",
+    "add": "Adicionar outra conta",
+    "add_hint": "Inicie sessão sem parar as missões desta conta.",
+    "add_action": "Adicionar"
   },
   "dialog": {
     "accept_quests_title": "Aceitar Quests",

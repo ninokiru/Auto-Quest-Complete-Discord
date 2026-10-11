@@ -170,7 +170,9 @@
     "reward_orbs_premium": "{base} → {premium} Orbs",
     "reward_nitro_multiplier": "Nitro {multiplier}",
     "reward_quantity": "{name} x{quantity}",
-    "soft_error_console_only": "{game} は家庭用ゲーム機専用で、このアプリではシミュレートできません。ゲーム機でプレイすれば Discord が進捗を記録します。"
+    "soft_error_console_only": "{game} は家庭用ゲーム機専用で、このアプリではシミュレートできません。ゲーム機でプレイすれば Discord が進捗を記録します。",
+    "background_title": "他のアカウントで実行中のクエスト",
+    "background_hint": "アカウントを切り替えた後も実行し続けます。いずれかを停止すると、そのクエストが終了します。"
   },
   "filter": {
     "type": "タイプ",
@@ -413,7 +415,15 @@
     "type_app": "アプリ"
   },
   "account": {
-    "select_desc": "複数の有効なDiscordトークンが見つかりました。使用するアカウントを選択してください："
+    "select_desc": "複数の有効なDiscordトークンが見つかりました。使用するアカウントを選択してください：",
+    "switch_title": "アカウントを切り替える",
+    "active": "現在",
+    "running_quests": "{count} 件実行中",
+    "idle": "実行中のクエストはありません",
+    "remove": "アカウントを削除",
+    "add": "別のアカウントを追加",
+    "add_hint": "このアカウントのクエストを停止せずにログインします。",
+    "add_action": "追加"
   },
   "dialog": {
     "accept_quests_title": "クエストを受け入れる",

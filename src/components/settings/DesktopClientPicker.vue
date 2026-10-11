@@ -188,7 +188,7 @@ onMounted(async () => {
           v-if="installation.source === 'user'"
           variant="ghost"
           size="sm"
-          class="mt-1 shrink-0 text-muted-foreground hover:text-destructive"
+          class="mt-1 shrink-0 text-muted-foreground hover:text-error"
           @click="remove(installation)"
         >
           <Trash2 class="h-4 w-4" />
@@ -203,7 +203,7 @@ onMounted(async () => {
         {{ t('desktop_clients.add_vesktop') }}
       </Button>
     </div>
-    <p v-if="clients.error.value" role="alert" class="text-sm text-destructive">{{ clients.error.value }}</p>
+    <p v-if="clients.error.value" role="alert" class="text-sm text-error">{{ clients.error.value }}</p>
     <p v-for="issue in snapshot?.discoveryIssues ?? []" :key="`${issue.code}:${issue.message}`" class="text-xs text-amber-700 dark:text-amber-300">
       {{ issue.message }}
     </p>

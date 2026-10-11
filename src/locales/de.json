@@ -170,7 +170,9 @@
     "reward_orbs_premium": "{base} -> {premium} Orbs",
     "reward_nitro_multiplier": "Nitro {multiplier}",
     "reward_quantity": "{name} x{quantity}",
-    "soft_error_console_only": "{game} läuft nur auf Konsolen, die diese App nicht simulieren kann. Spielen Sie das Spiel auf einer Konsole, und Discord erfasst den Fortschritt."
+    "soft_error_console_only": "{game} läuft nur auf Konsolen, die diese App nicht simulieren kann. Spielen Sie das Spiel auf einer Konsole, und Discord erfasst den Fortschritt.",
+    "background_title": "Quests auf anderen Konten aktiv",
+    "background_hint": "Sie laufen auch nach dem Wechseln des Kontos weiter. Stoppen Sie eines, um sein Quest zu beenden."
   },
   "filter": {
     "type": "Typ",
@@ -413,7 +415,15 @@
     "type_app": "App"
   },
   "account": {
-    "select_desc": "Mehrere gültige Discord-Token gefunden. Bitte wählen Sie aus, welches Konto Sie verwenden möchten:"
+    "select_desc": "Mehrere gültige Discord-Token gefunden. Bitte wählen Sie aus, welches Konto Sie verwenden möchten:",
+    "switch_title": "Konto wechseln",
+    "active": "Aktuell",
+    "running_quests": "{count} aktiv",
+    "idle": "Keine Quests aktiv",
+    "remove": "Konto entfernen",
+    "add": "Weiteres Konto hinzufügen",
+    "add_hint": "Melden Sie sich an, ohne die Quests dieses Kontos zu stoppen.",
+    "add_action": "Hinzufügen"
   },
   "dialog": {
     "accept_quests_title": "Akzeptieren Quests",

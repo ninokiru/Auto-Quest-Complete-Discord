@@ -34,8 +34,40 @@ const open = ref(props.defaultOpen ?? false)
         <ChevronDown :class="cn('h-4 w-4 transition-transform', open && 'rotate-180')" />
       </span>
     </Button>
-    <div v-if="open" class="border-t border-border/60 bg-background/40 px-4 py-4">
-      <slot />
-    </div>
+    <Transition name="disclosure">
+      <div v-if="open" class="disclosure-panel">
+        <div class="disclosure-row">
+          <div class="border-t border-border/60 bg-background/40 px-4 py-4">
+            <slot />
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
+
+<style scoped>
+.disclosure-panel {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+
+.disclosure-row {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.disclosure-enter-active,
+.disclosure-leave-active {
+  overflow: hidden;
+  transition:
+    grid-template-rows 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 180ms ease;
+}
+
+.disclosure-enter-from,
+.disclosure-leave-to {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+</style>

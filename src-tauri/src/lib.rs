@@ -86,6 +86,10 @@ static APP_EXIT_CLEANUP: AppExitCleanupState = AppExitCleanupState::new();
 struct AppState {
     client: Mutex<Option<DiscordApiClient>>,
     authenticated_user: Mutex<Option<DiscordUser>>,
+    /// Every account this run has authenticated, including the active one. The
+    /// tokens stay inside the backend: switching addresses a session by Discord
+    /// user id, and only the user profile is ever serialized to the page.
+    accounts: Mutex<Vec<AccountSession>>,
     quest_tasks: Mutex<Vec<QuestTask>>,
     manual_cdp_game: tokio::sync::Mutex<ManualCdpGameSessionState>,
     game_idle: std::sync::Arc<game_idle::GameIdleManager>,
@@ -93,6 +97,23 @@ struct AppState {
     /// Serializes quest startup, manual CDP startup, and active-work teardown
     /// so the two Discord-activity owners cannot both pass their idle checks.
     activity_gate: tokio::sync::Mutex<()>,
+}
+
+/// A validated account and the client that posts for it.
+#[derive(Clone)]
+struct AccountSession {
+    user_id: String,
+    client: DiscordApiClient,
+    user: DiscordUser,
+}
+
+/// What the page may know about a remembered account.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AccountSummary {
+    user: DiscordUser,
+    active: bool,
+    running_quests: usize,
 }
 
 /// Upper bound on concurrently running quests. Every quest is an independent
@@ -105,6 +126,10 @@ const MAX_PARALLEL_QUESTS: usize = 5;
 /// global slot a replacement quest used to overwrite.
 struct QuestTask {
     quest_id: String,
+    /// The account whose client this task posts with. It keeps that client for
+    /// its whole run, so one account's quests carry on while the page shows
+    /// another.
+    account_id: Option<String>,
     /// CDP quests drive the one Discord desktop window and SPA route, so only
     /// one of them may exist at a time, and nothing else may start alongside it.
     /// Direct-API quests only post heartbeats for their own quest id.
@@ -158,6 +183,13 @@ impl QuestTaskRecord {
 #[serde(rename_all = "camelCase")]
 struct QuestTaskStatus {
     quest_id: String,
+    account_id: Option<String>,
+    /// Whether the account the page is on owns this task, decided here rather
+    /// than in the page: two accounts can run the same quest id at once, and the
+    /// order the registry lists them in says nothing about which one the page
+    /// started. The same rule Stop uses, so a record the page does not own is one
+    /// its own Stop would not end either.
+    own: bool,
     state: QuestTaskState,
     error: Option<String>,
 }
@@ -169,27 +201,42 @@ enum QuestSlotConflict {
     Full,
 }
 
-/// Decide whether one more quest may be admitted. `running` holds the
-/// `(quest_id, exclusive)` pairs of quests whose task has not ended yet; ended
-/// tasks are not listed, so a quest that finished without being released never
-/// blocks its own restart.
-fn quest_slot_conflict(
-    running: &[(String, bool)],
-    quest_id: &str,
+/// One admitted quest: quests are addressed by the pair (account, quest id),
+/// because two accounts can each hold their own enrollment of the same quest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct QuestSlot {
+    account_id: Option<String>,
+    quest_id: String,
     exclusive: bool,
+}
+
+/// Decide whether one more quest may be admitted. `running` holds the slots of
+/// quests whose task has not ended yet; ended tasks are not listed, so a quest
+/// that finished without being released never blocks its own restart.
+fn quest_slot_conflict(
+    running: &[QuestSlot],
+    candidate: &QuestSlot,
     limit: usize,
 ) -> Option<QuestSlotConflict> {
-    if running.iter().any(|(id, _)| id.as_str() == quest_id) {
+    let already_running = running.iter().any(|slot| {
+        slot.quest_id == candidate.quest_id && slot.account_id == candidate.account_id
+    });
+    if already_running {
         return Some(QuestSlotConflict::AlreadyRunning);
     }
-    if exclusive && !running.is_empty() {
-        // A CDP quest needs the whole desktop client to itself.
+    if candidate.exclusive && !running.is_empty() {
+        // A CDP quest needs the whole desktop client to itself, and that client
+        // is shared by every account.
         return Some(QuestSlotConflict::ExclusiveBusy);
     }
-    if running.iter().any(|(_, is_exclusive)| *is_exclusive) {
+    if running.iter().any(|slot| slot.exclusive) {
         return Some(QuestSlotConflict::ExclusiveBusy);
     }
-    if running.len() >= limit {
+    let same_account = running
+        .iter()
+        .filter(|slot| slot.account_id == candidate.account_id)
+        .count();
+    if same_account >= limit {
         return Some(QuestSlotConflict::Full);
     }
     None
@@ -204,70 +251,123 @@ fn quest_slot_conflict_message(conflict: QuestSlotConflict, quest_id: &str) -> S
             "A CDP task owns the Discord client; stop it first".to_string()
         }
         QuestSlotConflict::Full => {
-            format!("At most {MAX_PARALLEL_QUESTS} quests can run at the same time")
+            format!("At most {MAX_PARALLEL_QUESTS} quests run at the same time per account")
         }
     }
 }
 
 #[cfg(test)]
 mod quest_slot_tests {
-    use super::{quest_slot_conflict, QuestSlotConflict, MAX_PARALLEL_QUESTS};
+    use super::{quest_slot_conflict, QuestSlot, QuestSlotConflict, MAX_PARALLEL_QUESTS};
 
-    fn running(ids: &[(&str, bool)]) -> Vec<(String, bool)> {
-        ids.iter()
-            .map(|(id, exclusive)| (id.to_string(), *exclusive))
+    fn slot(quest_id: &str, account_id: Option<&str>) -> QuestSlot {
+        QuestSlot {
+            account_id: account_id.map(str::to_string),
+            quest_id: quest_id.to_string(),
+            exclusive: false,
+        }
+    }
+
+    fn cdp_slot(quest_id: &str, account_id: Option<&str>) -> QuestSlot {
+        QuestSlot {
+            exclusive: true,
+            ..slot(quest_id, account_id)
+        }
+    }
+
+    fn api_quests(count: usize, account_id: &str) -> Vec<QuestSlot> {
+        (0..count)
+            .map(|index| slot(&format!("quest-{index}"), Some(account_id)))
             .collect()
     }
 
     #[test]
     fn admits_distinct_api_quests_up_to_the_limit() {
         for index in 0..MAX_PARALLEL_QUESTS {
-            let existing = (0..index)
-                .map(|i| (format!("quest-{i}"), false))
-                .collect::<Vec<_>>();
-            let candidate = format!("quest-{index}");
             assert_eq!(
-                quest_slot_conflict(&existing, &candidate, false, MAX_PARALLEL_QUESTS),
+                quest_slot_conflict(
+                    &api_quests(index, "acc-a"),
+                    &slot(&format!("quest-{index}"), Some("acc-a")),
+                    MAX_PARALLEL_QUESTS
+                ),
                 None
             );
         }
-        let full: Vec<(String, bool)> = (0..MAX_PARALLEL_QUESTS)
-            .map(|i| (format!("quest-{i}"), false))
-            .collect();
         assert_eq!(
-            quest_slot_conflict(&full, "quest-extra", false, MAX_PARALLEL_QUESTS),
+            quest_slot_conflict(
+                &api_quests(MAX_PARALLEL_QUESTS, "acc-a"),
+                &slot("quest-extra", Some("acc-a")),
+                MAX_PARALLEL_QUESTS
+            ),
             Some(QuestSlotConflict::Full)
         );
     }
 
     #[test]
-    fn refuses_the_same_quest_id_twice() {
+    fn refuses_the_same_quest_id_on_one_account_twice() {
         assert_eq!(
-            quest_slot_conflict(&running(&[("quest-a", false)]), "quest-a", false, 5),
+            quest_slot_conflict(
+                &[slot("quest-a", Some("acc-a"))],
+                &slot("quest-a", Some("acc-a")),
+                5
+            ),
             Some(QuestSlotConflict::AlreadyRunning)
+        );
+    }
+
+    #[test]
+    fn admits_the_same_quest_id_on_two_accounts() {
+        assert_eq!(
+            quest_slot_conflict(
+                &[slot("quest-a", Some("acc-a"))],
+                &slot("quest-a", Some("acc-b")),
+                5
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn the_parallel_cap_counts_one_account_only() {
+        assert_eq!(
+            quest_slot_conflict(
+                &api_quests(MAX_PARALLEL_QUESTS, "acc-a"),
+                &slot("quest-9", Some("acc-b")),
+                5
+            ),
+            None
         );
     }
 
     #[test]
     fn cdp_quest_is_exclusive_in_both_directions() {
         assert_eq!(
-            quest_slot_conflict(&running(&[("quest-a", false)]), "quest-b", true, 5),
+            quest_slot_conflict(
+                &[slot("quest-a", Some("acc-a"))],
+                &cdp_slot("quest-b", Some("acc-a")),
+                5
+            ),
             Some(QuestSlotConflict::ExclusiveBusy)
         );
         assert_eq!(
-            quest_slot_conflict(&running(&[("quest-a", true)]), "quest-b", false, 5),
+            quest_slot_conflict(
+                &[cdp_slot("quest-a", Some("acc-a"))],
+                &slot("quest-b", Some("acc-b")),
+                5
+            ),
             Some(QuestSlotConflict::ExclusiveBusy)
         );
-        assert_eq!(quest_slot_conflict(&[], "quest-a", true, 5), None);
+        assert_eq!(quest_slot_conflict(&[], &cdp_slot("quest-a", None), 5), None);
     }
 
     #[test]
     fn duplicate_wins_over_capacity() {
-        let full: Vec<(String, bool)> = (0..MAX_PARALLEL_QUESTS)
-            .map(|i| (format!("quest-{i}"), false))
-            .collect();
         assert_eq!(
-            quest_slot_conflict(&full, "quest-0", false, MAX_PARALLEL_QUESTS),
+            quest_slot_conflict(
+                &api_quests(MAX_PARALLEL_QUESTS, "acc-a"),
+                &slot("quest-0", Some("acc-a")),
+                MAX_PARALLEL_QUESTS
+            ),
             Some(QuestSlotConflict::AlreadyRunning)
         );
     }
@@ -317,6 +417,7 @@ mod manual_cdp_game_session_tests {
             app_id: "123456".to_string(),
             app_name: name.to_string(),
             cdp_port: 9223,
+            owner_account_id: None,
         }
     }
 
@@ -408,7 +509,7 @@ mod quest_stop_wait_tests {
 /// Auto-detect Discord tokens (returns all valid accounts found)
 #[tauri::command]
 async fn auto_detect_token(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     on_progress: Channel<AuthProgress>,
 ) -> Result<Vec<ExtractedAccount>, String> {
     use crate::logger::{log, LogCategory, LogLevel};
@@ -517,6 +618,15 @@ async fn auto_detect_token(
     }
 
     // Sort accounts? Maybe by username? Or keep order.
+
+    // Remember every account found on this machine, not just the one selected.
+    // Quick switching needs a client for the others, and the tokens never leave
+    // the backend: the WebView only ever sees an `AccountSummary`.
+    for account in &valid_accounts {
+        if let Ok(client) = DiscordApiClient::new(account.token.clone()) {
+            remember_account(&state, &client, &account.user);
+        }
+    }
 
     Ok(valid_accounts)
 }
@@ -795,6 +905,7 @@ async fn set_token(
     let _gate = state.activity_gate.lock().await;
     state.game_idle.ensure_idle().await?;
     *state.authenticated_user.lock().unwrap() = Some(user.clone());
+    remember_account(&state, &client, &user);
     *state.client.lock().unwrap() = Some(client);
 
     let _ = on_progress.send(AuthProgress::phase(AuthProgressPhase::Complete));
@@ -884,6 +995,7 @@ async fn auto_login_via_cdp(
     let _gate = state.activity_gate.lock().await;
     state.game_idle.ensure_idle().await?;
     *state.authenticated_user.lock().unwrap() = Some(user.clone());
+    remember_account(&state, &client, &user);
     *state.client.lock().unwrap() = Some(client);
 
     log(
@@ -896,6 +1008,150 @@ async fn auto_login_via_cdp(
     let _ = on_progress.send(AuthProgress::phase(AuthProgressPhase::Complete));
 
     Ok(user)
+}
+
+/// The Discord user id the interface is authenticated as, if any. Quest tasks are
+/// stamped with it so a task can be traced to its account after a switch.
+fn active_account_id(state: &State<'_, AppState>) -> Option<String> {
+    state
+        .authenticated_user
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|user| user.id.clone())
+}
+
+fn task_belongs_to(task: &QuestTask, account_id: &str) -> bool {
+    task.account_id.as_deref() == Some(account_id)
+}
+
+/// Keep a validated session so its account can be chosen again without asking for
+/// the token a second time. Re-adding an id refreshes that entry's client.
+fn remember_account(state: &State<'_, AppState>, client: &DiscordApiClient, user: &DiscordUser) {
+    let mut accounts = state.accounts.lock().unwrap();
+    let same = |session: &AccountSession| session.user_id == user.id;
+    if let Some(index) = accounts.iter().position(same) {
+        let session = &mut accounts[index];
+        session.client = client.clone();
+        session.user = user.clone();
+        return;
+    }
+    accounts.push(AccountSession {
+        user_id: user.id.clone(),
+        client: client.clone(),
+        user: user.clone(),
+    });
+}
+
+/// Every account this run remembers: the profile, whether the page is on it, and
+/// how many of its quests are still running.
+#[tauri::command]
+fn list_accounts(state: State<'_, AppState>) -> Vec<AccountSummary> {
+    let active = active_account_id(&state);
+    let running: Vec<Option<String>> = state
+        .quest_tasks
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|task| quest_task_is_running(task))
+        .map(|task| task.account_id.clone())
+        .collect();
+    let accounts = state.accounts.lock().unwrap();
+    accounts
+        .iter()
+        .map(|session| AccountSummary {
+            user: session.user.clone(),
+            active: active.as_deref() == Some(session.user_id.as_str()),
+            running_quests: running
+                .iter()
+                .filter(|account| account.as_deref() == Some(session.user_id.as_str()))
+                .count(),
+        })
+        .collect()
+}
+
+/// Sign in another account without leaving the current one: the token is
+/// validated, its client is kept, and nothing about the active session changes.
+#[tauri::command]
+async fn add_account(token: String, state: State<'_, AppState>) -> Result<AccountSummary, String> {
+    let client = DiscordApiClient::new(token)
+        .map_err(|e| format!("Failed to create API client: {}", e))?;
+    let user = client
+        .get_current_user()
+        .await
+        .map_err(|e| format!("Failed to validate token: {}", e))?;
+    remember_account(&state, &client, &user);
+    let active = active_account_id(&state).as_deref() == Some(user.id.as_str());
+    Ok(AccountSummary {
+        user,
+        active,
+        running_quests: 0,
+    })
+}
+
+/// Make a remembered account the one the page works on. A direct-API quest of the
+/// account being left keeps running, because its task holds that account's client;
+/// a CDP task is stopped, since the desktop client it drives is signed into one
+/// account and injecting for another would drive the wrong session.
+#[tauri::command]
+async fn switch_account(
+    user_id: String,
+    state: State<'_, AppState>,
+) -> Result<DiscordUser, String> {
+    let session = state
+        .accounts
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|s| s.user_id == user_id)
+        .cloned()
+        .ok_or_else(|| "That account is not signed in on this device".to_string())?;
+    let previous = active_account_id(&state);
+    let _gate = state.activity_gate.lock().await;
+    state.game_idle.ensure_idle().await?;
+    if previous.as_deref() == Some(user_id.as_str()) {
+        return Ok(session.user);
+    }
+    if let Some(left) = &previous {
+        stop_quest_tasks(&state, |task| task.exclusive && task_belongs_to(task, left)).await;
+    }
+    *state.authenticated_user.lock().unwrap() = Some(session.user.clone());
+    *state.client.lock().unwrap() = Some(session.client);
+    Ok(session.user)
+}
+
+/// Forget a remembered account. Its quests must be stopped first: a running task
+/// holds that account's client, and dropping the session would leave the loop
+/// posting for an account the page can no longer name.
+#[tauri::command]
+async fn forget_account(user_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    // Held for the whole command: without the gate a concurrent switch could
+    // make this account active right after the check below, and forgetting it
+    // would then drop the session a running quest is posting with.
+    let _gate = state.activity_gate.lock().await;
+    if active_account_id(&state).as_deref() == Some(user_id.as_str()) {
+        return Err("Switch to another account before removing this one".to_string());
+    }
+    let running = {
+        let tasks = state.quest_tasks.lock().unwrap();
+        tasks
+            .iter()
+            .any(|task| task_belongs_to(task, &user_id) && quest_task_is_running(task))
+    };
+    if running {
+        return Err("Stop this account's running quests before removing it".to_string());
+    }
+    {
+        let mut tasks = state.quest_tasks.lock().unwrap();
+        tasks.retain(|task| !task_belongs_to(task, &user_id));
+        refresh_keep_awake(&tasks);
+    }
+    state
+        .accounts
+        .lock()
+        .unwrap()
+        .retain(|session| session.user_id != user_id);
+    Ok(())
 }
 
 /// Refuse CDP mutations when Helper's authenticated account differs from the
@@ -1420,18 +1676,57 @@ async fn start_cdp_quest(
     Ok(())
 }
 
-/// Stop one quest by id, or every quest and the manual CDP session when no id
-/// is given (logout, window close, Stop-all).
+/// Stop one quest by id, or every quest of the account the page is on plus the
+/// manual CDP session when no id is given. With no `account_id` the quest is
+/// matched on the account the page is authenticated as, so an id another account
+/// also runs has to be named explicitly.
 #[tauri::command]
-async fn stop_quest(quest_id: Option<String>, state: State<'_, AppState>) -> Result<(), String> {
+async fn stop_quest(
+    quest_id: Option<String>,
+    account_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let _gate = state.activity_gate.lock().await;
     match quest_id.filter(|id| !id.trim().is_empty()) {
         Some(id) => {
-            stop_quest_tasks(&state, |task| task.quest_id == id.trim()).await;
+            let quest = id.trim().to_string();
+            let wanted = account_id
+                .filter(|named| !named.trim().is_empty())
+                .or_else(|| active_account_id(&state))
+                .map(|named| named.trim().to_string());
+            let is_target = |task: &QuestTask| quest_task_matches(task, &quest, wanted.as_deref());
+            stop_quest_tasks(&state, is_target).await;
             Ok(())
         }
-        None => stop_active_work_internal(&state).await,
+        // Another account's quests are not this page's Stop target: they keep
+        // running and end from their own row. Only logout and app exit, which go
+        // through `stop_active_work_internal`, end every account's work.
+        None => stop_account_work_internal(&state, active_account_id(&state).as_deref()).await,
     }
+}
+
+/// Whether one tracked task is the quest the page named, for the account named.
+/// This is the same ownership rule that stamps `own` on a status report, so a
+/// record the page is told it owns is always a record its Stop can end. Without
+/// an account the id alone decides, which is the stop-everything case.
+fn quest_task_matches(task: &QuestTask, quest_id: &str, account: Option<&str>) -> bool {
+    task.quest_id == quest_id && account_owns_work(task.account_id.as_deref(), account)
+}
+
+/// Whether work stamped with `owner` is the given account's to end. Work that
+/// carries no account belongs to whoever asks, because it can only have started
+/// before any account was signed in; asking for `None` is the stop-everything
+/// case, where nothing may survive.
+fn account_owns_work(owner: Option<&str>, account: Option<&str>) -> bool {
+    match account {
+        None => true,
+        Some(wanted) => owner.map_or(true, |id| id == wanted),
+    }
+}
+
+/// Whether a task is one the given account owns.
+fn quest_task_belongs_to_account(task: &QuestTask, account: Option<&str>) -> bool {
+    account_owns_work(task.account_id.as_deref(), account)
 }
 
 /// Report every tracked quest task with its own outcome, so a page that runs
@@ -1439,6 +1734,7 @@ async fn stop_quest(quest_id: Option<String>, state: State<'_, AppState>) -> Res
 /// carry no quest id and stay the fast path for a single quest.
 #[tauri::command]
 fn get_quest_task_statuses(state: State<'_, AppState>) -> Result<Vec<QuestTaskStatus>, String> {
+    let active = active_account_id(&state);
     Ok(state
         .quest_tasks
         .lock()
@@ -1448,11 +1744,18 @@ fn get_quest_task_statuses(state: State<'_, AppState>) -> Result<Vec<QuestTaskSt
             let record = task.outcome.lock().unwrap();
             QuestTaskStatus {
                 quest_id: task.quest_id.clone(),
+                account_id: task.account_id.clone(),
+                own: quest_task_belongs_to_account(task, active.as_deref()),
                 state: record.state,
                 error: record.error.clone(),
             }
         })
         .collect())
+}
+
+fn is_finished_slot(task: &QuestTask, quest_id: &str, account_id: &Option<String>) -> bool {
+    let same_quest = task.quest_id == quest_id && task.account_id == *account_id;
+    same_quest && !quest_task_is_running(task)
 }
 
 fn register_quest_task(
@@ -1464,11 +1767,13 @@ fn register_quest_task(
     outcome: std::sync::Arc<std::sync::Mutex<QuestTaskRecord>>,
 ) {
     let mut tasks = state.quest_tasks.lock().unwrap();
+    let account_id = active_account_id(state);
     // A quest that finished on its own keeps its record until Stop; drop that
     // stale record so the status poll can't end a quest that just started again.
-    tasks.retain(|task| task.quest_id != quest_id || quest_task_is_running(task));
+    tasks.retain(|task| !is_finished_slot(task, &quest_id, &account_id));
     tasks.push(QuestTask {
         quest_id,
+        account_id,
         exclusive,
         cancel_flag,
         join: Some(join),
@@ -1517,15 +1822,24 @@ fn ensure_quest_slot_available(
     quest_id: &str,
     exclusive: bool,
 ) -> Result<(), String> {
-    let running: Vec<(String, bool)> = state
+    let candidate = QuestSlot {
+        account_id: active_account_id(state),
+        quest_id: quest_id.to_string(),
+        exclusive,
+    };
+    let running: Vec<QuestSlot> = state
         .quest_tasks
         .lock()
         .unwrap()
         .iter()
         .filter(|task| quest_task_is_running(task))
-        .map(|task| (task.quest_id.clone(), task.exclusive))
+        .map(|task| QuestSlot {
+            account_id: task.account_id.clone(),
+            quest_id: task.quest_id.clone(),
+            exclusive: task.exclusive,
+        })
         .collect();
-    match quest_slot_conflict(&running, quest_id, exclusive, MAX_PARALLEL_QUESTS) {
+    match quest_slot_conflict(&running, &candidate, MAX_PARALLEL_QUESTS) {
         Some(conflict) => Err(quest_slot_conflict_message(conflict, quest_id)),
         None => Ok(()),
     }
@@ -1567,8 +1881,26 @@ async fn stop_quest_tasks(
     refresh_keep_awake(&state.quest_tasks.lock().unwrap());
 }
 
-async fn stop_quest_internal(state: &State<'_, AppState>) {
-    stop_quest_tasks(state, |_| true).await;
+/// End one account's quests, and its manual CDP game spoof when that session is
+/// the account's own. `None` is the unauthenticated case, where nothing carries
+/// an account and everything therefore belongs to it: that is the
+/// stop-everything path used by logout and app exit.
+async fn stop_account_work_internal(
+    state: &State<'_, AppState>,
+    account: Option<&str>,
+) -> Result<(), String> {
+    stop_quest_tasks(state, |task| quest_task_belongs_to_account(task, account)).await;
+    let owns_spoof = {
+        let sessions = state.manual_cdp_game.lock().await;
+        match sessions.active() {
+            Some(session) => account_owns_work(session.owner_account_id.as_deref(), account),
+            None => false,
+        }
+    };
+    if owns_spoof {
+        return stop_manual_cdp_game_simulation_internal(state).await;
+    }
+    Ok(())
 }
 
 async fn await_quest_task(join: tokio::task::JoinHandle<()>) {
@@ -1669,8 +2001,7 @@ async fn stop_manual_cdp_game_simulation_internal(
 }
 
 async fn stop_active_work_internal(state: &State<'_, AppState>) -> Result<(), String> {
-    stop_quest_internal(state).await;
-    stop_manual_cdp_game_simulation_internal(state).await
+    stop_account_work_internal(state, None).await
 }
 
 /// Navigate Discord client SPA to a specific path (no reload)
@@ -1790,6 +2121,7 @@ async fn start_manual_cdp_game_simulation(
         app_id,
         app_name,
         cdp_port,
+        owner_account_id: active_account_id(&state),
     };
     sessions.activate(session.clone());
     Ok(session)
@@ -2610,6 +2942,7 @@ pub fn run() {
         .manage(AppState {
             client: Mutex::new(None),
             authenticated_user: Mutex::new(None),
+            accounts: Mutex::new(Vec::new()),
             quest_tasks: Mutex::new(Vec::new()),
             manual_cdp_game: tokio::sync::Mutex::new(ManualCdpGameSessionState::default()),
             game_idle: std::sync::Arc::new(game_idle::GameIdleManager::default()),
@@ -2670,6 +3003,10 @@ pub fn run() {
             auto_detect_token,
             set_token,
             auto_login_via_cdp,
+            list_accounts,
+            add_account,
+            switch_account,
+            forget_account,
             get_quests,
             get_quests_full,
             start_video_quest,
@@ -4356,5 +4693,121 @@ mod windows_cdp_runtime_path_tests {
             r#""C:\Portable Apps\Vesktop\vesktop.exe""#
         );
         assert_eq!(windows_command_line_argument("--client"), "--client");
+    }
+}
+
+#[cfg(test)]
+mod quest_task_account_tests {
+    use super::*;
+
+    fn running_task(quest_id: &str, account_id: Option<&str>) -> QuestTask {
+        let (cancel_flag, _cancel_rx) = tokio::sync::mpsc::channel::<()>(1);
+        QuestTask {
+            quest_id: quest_id.to_string(),
+            account_id: account_id.map(str::to_string),
+            exclusive: false,
+            cancel_flag,
+            join: None,
+            outcome: new_quest_outcome(),
+        }
+    }
+
+    fn account(id: &str) -> Option<String> {
+        Some(id.to_string())
+    }
+
+    #[test]
+    fn different_quest_id_never_matches() {
+        let task = running_task("quest-a", Some("acc-a"));
+        assert!(!quest_task_matches(&task, "quest-b", Some("acc-a")));
+    }
+
+    #[test]
+    fn same_quest_id_matches_only_the_named_account() {
+        let task = running_task("quest-a", Some("acc-a"));
+        assert!(quest_task_matches(&task, "quest-a", Some("acc-a")));
+        assert!(!quest_task_matches(&task, "quest-a", Some("acc-b")));
+    }
+
+    #[test]
+    fn missing_account_matches_a_task_that_carries_one() {
+        let task = running_task("quest-a", Some("acc-a"));
+        assert!(quest_task_matches(&task, "quest-a", None));
+    }
+
+    /// A task stamped with no account is reported to the page as its own, so the
+    /// named Stop has to reach it too: the two predicates may not disagree.
+    #[test]
+    fn an_accountless_task_matches_the_account_the_page_is_on() {
+        let task = running_task("quest-a", None);
+        assert!(quest_task_matches(&task, "quest-a", Some("acc-a")));
+    }
+
+    #[test]
+    fn a_running_task_is_not_a_finished_slot() {
+        let task = running_task("quest-a", Some("acc-a"));
+        assert!(!is_finished_slot(&task, "quest-a", &account("acc-a")));
+    }
+
+    #[test]
+    fn a_finished_task_is_a_finished_slot() {
+        let task = running_task("quest-a", Some("acc-a"));
+        quest_task_finished(&task.outcome);
+        assert!(is_finished_slot(&task, "quest-a", &account("acc-a")));
+    }
+
+    #[test]
+    fn a_failed_task_is_a_finished_slot() {
+        let task = running_task("quest-a", Some("acc-a"));
+        quest_task_failed(&task.outcome, "stopped".to_string());
+        assert!(is_finished_slot(&task, "quest-a", &account("acc-a")));
+    }
+
+    #[test]
+    fn a_finished_slot_never_belongs_to_another_account() {
+        let task = running_task("quest-a", Some("acc-b"));
+        quest_task_finished(&task.outcome);
+        assert!(!is_finished_slot(&task, "quest-a", &account("acc-a")));
+    }
+
+    #[test]
+    fn a_cancelled_task_marked_failed_still_counts_as_finished() {
+        let task = running_task("quest-a", Some("acc-a"));
+        quest_task_finished(&task.outcome);
+        let error = "late error".to_string();
+        quest_task_failed(&task.outcome, error);
+        assert!(is_finished_slot(&task, "quest-a", &account("acc-a")));
+    }
+
+    #[test]
+    fn the_stopped_account_owns_only_its_own_tasks() {
+        let mine = running_task("quest-a", Some("acc-a"));
+        let theirs = running_task("quest-b", Some("acc-b"));
+        assert!(quest_task_belongs_to_account(&mine, Some("acc-a")));
+        assert!(!quest_task_belongs_to_account(&theirs, Some("acc-a")));
+    }
+
+    #[test]
+    fn an_accountless_task_is_stopped_for_anyone() {
+        let task = running_task("quest-a", None);
+        assert!(quest_task_belongs_to_account(&task, Some("acc-a")));
+    }
+
+    #[test]
+    fn asking_for_no_account_stops_every_task() {
+        let named = running_task("quest-a", Some("acc-a"));
+        let accountless = running_task("quest-b", None);
+        assert!(quest_task_belongs_to_account(&named, None));
+        assert!(quest_task_belongs_to_account(&accountless, None));
+    }
+
+    /// The same rule decides which quests and which manual game spoof one Stop
+    /// covers, so a named account may only end work stamped with its own id.
+    #[test]
+    fn an_account_only_owns_work_stamped_with_its_id() {
+        assert!(account_owns_work(Some("acc-a"), Some("acc-a")));
+        assert!(!account_owns_work(Some("acc-b"), Some("acc-a")));
+        assert!(account_owns_work(None, Some("acc-a")));
+        assert!(account_owns_work(Some("acc-a"), None));
     }
 }

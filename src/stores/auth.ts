@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { DiscordUser, ExtractedAccount, ProgramReward, AuthProgress, AuthProgressHandler } from '@/api/tauri'
+import type { DiscordUser, ExtractedAccount, ProgramReward, AuthProgress, AuthProgressHandler, AccountSummary } from '@/api/tauri'
 import {
   autoDetectToken,
   setToken,
@@ -8,6 +8,10 @@ import {
   autoFetchSuperProperties,
   getProgramRewards,
   stopAllGameSimulations,
+  listAccounts,
+  addAccount,
+  switchAccount,
+  forgetAccount,
 } from '@/api/tauri'
 import { useQuestsStore } from './quests'
 import { useGameIdleStore } from './gameIdle'
@@ -24,6 +28,9 @@ export const useAuthStore = defineStore('auth', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
   const detectedAccounts = ref<ExtractedAccount[]>([])
+  /** Every account this run has authenticated. The backend keeps each account's
+   *  API client, so switching needs the Discord user id and no second token. */
+  const knownAccounts = ref<AccountSummary[]>([])
 
   // Discord's Program Rewards endpoint owns the monthly Orbs schedule.
   const nitroProgramReward = ref<ProgramReward | null>(null)
@@ -83,6 +90,10 @@ export const useAuthStore = defineStore('auth', () => {
       if (user.value) {
         await stopAllGameSimulations()
         await questsStore.stop().catch(() => undefined)
+        // A hard login ends every account's backend work, so the quests the
+        // page no longer drives are stale the moment the command returns. The
+        // panel would otherwise keep offering to stop tasks that are gone.
+        questsStore.accountTasks = []
       }
       // The backend status event only reports `stopped`; drop the cached status
       // and per-account history so the UI cannot show the previous account's
@@ -133,6 +144,10 @@ export const useAuthStore = defineStore('auth', () => {
       if (user.value) {
         await stopAllGameSimulations()
         await questsStore.stop().catch(() => undefined)
+        // A hard login ends every account's backend work, so the quests the
+        // page no longer drives are stale the moment the command returns. The
+        // panel would otherwise keep offering to stop tasks that are gone.
+        questsStore.accountTasks = []
       }
       user.value = await autoLoginViaCdp(questsStore.cdpPort, onProgress)
       // Intentionally leave `token` null: CDP auto-login never surfaces the raw
@@ -166,8 +181,93 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  /** Re-read the accounts the backend remembers. Only called while logged in:
+   *  with no active account there is nothing to switch between. */
+  async function refreshKnownAccounts() {
+    if (!user.value) {
+      knownAccounts.value = []
+      return
+    }
+    knownAccounts.value = await listAccounts()
+  }
+
+  /** Sign in another account alongside the current one. Nothing about the active
+   *  session changes, so the quests that are running keep running. */
+  async function addKnownAccount(tokenValue: string) {
+    error.value = null
+    try {
+      const summary = await addAccount(tokenValue.trim())
+      // Re-read rather than append: the backend also stamps how many quests each
+      // account is running, and an already-known id must not be listed twice.
+      await refreshKnownAccounts()
+      return summary
+    } catch (e) {
+      error.value = commandErrorMessage(e)
+      return null
+    }
+  }
+
+  /**
+   * Make a remembered account the one the page works on, without signing out.
+   *
+   * This is deliberately not `loginWithToken`: that path stops every quest, while
+   * a direct-API quest of the account being left keeps posting with the client it
+   * captured at start. Only the page's ownership of those slots ends here. A CDP
+   * quest is stopped by the backend, because the one desktop client window is
+   * signed into one account and cannot drive another's session.
+   */
+  async function switchToAccount(userId: string) {
+    if (!userId || user.value?.id === userId) return false
+    loading.value = true
+    error.value = null
+    const questsStore = useQuestsStore()
+    const previousId = user.value?.id ?? null
+    try {
+      const next = await switchAccount(userId)
+      resetProgramRewardState()
+      // Released only once the backend accepted the switch: a refusal (game idle
+      // mode owns the activity slot) must leave this account's quests listed, since
+      // the page is still driving them. Nothing awaits before the reset, so no poll
+      // tick can run against the new account with the old account's slots.
+      questsStore.resetForAccountSwitch(previousId)
+      user.value = next
+      // A switch never surfaces a token; the client stays in the backend, exactly
+      // as with CDP auto-login.
+      token.value = null
+      // Home does not remount on a switch, so nothing else would repopulate the
+      // list the reset just cleared; `bootstrapAfterLogin` covers the other caches.
+      questsStore.fetchQuests().catch(err => {
+        console.warn('Quest list fetch after account switch failed:', err)
+      })
+      bootstrapAfterLogin(questsStore, 'CDP init on account switch failed:')
+      return true
+    } catch (e) {
+      error.value = commandErrorMessage(e)
+      return false
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /** Stop remembering an account. The backend refuses while its quests are running,
+   *  because a task would otherwise post for an account the page cannot name. */
+  async function forgetKnownAccount(userId: string) {
+    error.value = null
+    try {
+      await forgetAccount(userId)
+      knownAccounts.value = knownAccounts.value.filter(item => item.user.id !== userId)
+      return true
+    } catch (e) {
+      error.value = commandErrorMessage(e)
+      return false
+    }
+  }
+
   // Keep post-login refresh work non-blocking for both authentication paths.
   function bootstrapAfterLogin(questsStore: ReturnType<typeof useQuestsStore>, cdpWarning: string) {
+    refreshKnownAccounts().catch(err => {
+      console.warn('Background account list fetch failed:', err)
+    })
     questsStore.initCdpMode().catch(err => {
       console.warn(cdpWarning, err)
     })
@@ -208,6 +308,9 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = null
     error.value = null
     detectedAccounts.value = []
+    // Nothing is switchable to while signed out; the list is re-read from the
+    // backend on the next login.
+    knownAccounts.value = []
 
     // Reset quests store to clear all cached data from previous account
     questsStore.resetForLogout()
@@ -260,7 +363,7 @@ export const useAuthStore = defineStore('auth', () => {
   const nitroStatus = computed<{ label: string; class: string } | null>(() => {
     const pt = user.value?.premium_type
     if (!pt || pt === 0) return null
-    if (pt === 1) return { label: t('user.nitro_classic'), class: 'text-sky-600 dark:text-sky-400' }
+    if (pt === 1) return { label: t('user.nitro_classic'), class: 'text-sky-700 dark:text-sky-400' }
     if (pt === 2) return { label: t('user.nitro'), class: 'text-violet-600 dark:text-violet-400' }
     if (pt === 3) return { label: t('user.nitro_basic'), class: 'text-indigo-600 dark:text-indigo-400' }
     return null
@@ -272,6 +375,7 @@ export const useAuthStore = defineStore('auth', () => {
     loading,
     error,
     detectedAccounts,
+    knownAccounts,
     nitroProgramReward,
     programRewardLoading,
     programRewardError,
@@ -280,6 +384,10 @@ export const useAuthStore = defineStore('auth', () => {
     tryAutoDetect,
     loginWithToken,
     loginViaCdp,
+    refreshKnownAccounts,
+    addKnownAccount,
+    switchToAccount,
+    forgetKnownAccount,
     logout,
     fetchNitroProgramReward
   }

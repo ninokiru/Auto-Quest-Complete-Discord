@@ -27,10 +27,10 @@ export const settingToneClass = {
     buttonSoft: 'border-amber-500/40 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 hover:text-amber-700 dark:text-amber-300 dark:hover:text-amber-300',
   },
   danger: {
-    panel: 'border-destructive/30 bg-destructive/10 text-destructive',
-    icon: 'bg-destructive/15 text-destructive',
-    badge: 'border-destructive/40 bg-destructive/10 text-destructive',
-    buttonSoft: 'border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/15 hover:text-destructive',
+    panel: 'border-destructive/30 bg-destructive/10 text-error',
+    icon: 'bg-destructive/15 text-error',
+    badge: 'border-destructive/40 bg-destructive/10 text-error',
+    buttonSoft: 'border-destructive/40 bg-destructive/10 text-error hover:bg-destructive/15 hover:text-error',
   },
   info: {
     panel: 'border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300',

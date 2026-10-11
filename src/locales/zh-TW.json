@@ -170,7 +170,9 @@
     "reward_orbs_premium": "{base} → {premium} 個 Orbs",
     "reward_nitro_multiplier": "Nitro {multiplier}",
     "reward_quantity": "{name} x{quantity}",
-    "soft_error_console_only": "{game} 僅能在主機遊戲機上執行，本應用程式無法模擬。請在主機上遊玩，Discord 會記錄進度。"
+    "soft_error_console_only": "{game} 僅能在主機遊戲機上執行，本應用程式無法模擬。請在主機上遊玩，Discord 會記錄進度。",
+    "background_title": "其他帳號上執行的任務",
+    "background_hint": "切換帳號後它們仍會繼續執行。停止其中一個即可結束對應的任務。"
   },
   "filter": {
     "type": "類型",
@@ -413,7 +415,15 @@
     "type_app": "應用"
   },
   "account": {
-    "select_desc": "發現多個有效的 Discord Token，請選擇要使用的帳號："
+    "select_desc": "發現多個有效的 Discord Token，請選擇要使用的帳號：",
+    "switch_title": "切換帳號",
+    "active": "目前",
+    "running_quests": "{count} 個進行中",
+    "idle": "沒有進行中的任務",
+    "remove": "移除帳號",
+    "add": "新增其他帳號",
+    "add_hint": "登入，且不停止此帳號的任務。",
+    "add_action": "新增"
   },
   "dialog": {
     "accept_quests_title": "接受任務",

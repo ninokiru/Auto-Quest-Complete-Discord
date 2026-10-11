@@ -225,7 +225,7 @@ describe('quest progress units', () => {
     await store.startVideo('first', 60, 0)
     expect(store.runningQuests).toHaveLength(1)
     mocks.getQuestTaskStatuses.mockResolvedValue([
-      { questId: 'first', state: 'finished', error: null },
+      { questId: 'first', accountId: null, own: true, state: 'finished', error: null },
     ])
 
     await vi.advanceTimersByTimeAsync(120_000)

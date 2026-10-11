@@ -14,9 +14,9 @@ const iconMap = {
 }
 
 const styleMap = {
-  success: 'border-green-500/30 bg-green-500/10 text-green-600 dark:text-green-400',
-  error: 'border-destructive/30 bg-destructive/10 text-destructive',
-  warning: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  success: 'border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-400',
+  error: 'border-destructive/30 bg-destructive/10 text-error',
+  warning: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400',
   info: 'border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400',
 }
 </script>
@@ -32,34 +32,34 @@ const styleMap = {
       <TransitionGroup
         tag="div"
         class="flex flex-col-reverse gap-2"
-        enter-active-class="transition ease-out duration-300"
-        enter-from-class="opacity-0 translate-x-8"
-        enter-to-class="opacity-100 translate-x-0"
-        leave-active-class="transition ease-in duration-200 absolute"
-        leave-from-class="opacity-100 translate-x-0"
-        leave-to-class="opacity-0 translate-x-8"
-        move-class="transition duration-200"
+        enter-active-class="transition ease-out duration-200"
+        enter-from-class="opacity-0 translate-y-2 scale-[0.98]"
+        enter-to-class="opacity-100 translate-y-0 scale-100"
+        leave-active-class="transition ease-in duration-150 absolute inset-x-0"
+        leave-from-class="opacity-100 translate-y-0"
+        leave-to-class="opacity-0 translate-y-1 scale-[0.98]"
+        move-class="transition duration-200 ease-out"
       >
         <div
           v-for="toast in toastStore.toasts"
           :key="toast.id"
-          class="pointer-events-auto rounded-lg border bg-popover/95 backdrop-blur-sm shadow-lg p-3 flex gap-2.5 items-start"
+          class="pointer-events-auto flex w-full items-start gap-2.5 rounded-lg border bg-popover/95 p-3 shadow-lg backdrop-blur-sm"
           :class="styleMap[toast.type]"
         >
           <component
             :is="iconMap[toast.type]"
-            class="w-5 h-5 shrink-0 mt-0.5"
+            class="mt-0.5 h-5 w-5 shrink-0"
           />
 
-          <div class="flex-1 min-w-0">
-            <p class="text-sm font-medium text-foreground leading-snug">{{ toast.title }}</p>
-            <p v-if="toast.description" class="text-xs text-muted-foreground mt-0.5 leading-relaxed break-words">{{ toast.description }}</p>
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-medium leading-snug text-foreground">{{ toast.title }}</p>
+            <p v-if="toast.description" class="mt-0.5 break-words text-xs leading-relaxed text-muted-foreground">{{ toast.description }}</p>
 
-            <div v-if="toast.actions && toast.actions.length > 0" class="flex gap-2 mt-2">
+            <div v-if="toast.actions && toast.actions.length > 0" class="mt-2 flex gap-2">
               <button
                 v-for="(action, idx) in toast.actions"
                 :key="idx"
-                class="text-xs font-medium px-2 py-1 rounded border border-current/20 hover:bg-current/10 transition-colors"
+                class="rounded border border-current/25 px-2 py-1 text-xs font-medium outline-none transition-colors hover:bg-current/10 focus-visible:ring-2 focus-visible:ring-ring"
                 @click="action.onClick(); toastStore.dismiss(toast.id)"
               >
                 {{ action.label }}
@@ -70,10 +70,10 @@ const styleMap = {
           <button
             type="button"
             :aria-label="t('general.dismiss')"
-            class="shrink-0 text-muted-foreground/60 hover:text-foreground transition-colors"
+            class="-mr-1 -mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 outline-none transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
             @click="toastStore.dismiss(toast.id)"
           >
-            <X class="w-4 h-4" />
+            <X class="h-4 w-4" />
           </button>
         </div>
       </TransitionGroup>

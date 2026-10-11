@@ -673,7 +673,7 @@ async function stopRunningGame(game: RunningSimulatedGame): Promise<void> {
           <template v-if="mode === 'select'">
             <div v-if="!selectedGame" class="text-center py-8 text-muted-foreground border-2 border-dashed rounded-lg">
               {{ t('game_sim.select_game') }}
-              <p v-if="error" class="mt-3 mx-3 p-3 bg-destructive/10 text-destructive rounded-md text-sm text-left">
+              <p v-if="error" class="mt-3 mx-3 p-3 bg-destructive/10 text-error rounded-md text-sm text-left">
                 {{ error }}
               </p>
             </div>
@@ -694,13 +694,13 @@ async function stopRunningGame(game: RunningSimulatedGame): Promise<void> {
                 {{ t('general.loading') }}
               </div>
 
-              <div v-else-if="!store.platformCapabilities" class="p-3 bg-destructive/10 text-destructive rounded-md text-sm">
+              <div v-else-if="!store.platformCapabilities" class="p-3 bg-destructive/10 text-error rounded-md text-sm">
                 {{ t('game_sim.platform_capabilities_unavailable') }}
               </div>
 
               <!-- No simulator-compatible executables — let user enter a custom name -->
               <template v-else-if="!hasCompatibleExecutables">
-                <div class="p-3 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 rounded-md text-sm border border-yellow-500/20 space-y-1">
+                <div class="p-3 bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 rounded-md text-sm border border-yellow-500/20 space-y-1">
                   <p>{{ isWin32OnlyOnLinux ? t('game_sim.no_linux_exe_hint') : t('game_sim.no_exe_hint') }}</p>
                   <p>{{ t('game_sim.no_exe_custom_warning') }}</p>
                 </div>
@@ -740,14 +740,14 @@ async function stopRunningGame(game: RunningSimulatedGame): Promise<void> {
                     >
                       <div
                         v-if="exeDropdownOpen"
-                        class="absolute z-50 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-md overflow-hidden"
+                        class="absolute z-50 mt-1 w-full overflow-hidden rounded-lg border bg-popover text-popover-foreground shadow-lg"
                       >
                         <div class="max-h-48 overflow-y-auto p-1">
                           <button
                             v-for="exe in compatibleExecutables"
                             :key="exe.name"
                             type="button"
-                            class="flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground"
+                            class="flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground"
                             :class="selectedExecutable === exe.name && 'bg-accent/50'"
                             @click="selectExe(exe.name)"
                           >
@@ -763,8 +763,8 @@ async function stopRunningGame(game: RunningSimulatedGame): Promise<void> {
 
               </template>
 
-              <div v-if="error" class="p-3 bg-destructive/10 text-destructive rounded-md text-sm">{{ error }}</div>
-              <div v-if="success" class="p-3 bg-green-500/10 text-green-600 rounded-md text-sm">{{ success }}</div>
+              <div v-if="error" class="animate-in fade-in slide-in-from-top-1 duration-200 rounded-md bg-destructive/10 p-3 text-sm text-error">{{ error }}</div>
+              <div v-if="success" class="animate-in fade-in slide-in-from-top-1 duration-200 rounded-md bg-green-500/10 p-3 text-sm text-green-700 dark:text-green-400">{{ success }}</div>
             </div>
           </template>
 
@@ -780,8 +780,8 @@ async function stopRunningGame(game: RunningSimulatedGame): Promise<void> {
                 <p class="text-xs text-muted-foreground">{{ t('game_sim.custom_exe_hint') }}</p>
               </div>
 
-              <div v-if="error" class="p-3 bg-destructive/10 text-destructive rounded-md text-sm">{{ error }}</div>
-              <div v-if="success" class="p-3 bg-green-500/10 text-green-600 rounded-md text-sm">{{ success }}</div>
+              <div v-if="error" class="animate-in fade-in slide-in-from-top-1 duration-200 rounded-md bg-destructive/10 p-3 text-sm text-error">{{ error }}</div>
+              <div v-if="success" class="animate-in fade-in slide-in-from-top-1 duration-200 rounded-md bg-green-500/10 p-3 text-sm text-green-700 dark:text-green-400">{{ success }}</div>
             </div>
           </template>
         </CardContent>
@@ -794,7 +794,7 @@ async function stopRunningGame(game: RunningSimulatedGame): Promise<void> {
             <Button
               v-if="!cdpActive"
               @click="handleRunGame"
-              class="w-full bg-green-600 hover:bg-green-700 text-white"
+              class="w-full"
               :disabled="!effectiveExecutable || simulatorBusy || processBlocked || selectedAlreadyRunning"
             >
               <Play v-if="!running" class="w-4 h-4 mr-2" />
@@ -862,7 +862,7 @@ async function stopRunningGame(game: RunningSimulatedGame): Promise<void> {
             <p class="text-xs text-muted-foreground">{{ t('settings.simulation_directory_desc') }}</p>
           </div>
 
-          <div v-if="error" class="p-3 bg-destructive/10 text-destructive rounded-md text-sm">{{ error }}</div>
+          <div v-if="error" class="p-3 bg-destructive/10 text-error rounded-md text-sm">{{ error }}</div>
         </div>
 
         <DialogFooter>

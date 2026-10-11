@@ -42,7 +42,7 @@ async function copyValue(value: string, key: string) {
   <div class="rounded-md border border-border/60 bg-muted/20">
     <button
       type="button"
-      class="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-muted-foreground hover:text-foreground"
+      class="flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-xs font-medium text-muted-foreground outline-none transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       :aria-expanded="open"
       @click="open = !open"
     >
@@ -56,7 +56,7 @@ async function copyValue(value: string, key: string) {
         <dd class="min-w-0 break-all font-mono">{{ quest.id }}</dd>
         <dd>
           <Button variant="ghost" size="icon" class="h-6 w-6" :aria-label="t('debug.copy')" @click="copyValue(quest.id, 'quest')">
-            <Check v-if="copied === 'quest'" class="h-3 w-3 text-green-500" />
+            <Check v-if="copied === 'quest'" class="h-3 w-3 text-green-700 dark:text-green-400" />
             <Copy v-else class="h-3 w-3" />
           </Button>
         </dd>
@@ -92,7 +92,7 @@ async function copyValue(value: string, key: string) {
         <dd class="min-w-0 break-all font-mono">{{ ctaLink || 'none' }}</dd>
         <dd>
           <Button v-if="ctaLink" variant="ghost" size="icon" class="h-6 w-6" :aria-label="t('debug.copy')" @click="copyValue(ctaLink, 'cta')">
-            <Check v-if="copied === 'cta'" class="h-3 w-3 text-green-500" />
+            <Check v-if="copied === 'cta'" class="h-3 w-3 text-green-700 dark:text-green-400" />
             <Copy v-else class="h-3 w-3" />
           </Button>
         </dd>

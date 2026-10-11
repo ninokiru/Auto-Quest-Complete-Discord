@@ -170,7 +170,9 @@
     "reward_orbs_premium": "{base} -> {premium} Orbs",
     "reward_nitro_multiplier": "Nitro {multiplier}",
     "reward_quantity": "{name} x{quantity}",
-    "soft_error_console_only": "{game} yalnızca konsollarda çalışıyor ve bu uygulama konsolları simüle edemiyor. Oyunu bir konsolda oynayın, Discord ilerlemeyi kaydedecektir."
+    "soft_error_console_only": "{game} yalnızca konsollarda çalışıyor ve bu uygulama konsolları simüle edemiyor. Oyunu bir konsolda oynayın, Discord ilerlemeyi kaydedecektir.",
+    "background_title": "Diğer hesaplarda çalışan görevler",
+    "background_hint": "Hesap değiştirdikten sonra çalışmaya devam ederler. Bir görevi sona erdirmek için onu durdurun."
   },
   "filter": {
     "type": "Tür",
@@ -413,7 +415,15 @@
     "type_app": "Uygulama"
   },
   "account": {
-    "select_desc": "Birden fazla geçerli Discord belirteci bulundu. Lütfen hangi hesabı kullanacağınızı seçin:"
+    "select_desc": "Birden fazla geçerli Discord belirteci bulundu. Lütfen hangi hesabı kullanacağınızı seçin:",
+    "switch_title": "Hesap değiştir",
+    "active": "Mevcut",
+    "running_quests": "{count} çalışıyor",
+    "idle": "Çalışan görev yok",
+    "remove": "Hesabı kaldır",
+    "add": "Başka hesap ekle",
+    "add_hint": "Bu hesabın görevlerini durdurmadan giriş yapın.",
+    "add_action": "Ekle"
   },
   "dialog": {
     "accept_quests_title": "Kabul et Quests",

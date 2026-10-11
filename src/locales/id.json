@@ -170,7 +170,9 @@
     "reward_orbs_premium": "{base} menjadi {premium} Orbs",
     "reward_nitro_multiplier": "Nitro {multiplier}",
     "reward_quantity": "{name} x{quantity}",
-    "soft_error_console_only": "{game} hanya berjalan di konsol, yang tidak dapat disimulasikan oleh aplikasi ini. Mainkan di konsol dan Discord akan mencatat kemajuannya."
+    "soft_error_console_only": "{game} hanya berjalan di konsol, yang tidak dapat disimulasikan oleh aplikasi ini. Mainkan di konsol dan Discord akan mencatat kemajuannya.",
+    "background_title": "Quest berjalan di akun lain",
+    "background_hint": "Quest tetap berjalan setelah Anda berpindah akun. Hentikan salah satu untuk menyelesaikan quest-nya."
   },
   "filter": {
     "type": "Tipe",
@@ -413,7 +415,15 @@
     "type_app": "Aplikasi"
   },
   "account": {
-    "select_desc": "Ditemukan beberapa token Discord yang valid. Silakan pilih akun mana yang akan digunakan:"
+    "select_desc": "Ditemukan beberapa token Discord yang valid. Silakan pilih akun mana yang akan digunakan:",
+    "switch_title": "Ganti akun",
+    "active": "Saat ini",
+    "running_quests": "{count} berjalan",
+    "idle": "Tidak ada quest berjalan",
+    "remove": "Hapus akun",
+    "add": "Tambahkan akun lain",
+    "add_hint": "Masuk tanpa menghentikan quest akun ini.",
+    "add_action": "Tambahkan"
   },
   "dialog": {
     "accept_quests_title": "Terima Quests",

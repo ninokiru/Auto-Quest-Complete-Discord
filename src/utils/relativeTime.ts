@@ -57,3 +57,19 @@ export function formatPublishedDate(value: string | null | undefined, locale: st
   if (Number.isNaN(timestamp)) return ''
   return absoluteDate(timestamp, locale, false)
 }
+
+/**
+ * Absolute date, with the time unless `withTime` says otherwise, written the way the
+ * interface language writes it. A value that is not a timestamp yields an empty string,
+ * so the caller keeps its own placeholder.
+ */
+export function formatDateTime(
+  value: string | number | null | undefined,
+  locale: string,
+  withTime = true,
+): string {
+  if (value === null || value === undefined || value === '') return ''
+  const timestamp = typeof value === 'number' ? value : Date.parse(value)
+  if (!Number.isFinite(timestamp)) return ''
+  return absoluteDate(timestamp, locale, withTime)
+}

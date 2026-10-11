@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useQuestsStore } from '@/stores/quests'
 import { Wifi, AlertTriangle, Gamepad2, ChevronDown, Settings } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
+import { Button } from '@/components/ui/button'
 
 const { t } = useI18n()
 const questsStore = useQuestsStore()
@@ -69,9 +70,9 @@ const modeState = computed<ModeState>(() => {
 
 const toneClass = computed(() => {
   switch (modeState.value.tone) {
-    case 'success': return 'text-green-600 dark:text-green-400 bg-green-500/10 border-green-500/20 hover:bg-green-500/15'
-    case 'warning': return 'text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/20 hover:bg-amber-500/15'
-    case 'danger': return 'text-destructive bg-destructive/10 border-destructive/20 hover:bg-destructive/15'
+    case 'success': return 'text-green-700 dark:text-green-400 bg-green-500/10 border-green-500/20 hover:bg-green-500/15'
+    case 'warning': return 'text-amber-700 dark:text-amber-400 bg-amber-500/10 border-amber-500/20 hover:bg-amber-500/15'
+    case 'danger': return 'text-error bg-destructive/10 border-destructive/20 hover:bg-destructive/15'
     default: return 'text-muted-foreground bg-muted/40 border-border hover:bg-muted/60'
   }
 })
@@ -106,32 +107,34 @@ onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside))
 
     <Transition
       enter-active-class="transition ease-out duration-150"
-      enter-from-class="opacity-0 -translate-y-1"
-      enter-to-class="opacity-100 translate-y-0"
+      enter-from-class="opacity-0 -translate-y-1 scale-[0.98]"
+      enter-to-class="opacity-100 translate-y-0 scale-100"
       leave-active-class="transition ease-in duration-100"
-      leave-from-class="opacity-100 translate-y-0"
-      leave-to-class="opacity-0 -translate-y-1"
+      leave-from-class="opacity-100 translate-y-0 scale-100"
+      leave-to-class="opacity-0 -translate-y-1 scale-[0.98]"
     >
       <div
         v-if="open"
-        class="absolute right-0 top-full mt-2 z-50 w-72 rounded-lg border bg-popover text-popover-foreground shadow-md p-3 text-xs"
+        class="absolute right-0 top-full mt-2 z-50 w-72 origin-top-right rounded-lg border bg-popover p-3 text-xs text-popover-foreground shadow-lg"
       >
-        <p class="text-sm font-semibold mb-1">{{ modeState.title }}</p>
+        <p class="text-sm font-semibold">{{ modeState.title }}</p>
 
-        <ul class="mt-2 space-y-1.5 text-muted-foreground leading-5">
-          <li v-for="item in modeState.bullets" :key="item" class="flex gap-1.5">
-            <span class="shrink-0">•</span>
+        <ul class="mt-2 space-y-1.5 leading-5 text-muted-foreground">
+          <li v-for="item in modeState.bullets" :key="item" class="flex gap-2">
+            <span class="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-muted-foreground/50" aria-hidden="true" />
             <span>{{ item }}</span>
           </li>
         </ul>
 
-        <button
-          class="mt-3 w-full inline-flex items-center justify-center gap-2 h-8 rounded-md border bg-background text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors"
+        <Button
+          variant="outline"
+          size="sm"
+          class="mt-3 h-8 w-full gap-1.5 text-xs"
           @click="handleAction"
         >
-          <Settings class="w-3.5 h-3.5" />
+          <Settings class="h-3.5 w-3.5" />
           {{ modeState.actionLabel }}
-        </button>
+        </Button>
       </div>
     </Transition>
   </div>

@@ -170,7 +170,9 @@
     "reward_orbs_premium": "từ {base} thành {premium} Orbs",
     "reward_nitro_multiplier": "Nitro {multiplier}",
     "reward_quantity": "{name} x{quantity}",
-    "soft_error_console_only": "{game} chỉ chạy trên máy console nên ứng dụng này không thể mô phỏng. Hãy chơi trên máy console và Discord sẽ ghi nhận tiến trình của bạn."
+    "soft_error_console_only": "{game} chỉ chạy trên máy console nên ứng dụng này không thể mô phỏng. Hãy chơi trên máy console và Discord sẽ ghi nhận tiến trình của bạn.",
+    "background_title": "Quest đang chạy trên các tài khoản khác",
+    "background_hint": "Chúng vẫn chạy sau khi bạn đổi tài khoản. Dừng một quest để kết thúc quest đó."
   },
   "filter": {
     "type": "Loại",
@@ -413,7 +415,15 @@
     "type_app": "ứng dụng"
   },
   "account": {
-    "select_desc": "Đã tìm thấy nhiều mã thông báo Discord hợp lệ. Vui lòng chọn tài khoản sẽ sử dụng:"
+    "select_desc": "Đã tìm thấy nhiều mã thông báo Discord hợp lệ. Vui lòng chọn tài khoản sẽ sử dụng:",
+    "switch_title": "Đổi tài khoản",
+    "active": "Hiện tại",
+    "running_quests": "{count} đang chạy",
+    "idle": "Không có quest nào đang chạy",
+    "remove": "Xóa tài khoản",
+    "add": "Thêm tài khoản khác",
+    "add_hint": "Đăng nhập mà không dừng các quest của tài khoản này.",
+    "add_action": "Thêm"
   },
   "dialog": {
     "accept_quests_title": "Chấp nhận Quests",

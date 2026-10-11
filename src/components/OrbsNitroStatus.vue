@@ -54,6 +54,13 @@ const claimText = computed(() => {
   )
 })
 
+// Vietnamese groups with "." and English with ",", so the balance follows the
+// interface language rather than the operating system's.
+const formattedOrbsBalance = computed(() => {
+  if (questsStore.orbsBalance == null) return '—'
+  return new Intl.NumberFormat(locale.value).format(questsStore.orbsBalance)
+})
+
 const compactClaimText = computed(() => {
   const claim = authStore.nextOrbsClaim
   if (!claim) return ''
@@ -84,7 +91,7 @@ const compactClaimText = computed(() => {
       <div v-if="showOrbs" class="flex items-center gap-1.5">
         <span class="sr-only">{{ t('home.current_orbs') }}:</span>
         <span class="whitespace-nowrap text-xl font-semibold leading-none tabular-nums" aria-live="polite">
-          {{ questsStore.orbsBalance == null ? '—' : questsStore.orbsBalance.toLocaleString() }}
+          {{ formattedOrbsBalance }}
         </span>
         <Button
           variant="ghost"
