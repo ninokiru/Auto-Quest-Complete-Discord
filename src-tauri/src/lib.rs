@@ -218,9 +218,9 @@ fn quest_slot_conflict(
     candidate: &QuestSlot,
     limit: usize,
 ) -> Option<QuestSlotConflict> {
-    let already_running = running.iter().any(|slot| {
-        slot.quest_id == candidate.quest_id && slot.account_id == candidate.account_id
-    });
+    let already_running = running
+        .iter()
+        .any(|slot| slot.quest_id == candidate.quest_id && slot.account_id == candidate.account_id);
     if already_running {
         return Some(QuestSlotConflict::AlreadyRunning);
     }
@@ -357,7 +357,10 @@ mod quest_slot_tests {
             ),
             Some(QuestSlotConflict::ExclusiveBusy)
         );
-        assert_eq!(quest_slot_conflict(&[], &cdp_slot("quest-a", None), 5), None);
+        assert_eq!(
+            quest_slot_conflict(&[], &cdp_slot("quest-a", None), 5),
+            None
+        );
     }
 
     #[test]
@@ -1074,8 +1077,8 @@ fn list_accounts(state: State<'_, AppState>) -> Vec<AccountSummary> {
 /// validated, its client is kept, and nothing about the active session changes.
 #[tauri::command]
 async fn add_account(token: String, state: State<'_, AppState>) -> Result<AccountSummary, String> {
-    let client = DiscordApiClient::new(token)
-        .map_err(|e| format!("Failed to create API client: {}", e))?;
+    let client =
+        DiscordApiClient::new(token).map_err(|e| format!("Failed to create API client: {}", e))?;
     let user = client
         .get_current_user()
         .await
