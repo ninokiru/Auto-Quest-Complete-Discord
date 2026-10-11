@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
   onQuestComplete: vi.fn(),
   onQuestError: vi.fn(),
   onQuestProgress: vi.fn(),
-  requestAnimationFrame: vi.fn(),
+  requestAnimationFrame: vi.fn(() => 1),
   startVideoQuest: vi.fn(),
   stopGameSimulationUsage: vi.fn(),
   stopQuest: vi.fn(),
@@ -93,11 +93,13 @@ function runningIds(store: ReturnType<typeof useQuestsStore>): string[] {
 
 describe('quest tasks across an account switch', () => {
   beforeEach(() => {
+    // Fake timers first: they replace requestAnimationFrame, so a stub installed
+    // before them would be shadowed and the store would cancel the fake's frame.
+    vi.useFakeTimers()
     vi.stubGlobal('localStorage', storage())
     vi.stubGlobal('requestAnimationFrame', mocks.requestAnimationFrame)
     vi.stubGlobal('cancelAnimationFrame', mocks.cancelAnimationFrame)
     setActivePinia(createPinia())
-    vi.useFakeTimers()
     vi.clearAllMocks()
     mocks.getPlatformCapabilities.mockResolvedValue({
       os: 'windows', defaultGameQuestMode: 'simulate', executableOsPriority: ['win32'],
@@ -114,8 +116,9 @@ describe('quest tasks across an account switch', () => {
   })
 
   afterEach(() => {
-    vi.useRealTimers()
+    // Unwind in the order the globals were layered on: the stubs, then the fake timers.
     vi.unstubAllGlobals()
+    vi.useRealTimers()
   })
 
   it('hands every locally tracked backend task to the account being left', () => {
