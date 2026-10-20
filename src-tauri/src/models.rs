@@ -115,7 +115,10 @@ pub struct ManualCdpGameSimulation {
     pub owner_account_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A locally extracted token together with the account it validated against.
+/// Backend-internal on purpose: it has no `Serialize` implementation, so a
+/// command that tried to hand a raw token to the WebView would not compile.
+#[derive(Debug, Clone)]
 pub struct ExtractedAccount {
     pub token: String,
     pub user: DiscordUser,

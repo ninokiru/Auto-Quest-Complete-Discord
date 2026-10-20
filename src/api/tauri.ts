@@ -173,11 +173,6 @@ export interface DetectableGame {
 export type DesktopClientArg = 'auto' | 'official' | 'vesktop'
 export type CdpPortOwner = 'none' | 'official' | 'vesktop' | 'other'
 
-export interface ExtractedAccount {
-  token: string
-  user: DiscordUser
-}
-
 export type AuthProgressPhase =
   | 'extracting_tokens'
   | 'validating_tokens'
@@ -202,10 +197,25 @@ function createAuthProgressChannel(onProgress?: AuthProgressHandler): Channel<Au
   return new Channel<AuthProgress>((progress) => onProgress?.(progress))
 }
 
-export async function autoDetectToken(
+/** Scan this machine for Discord accounts. Every account the scan validates is
+ *  remembered by the backend, so only profiles cross IPC: the raw tokens stay
+ *  in Rust and a detected account is signed into through `loginWithAccount`. */
+export async function detectAccounts(
   onProgress?: AuthProgressHandler,
-): Promise<ExtractedAccount[]> {
+): Promise<AccountSummary[]> {
   return await invoke('auto_detect_token', {
+    onProgress: createAuthProgressChannel(onProgress),
+  })
+}
+
+/** Sign into an account the backend already discovered, addressed by Discord
+ *  user id. Runs the same full login a typed token goes through. */
+export async function loginWithAccount(
+  userId: string,
+  onProgress?: AuthProgressHandler,
+): Promise<DiscordUser> {
+  return await invoke('login_with_account', {
+    userId,
     onProgress: createAuthProgressChannel(onProgress),
   })
 }

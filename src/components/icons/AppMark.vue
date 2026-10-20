@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { useId } from 'vue'
 
-// Original mark for this app: a rounded tile, a check, one spark. It deliberately
-// traces no third-party logo, unlike the artwork it replaced.
+// Original mark for this app: the obscurus head on a pale blue-to-lilac tile.
+// It deliberately traces no third-party logo, unlike the artwork it replaced.
 const gradientId = `aqc-mark-${useId().replace(/[^\w-]/g, '')}`
 
 withDefaults(
@@ -22,19 +22,18 @@ withDefaults(
     fill="none"
   >
     <defs>
-      <linearGradient :id="gradientId" x1="3" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse">
-        <stop stop-color="#2563eb" />
-        <stop offset="1" stop-color="#1e3a8a" />
+      <linearGradient :id="gradientId" x1="4" y1="3" x2="20" y2="21" gradientUnits="userSpaceOnUse">
+        <stop stop-color="#e2f6fb" />
+        <stop offset="1" stop-color="#b3bce5" />
       </linearGradient>
     </defs>
     <rect x="2" y="2" width="20" height="20" rx="6" :fill="`url(#${gradientId})`" />
-    <path
-      d="M6.8 12.4l3.1 3.1 7.3-7.3"
-      stroke="#fff"
-      stroke-width="2.4"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-    />
-    <path d="M17.4 4.6l.7 1.9 1.9.7-1.9.7-.7 1.9-.7-1.9-1.9-.7 1.9-.7z" fill="#bfdbfe" />
+    <g fill="#000">
+      <ellipse cx="13.53" cy="13.83" rx="5.77" ry="5.03" />
+      <path d="M9.51 8.68Q7.01 9.19 4.5 10.59 5.41 12.64 6.95 14.06 7.79 11.28 9.51 8.68z" />
+      <path d="M17.58 5.14Q16.11 6.2 15.18 7.98 17.37 8.92 19.5 10.76 18.99 7.95 17.58 5.14z" />
+    </g>
+    <path d="M9.55 14.3Q11.69 14.44 12.29 16.5 10.15 16.36 9.55 14.3z" :fill="`url(#${gradientId})`" />
+    <path d="M17.38 14.3Q15.24 14.44 14.64 16.5 16.78 16.36 17.38 14.3z" :fill="`url(#${gradientId})`" />
   </svg>
 </template>

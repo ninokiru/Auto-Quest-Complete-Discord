@@ -260,7 +260,13 @@ fn launch_flatpak_with_cdp<C: CdpProbe>(
             false,
         ));
     }
-    wait_for_cdp_readiness(cdp, &options)?;
+    if let Err(error) = wait_for_cdp_readiness(cdp, &options) {
+        // Same rule as the other targets: an unjournaled Flatpak client must not
+        // survive this call with its debugging port open.
+        let _ = flatpak_kill(app_id, command.as_deref());
+        let _ = flatpak_spawn(app_id, command.as_deref(), None);
+        return Err(error);
+    }
     Ok(flatpak_result(
         installation,
         &options,
@@ -280,7 +286,9 @@ fn flatpak_result(
     LaunchResult {
         outcome,
         launched_path: std::path::PathBuf::new(),
-        channel: DiscordChannel::Stable,
+        // A Flatpak client has no official release channel, so the channel the
+        // caller selected is the closest honest answer.
+        channel: options.channel.unwrap_or(DiscordChannel::Stable),
         port: options.port,
         pid,
         cdp_connected,
@@ -503,7 +511,13 @@ fn launch_vesktop_with_cdp<C: CdpProbe>(
         ));
     }
 
-    wait_for_cdp_readiness(cdp, &options)?;
+    if let Err(error) = wait_for_cdp_readiness(cdp, &options) {
+        // The Vesktop instance has no `LaunchResult` to carry its pid, so this is
+        // the only chance to close the debug port it left open.
+        let _ = crate::terminate_installation_process_tree(&install.executable_path);
+        let _ = spawn_vesktop(&install, DiscordLaunchMode::Normal);
+        return Err(error);
+    }
     Ok(vesktop_result(
         &install,
         &options,
@@ -528,7 +542,9 @@ fn vesktop_result(
     LaunchResult {
         outcome,
         launched_path: install.executable_path.clone(),
-        channel: DiscordChannel::Stable,
+        // Vesktop ships one build with no official release channel, so the
+        // channel the caller selected is the closest honest answer.
+        channel: options.channel.unwrap_or(DiscordChannel::Stable),
         port: options.port,
         pid,
         cdp_connected,
@@ -629,7 +645,10 @@ where
         ));
     }
 
-    wait_for_cdp_readiness(cdp, &options)?;
+    if let Err(error) = wait_for_cdp_readiness(cdp, &options) {
+        abandon_failed_cdp_launch(platform, &install, selected_channel, &options);
+        return Err(error);
+    }
     Ok(result_for(
         &install,
         &options,
@@ -714,6 +733,31 @@ fn wait_until_discord_exits<P: PlatformBackend>(
     Err(LaunchError::ShutdownTimeout {
         timeout: options.shutdown_timeout,
     })
+}
+
+/// Clean up after a CDP spawn whose endpoint never became Discord-ready.
+///
+/// The readiness error is returned without a `LaunchResult`, so the process this
+/// call started is never journalled: no session list shows it, nothing reaps it,
+/// and it keeps listening on `--remote-debugging-port` with the user's logged-in
+/// Discord behind that port. Only this call's client can be on the channel here
+/// (a pre-existing one was terminated before the spawn), so terminating the
+/// channel closes the window, and the normal-mode relaunch keeps the user from
+/// losing their Discord because a debug endpoint was slow.
+fn abandon_failed_cdp_launch<P: PlatformBackend>(
+    platform: &P,
+    install: &DiscordInstall,
+    channel: Option<DiscordChannel>,
+    options: &LaunchOptions,
+) {
+    // An unreadable process table is treated as "still running": leaving a debug
+    // port open is the worse of the two mistakes.
+    if platform.is_running(channel).unwrap_or(true) {
+        if platform.terminate(channel).is_ok() {
+            let _ = wait_until_discord_exits(platform, channel, options);
+        }
+    }
+    let _ = platform.spawn(install, DiscordLaunchMode::Normal);
 }
 
 fn result_for(

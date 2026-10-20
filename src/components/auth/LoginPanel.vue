@@ -32,12 +32,12 @@ import { useQuestsStore } from '@/stores/quests'
 import {
   listRunningDesktopCdpSessions,
   launchDesktopClientCdp,
+  type AccountSummary,
   type AuthProgress,
   type ClientSelection,
   type CdpStatus,
   type DesktopClientInventory,
   type DesktopClientState,
-  type ExtractedAccount,
 } from '@/api/tauri'
 import { desktopClientArgForProvider, useDesktopClientState } from '@/composables/desktopClientState'
 import { clearCdpLaunchError, recordCdpLaunchError } from '@/composables/cdpDiagnostics'
@@ -173,7 +173,7 @@ async function transitionLoginCard(update: () => void) {
   }
 }
 
-async function showDetectedAccounts(accounts: ExtractedAccount[]) {
+async function showDetectedAccounts(accounts: AccountSummary[]) {
   await transitionLoginCard(() => {
     authStore.detectedAccounts = accounts
   })
@@ -317,13 +317,13 @@ async function handleAutoDetect() {
   }
 }
 
-async function selectAccount(account: ExtractedAccount) {
+async function selectAccount(account: AccountSummary) {
   if (!begin('local')) return
   selectedAccountId.value = account.user.id
   setProgress('local', 'running', 'auth.progress.validating_token')
   try {
-    const succeeded = await authStore.loginWithToken(
-      account.token,
+    const succeeded = await authStore.loginWithDetectedAccount(
+      account.user.id,
       event => handleBackendProgress('local', event),
     )
     if (succeeded) {

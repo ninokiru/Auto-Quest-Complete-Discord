@@ -105,6 +105,10 @@ struct AccountSession {
     user_id: String,
     client: DiscordApiClient,
     user: DiscordUser,
+    /// Kept so an account found by the local scan can be signed into later by
+    /// user id. It stays inside the backend; the page only ever receives an
+    /// `AccountSummary`.
+    token: String,
 }
 
 /// What the page may know about a remembered account.
@@ -509,12 +513,15 @@ mod quest_stop_wait_tests {
     }
 }
 
-/// Auto-detect Discord tokens (returns all valid accounts found)
+/// Scan this machine for Discord accounts. Every valid one is remembered in the
+/// backend and reported to the page as an `AccountSummary`: the raw tokens the
+/// scan reads stay inside Rust, so signing into a detected account goes through
+/// `login_with_account` instead of handing a token across IPC.
 #[tauri::command]
 async fn auto_detect_token(
     state: State<'_, AppState>,
     on_progress: Channel<AuthProgress>,
-) -> Result<Vec<ExtractedAccount>, String> {
+) -> Result<Vec<AccountSummary>, String> {
     use crate::logger::{log, LogCategory, LogLevel};
 
     log(
@@ -623,15 +630,17 @@ async fn auto_detect_token(
     // Sort accounts? Maybe by username? Or keep order.
 
     // Remember every account found on this machine, not just the one selected.
-    // Quick switching needs a client for the others, and the tokens never leave
-    // the backend: the WebView only ever sees an `AccountSummary`.
-    for account in &valid_accounts {
+    // Quick switching and re-login need a client for the others, and the tokens
+    // never leave the backend: the WebView only ever sees an `AccountSummary`.
+    let mut detected: Vec<String> = Vec::new();
+    for account in valid_accounts {
         if let Ok(client) = DiscordApiClient::new(account.token.clone()) {
             remember_account(&state, &client, &account.user);
+            detected.push(account.user.id.clone());
         }
     }
 
-    Ok(valid_accounts)
+    Ok(summarize_accounts(&state, |session| detected.contains(&session.user_id)))
 }
 
 async fn validate_extracted_tokens<F, Fut, P>(
@@ -778,6 +787,38 @@ fn reset_super_properties_session() {
 /// Login with provided token
 #[tauri::command]
 async fn set_token(
+    token: String,
+    state: State<'_, AppState>,
+    on_progress: Channel<AuthProgress>,
+) -> Result<DiscordUser, String> {
+    establish_login(token, state, on_progress).await
+}
+
+/// Sign into an account this run already discovered, named only by its Discord
+/// user id. The remembered credential re-enters through the same login path a
+/// typed token uses, so the page never has to hold the token itself.
+#[tauri::command]
+async fn login_with_account(
+    user_id: String,
+    state: State<'_, AppState>,
+    on_progress: Channel<AuthProgress>,
+) -> Result<DiscordUser, String> {
+    let token = state
+        .accounts
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|session| session.user_id == user_id)
+        .map(|session| session.token.clone())
+        .ok_or_else(|| "That account is not signed in on this device".to_string())?;
+    establish_login(token, state, on_progress).await
+}
+
+/// Validates `token` and makes its account the active session: the per-session
+/// SuperProperties identifiers are regenerated, the remote build numbers are
+/// refreshed, and only then is the client published. The typed-token login and
+/// the remembered-account login share this so both post the same headers.
+async fn establish_login(
     token: String,
     state: State<'_, AppState>,
     on_progress: Channel<AuthProgress>,
@@ -1037,12 +1078,14 @@ fn remember_account(state: &State<'_, AppState>, client: &DiscordApiClient, user
         let session = &mut accounts[index];
         session.client = client.clone();
         session.user = user.clone();
+        session.token = client.token().to_string();
         return;
     }
     accounts.push(AccountSession {
         user_id: user.id.clone(),
         client: client.clone(),
         user: user.clone(),
+        token: client.token().to_string(),
     });
 }
 
@@ -1050,7 +1093,17 @@ fn remember_account(state: &State<'_, AppState>, client: &DiscordApiClient, user
 /// how many of its quests are still running.
 #[tauri::command]
 fn list_accounts(state: State<'_, AppState>) -> Vec<AccountSummary> {
-    let active = active_account_id(&state);
+    summarize_accounts(&state, |_| true)
+}
+
+/// Builds the page-facing view of the remembered accounts a filter selects. The
+/// quest counts come from the task registry, so a background quest of an account
+/// the page is not looking at still shows up.
+fn summarize_accounts(
+    state: &State<'_, AppState>,
+    selected: impl Fn(&AccountSession) -> bool,
+) -> Vec<AccountSummary> {
+    let active = active_account_id(state);
     let running: Vec<Option<String>> = state
         .quest_tasks
         .lock()
@@ -1062,6 +1115,7 @@ fn list_accounts(state: State<'_, AppState>) -> Vec<AccountSummary> {
     let accounts = state.accounts.lock().unwrap();
     accounts
         .iter()
+        .filter(|session| selected(session))
         .map(|session| AccountSummary {
             user: session.user.clone(),
             active: active.as_deref() == Some(session.user_id.as_str()),
@@ -1474,12 +1528,15 @@ async fn start_play_activity_quest(
         );
     }
 
+    let _gate = state.activity_gate.lock().await;
+    state.game_idle.ensure_idle().await?;
+    // Read the session under the gate: `switch_account` replaces it while holding
+    // the same lock, so a switch that landed while this call was queued must not
+    // leave the new task posting heartbeats for the account the page has left.
     let client = state.client.lock().unwrap().clone();
     if transport == PlayActivityTransport::DirectApi && client.is_none() {
         return Err("Not logged in".to_string());
     }
-    let _gate = state.activity_gate.lock().await;
-    state.game_idle.ensure_idle().await?;
     let exclusive = transport == PlayActivityTransport::Cdp;
     ensure_quest_slot_available(&state, &quest_id, exclusive)?;
     if exclusive {
@@ -2008,8 +2065,19 @@ async fn stop_active_work_internal(state: &State<'_, AppState>) -> Result<(), St
 }
 
 /// Navigate Discord client SPA to a specific path (no reload)
+///
+/// Rejected while a CDP quest runs: this moves the window the quest has injected
+/// into, which drops the activity iframe it is reading progress from mid-quest.
 #[tauri::command]
-async fn navigate_discord_spa(target_path: String, cdp_port: u16) -> Result<(), String> {
+async fn navigate_discord_spa(
+    target_path: String,
+    cdp_port: u16,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let _gate = state.activity_gate.lock().await;
+    if has_running_exclusive_quest(&state) {
+        return Err("Stop the active CDP quest first".to_string());
+    }
     cdp_quest::navigate_discord_spa(cdp_port, &target_path)
         .await
         .map_err(|e| format!("Failed to navigate Discord SPA: {}", e))
@@ -3005,6 +3073,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             auto_detect_token,
             set_token,
+            login_with_account,
             auto_login_via_cdp,
             list_accounts,
             add_account,

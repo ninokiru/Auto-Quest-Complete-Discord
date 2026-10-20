@@ -116,7 +116,11 @@ pub fn restore_desktop_client_to_normal(
             });
         }
         crate::launcher::flatpak_spawn(app_id, command.as_deref(), None)?;
-        return Ok(());
+        return wait_until_running(
+            &installation.display_name,
+            STARTUP_TIMEOUT,
+            || crate::launcher::flatpak_is_running(app_id, command.as_deref()),
+        );
     }
     let executable = installation_executable_path(installation).ok_or_else(|| {
         LaunchError::InvalidInstallation {
@@ -150,14 +154,53 @@ pub fn restore_desktop_client_to_normal(
     }
     if let Some(official) = crate::installation_as_official(installation) {
         SystemPlatform.spawn(&official, DiscordLaunchMode::Normal)?;
-    } else if let Some(vesktop) = crate::installation_as_vesktop(installation) {
-        crate::vesktop::spawn_vesktop(&vesktop, DiscordLaunchMode::Normal)?;
-    } else {
-        return Err(LaunchError::InvalidInstallation {
-            details: "The provider does not expose a normal-mode launch target.".into(),
-        });
+        let channel = Some(official.channel);
+        return wait_until_running(
+            &installation.display_name,
+            STARTUP_TIMEOUT,
+            move || crate::is_discord_running(channel),
+        );
     }
-    Ok(())
+    if let Some(vesktop) = crate::installation_as_vesktop(installation) {
+        crate::vesktop::spawn_vesktop(&vesktop, DiscordLaunchMode::Normal)?;
+        return wait_until_running(
+            &installation.display_name,
+            STARTUP_TIMEOUT,
+            crate::vesktop::is_vesktop_running,
+        );
+    }
+    Err(LaunchError::InvalidInstallation {
+        details: "The provider does not expose a normal-mode launch target.".into(),
+    })
+}
+
+/// Waits until a freshly reopened client is actually visible in the process
+/// table.
+///
+/// A successful spawn only means the launch command was accepted: Flatpak, the
+/// macOS bundle launcher and Vesktop can all return and then exit immediately.
+/// Without this wait a restore would report success while the desktop has no
+/// client window at all, and the user would have to guess that their Discord
+/// never came back.
+fn wait_until_running(
+    process: &str,
+    timeout: Duration,
+    mut running: impl FnMut() -> Result<bool, LaunchError>,
+) -> Result<(), LaunchError> {
+    let started = Instant::now();
+    while started.elapsed() < timeout {
+        if running()? {
+            return Ok(());
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    Err(LaunchError::ProcessTermination {
+        process: process.to_string(),
+        details: format!(
+            "The client did not reopen in normal mode within {} seconds.",
+            timeout.as_secs()
+        ),
+    })
 }
 
 /// Opens an installation in normal mode without failing the caller, used when a
@@ -640,21 +683,30 @@ fn channel_from_process_name(name: &OsStr) -> Option<DiscordChannel> {
     }
 }
 
+/// Whether two paths name the same binary.
+///
+/// The comparison runs on canonical paths wherever they resolve. On Linux and
+/// macOS a discovered install is frequently a symlink (`/usr/bin/discord`, a
+/// `/opt/...` wrapper) while the running process reports its resolved target, so
+/// a textual comparison hides installs that are demonstrably running. If either
+/// path cannot be resolved the raw comparison is the fallback: the process may
+/// have exited, and a path no longer on disk still identifies the same install.
 fn paths_refer_to_same_executable(left: &Path, right: &Path) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        let paths_match = |left: &Path, right: &Path| {
+    fn paths_match(left: &Path, right: &Path) -> bool {
+        #[cfg(target_os = "windows")]
+        {
             left.to_string_lossy()
                 .eq_ignore_ascii_case(&right.to_string_lossy())
-        };
-        match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
-            (Ok(left), Ok(right)) => paths_match(&left, &right),
-            _ => paths_match(left, right),
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            left == right
         }
     }
-    #[cfg(not(target_os = "windows"))]
-    {
-        left == right
+
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => paths_match(&left, &right),
+        _ => paths_match(left, right),
     }
 }
 
@@ -960,6 +1012,35 @@ mod tests {
         std::fs::remove_dir(directory).unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn treats_a_symlinked_install_as_the_running_executable() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "discord-cdp-symlink-test-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let executable = directory.join("Discord");
+        std::fs::File::create(&executable).unwrap();
+        let wrapper = directory.join("discord");
+        std::os::unix::fs::symlink(&executable, &wrapper).unwrap();
+
+        // Discovery reads the wrapper name from `/usr/bin` while the running process
+        // reports the resolved binary, so the two only match once both sides are
+        // canonicalised.
+        assert!(paths_refer_to_same_executable(&wrapper, &executable));
+        let other = directory.join("DiscordCanary");
+        assert!(!paths_refer_to_same_executable(&wrapper, &other));
+
+        std::fs::remove_file(&wrapper).unwrap();
+        std::fs::remove_file(&executable).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
+
     struct RestorePlatform {
         installs: Vec<DiscordInstall>,
         running: Mutex<HashMap<DiscordChannel, bool>>,
@@ -1249,5 +1330,18 @@ mod tests {
         assert_eq!(result.failures[1].channel, DiscordChannel::Ptb);
         assert!(result.failures.iter().all(|failure| failure.error
             == "Discord CDP launcher is only supported on Windows, macOS, and Linux."));
+    }
+
+    #[test]
+    fn restore_only_succeeds_once_the_reopened_client_is_visible() {
+        let timeout = Duration::from_millis(30);
+        let appeared = wait_until_running("Discord Stable", timeout, || Ok(true));
+        assert!(appeared.is_ok());
+
+        let missing = wait_until_running("Discord Stable", timeout, || Ok(false));
+        let error = missing
+            .err()
+            .expect("a relaunch that never appears must not report success");
+        assert!(matches!(error, LaunchError::ProcessTermination { .. }));
     }
 }

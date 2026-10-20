@@ -326,6 +326,27 @@ fn spawn_readiness_timeout_is_typed() {
     ));
 }
 
+#[test]
+fn readiness_timeout_leaves_no_unjournaled_debug_instance() {
+    // The first reading is the pre-spawn check, the rest say the client this call
+    // started is still up.
+    let platform = FakePlatform::new(vec![install(DiscordChannel::Stable)], &[false, true]);
+    let probe = FakeProbe::new(vec![CdpProbeStatus::Unreachable]);
+
+    let error = launch_with_backends(fast_options(), &platform, &probe)
+        .err()
+        .expect("an endpoint that never becomes Discord-ready must time out");
+    assert!(matches!(
+        error,
+        LaunchError::ReadinessTimeout { port: 9223, .. }
+    ));
+
+    // No LaunchResult was returned, so nothing else will ever learn this pid: the
+    // launcher has to terminate the debug instance itself and reopen normal mode.
+    assert_eq!(platform.terminate_count.load(Ordering::SeqCst), 1);
+    assert_eq!(platform.spawn_count.load(Ordering::SeqCst), 2);
+}
+
 struct DelayedReadyProbe {
     calls: AtomicUsize,
     delay: Duration,

@@ -424,10 +424,15 @@ fn custom_launch_target(
         .is_some_and(|extension| extension == "app")
     {
         let info = selected_path.join("Contents").join("Info.plist");
-        let contents =
-            std::fs::read_to_string(&info).map_err(|_| LaunchError::InvalidInstallation {
+        // A signed bundle ships Info.plist as a binary plist, so the bytes are
+        // read directly: the identifier and the client name stay contiguous in
+        // its string table, while decoding them as UTF-8 text would fail.
+        let Ok(bytes) = std::fs::read(&info) else {
+            return Err(LaunchError::InvalidInstallation {
                 details: "The selected app bundle has no readable Info.plist.".into(),
-            })?;
+            });
+        };
+        let contents = String::from_utf8_lossy(&bytes).to_string();
         let expected = if _provider_id == &ProviderId::vesktop() {
             "dev.vencord.Vesktop"
         } else {
@@ -528,6 +533,9 @@ fn linux_desktop_entry_vesktop_installs() -> Vec<VesktopInstall> {
             let Some(command) = command else {
                 continue;
             };
+            if !desktop_exec_names_vesktop(&command) {
+                continue;
+            }
             let candidate = PathBuf::from(&command);
             if candidate.is_absolute() {
                 if let Some(install) = vesktop_install_from_executable(candidate) {
@@ -550,6 +558,28 @@ fn linux_desktop_entry_vesktop_installs() -> Vec<VesktopInstall> {
 #[cfg(target_os = "linux")]
 fn desktop_exec_command(exec: &str) -> Option<String> {
     parse_desktop_exec_arguments(exec).into_iter().next()
+}
+
+/// Whether the first `Exec=` token names the client itself rather than something
+/// that launches it.
+///
+/// Sandbox entries put their own program first (`Exec=flatpak run
+/// dev.vencapp.Vesktop`). Taking that token at face value records
+/// `/usr/bin/flatpak` as a Vesktop install, and the CDP launch then hands
+/// `--remote-debugging-port` to the sandbox manager, which is not a Chromium
+/// renderer and never opens the port. A `.AppImage` is the client binary, so its
+/// suffix still counts.
+#[cfg(target_os = "linux")]
+fn desktop_exec_names_vesktop(command: &str) -> bool {
+    let Some(name) = Path::new(command)
+        .file_name()
+        .and_then(|name| name.to_str())
+    else {
+        return false;
+    };
+    let name = name.to_ascii_lowercase();
+
+    crate::is_vesktop_process_name(&name) || name.ends_with(".appimage")
 }
 
 #[cfg(target_os = "linux")]
@@ -681,6 +711,23 @@ mod tests {
             parse_desktop_exec_arguments("/opt/Vesktop\\ Portable/vesktop --flag"),
             vec!["/opt/Vesktop Portable/vesktop", "--flag"]
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_desktop_entry_only_counts_when_it_names_the_client_itself() {
+        assert!(desktop_exec_names_vesktop("/usr/bin/vesktop"));
+        assert!(desktop_exec_names_vesktop("Vesktop"));
+        assert!(desktop_exec_names_vesktop("vesktop"));
+        assert!(desktop_exec_names_vesktop("/home/user/vesktop-0.1.0.AppImage"));
+
+        // The wrappers resolve to a real executable, so nothing downstream rejects
+        // them: the entry has to be refused here or flatpak is launched with
+        // Electron's flag.
+        assert!(!desktop_exec_names_vesktop("/usr/bin/flatpak"));
+        assert!(!desktop_exec_names_vesktop("snap"));
+        assert!(!desktop_exec_names_vesktop("/usr/bin/appimage-run"));
+        assert!(!desktop_exec_names_vesktop(""));
     }
 
     #[test]

@@ -4,9 +4,10 @@ import type { DiscordUser } from '@/api/tauri'
 import { useAuthStore } from './auth'
 
 const mocks = vi.hoisted(() => ({
-  autoDetectToken: vi.fn(),
+  detectAccounts: vi.fn(),
   autoLoginViaCdp: vi.fn(),
   setToken: vi.fn(),
+  loginWithAccount: vi.fn(),
   autoFetchSuperProperties: vi.fn(),
   getProgramRewards: vi.fn(),
   getGameSimulationHistory: vi.fn(),
@@ -27,9 +28,10 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/api/tauri', () => ({
-  autoDetectToken: mocks.autoDetectToken,
+  detectAccounts: mocks.detectAccounts,
   autoLoginViaCdp: mocks.autoLoginViaCdp,
   setToken: mocks.setToken,
+  loginWithAccount: mocks.loginWithAccount,
   autoFetchSuperProperties: mocks.autoFetchSuperProperties,
   getProgramRewards: mocks.getProgramRewards,
   getGameSimulationHistory: mocks.getGameSimulationHistory,
@@ -76,7 +78,7 @@ describe('auth login quest mode selection', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
-    mocks.autoDetectToken.mockResolvedValue([])
+    mocks.detectAccounts.mockResolvedValue([])
     mocks.questsStore.cdpAvailable = false
     mocks.questsStore.gameQuestMode = 'simulate'
     mocks.autoLoginViaCdp.mockResolvedValue(user)
@@ -121,7 +123,7 @@ describe('auth login quest mode selection', () => {
       const authStore = useAuthStore()
       mocks.autoLoginViaCdp.mockRejectedValue(failure)
       mocks.setToken.mockRejectedValue(failure)
-      mocks.autoDetectToken.mockRejectedValue(failure)
+      mocks.detectAccounts.mockRejectedValue(failure)
 
       const result = method === 'cdp' ? await authStore.loginViaCdp()
         : method === 'token' ? await authStore.loginWithToken('test-token')

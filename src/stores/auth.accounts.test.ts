@@ -4,9 +4,10 @@ import type { AccountSummary, DiscordUser } from '@/api/tauri'
 import { useAuthStore } from './auth'
 
 const mocks = vi.hoisted(() => ({
-  autoDetectToken: vi.fn(),
+  detectAccounts: vi.fn(),
   autoLoginViaCdp: vi.fn(),
   setToken: vi.fn(),
+  loginWithAccount: vi.fn(),
   autoFetchSuperProperties: vi.fn(),
   getProgramRewards: vi.fn(),
   stopAllGameSimulations: vi.fn(),
@@ -34,9 +35,10 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/api/tauri', () => ({
-  autoDetectToken: mocks.autoDetectToken,
+  detectAccounts: mocks.detectAccounts,
   autoLoginViaCdp: mocks.autoLoginViaCdp,
   setToken: mocks.setToken,
+  loginWithAccount: mocks.loginWithAccount,
   autoFetchSuperProperties: mocks.autoFetchSuperProperties,
   getProgramRewards: mocks.getProgramRewards,
   stopAllGameSimulations: mocks.stopAllGameSimulations,
@@ -232,5 +234,35 @@ describe('known account management', () => {
 
     expect(authStore.error).toBe('Stop its running quests first.')
     expect(authStore.knownAccounts.map(account => account.user.id)).toEqual(['123', '456'])
+  })
+
+  it('signs a lone detected account in by user id, never by token', async () => {
+    const authStore = useAuthStore()
+    // The scan reports profiles only, so the store has no credential to forward.
+    mocks.detectAccounts.mockResolvedValue([summary(otherUser)])
+    mocks.loginWithAccount.mockResolvedValue(otherUser)
+    mocks.autoFetchSuperProperties.mockResolvedValue(undefined)
+
+    await expect(authStore.tryAutoDetect()).resolves.toBe(true)
+
+    expect(mocks.loginWithAccount.mock.calls[0][0]).toBe('456')
+    // The token login is the only path that carries a raw credential.
+    expect(mocks.setToken).not.toHaveBeenCalled()
+    expect(authStore.user?.id).toBe('456')
+    expect(authStore.token).toBeNull()
+    expect(authStore.detectedAccounts).toEqual([])
+  })
+
+  it('lists several detected accounts for selection without exposing tokens', async () => {
+    const authStore = useAuthStore()
+    const detected = [summary(user), summary(otherUser)]
+    mocks.detectAccounts.mockResolvedValue(detected)
+
+    await expect(authStore.tryAutoDetect()).resolves.toBe(true)
+
+    expect(authStore.detectedAccounts).toEqual(detected)
+    expect(mocks.loginWithAccount).not.toHaveBeenCalled()
+    expect(mocks.setToken).not.toHaveBeenCalled()
+    expect(authStore.user).toBeNull()
   })
 })

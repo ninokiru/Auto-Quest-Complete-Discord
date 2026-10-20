@@ -1,9 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { DiscordUser, ExtractedAccount, ProgramReward, AuthProgress, AuthProgressHandler, AccountSummary } from '@/api/tauri'
+import type { DiscordUser, ProgramReward, AuthProgress, AuthProgressHandler, AccountSummary } from '@/api/tauri'
 import {
-  autoDetectToken,
+  detectAccounts,
   setToken,
+  loginWithAccount,
   autoLoginViaCdp,
   autoFetchSuperProperties,
   getProgramRewards,
@@ -27,7 +28,9 @@ export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(null)
   const loading = ref(false)
   const error = ref<string | null>(null)
-  const detectedAccounts = ref<ExtractedAccount[]>([])
+  /** Accounts the local scan validated, as profiles only: the backend keeps each
+   *  token, so the page selects one by Discord user id. */
+  const detectedAccounts = ref<AccountSummary[]>([])
   /** Every account this run has authenticated. The backend keeps each account's
    *  API client, so switching needs the Discord user id and no second token. */
   const knownAccounts = ref<AccountSummary[]>([])
@@ -50,18 +53,18 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function tryAutoDetect(
     onProgress?: AuthProgressHandler,
-    commitMultipleAccounts?: (accounts: ExtractedAccount[]) => void | Promise<void>,
+    commitMultipleAccounts?: (accounts: AccountSummary[]) => void | Promise<void>,
   ) {
     loading.value = true
     error.value = null
     detectedAccounts.value = []
 
     try {
-      const accounts = await autoDetectToken(onProgress)
+      const accounts = await detectAccounts(onProgress)
 
       if (accounts.length === 1) {
         // Only one account found, login automatically
-        return await loginWithToken(accounts[0].token, onProgress)
+        return await loginWithDetectedAccount(accounts[0].user.id, onProgress)
       } else {
         // Multiple accounts, let UI handle selection
         if (commitMultipleAccounts) {
@@ -81,6 +84,24 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function loginWithToken(tokenValue: string, onProgress?: AuthProgressHandler) {
+    return signIn((forward) => setToken(tokenValue, forward), tokenValue, onProgress)
+  }
+
+  /** Sign into an account the local scan found, addressed only by its Discord
+   *  user id. This is a hard sign-in rather than `switchToAccount`: the scan
+   *  leaves nothing active, and the backend still has to establish the fresh
+   *  SuperProperties session a login performs. */
+  async function loginWithDetectedAccount(userId: string, onProgress?: AuthProgressHandler) {
+    return signIn((forward) => loginWithAccount(userId, forward), null, onProgress)
+  }
+
+  /** Shared tail of both sign-in paths: stop everything the page owns, publish
+   *  the account the backend returned, then refresh the login caches. */
+  async function signIn(
+    authenticate: (onProgress: AuthProgressHandler) => Promise<DiscordUser>,
+    rawToken: string | null,
+    onProgress?: AuthProgressHandler,
+  ) {
     loading.value = true
     error.value = null
     resetProgramRewardState()
@@ -98,13 +119,15 @@ export const useAuthStore = defineStore('auth', () => {
       // The backend status event only reports `stopped`; drop the cached status
       // and per-account history so the UI cannot show the previous account's
       // simulation usage after signing in.
-      user.value = await setToken(tokenValue, (progress) => {
+      user.value = await authenticate((progress) => {
         // The store still performs one final SuperProperties synchronization
         // after the backend command. Keep the visible operation running until
         // that existing step has settled.
         if (progress.phase !== 'complete') onProgress?.(progress)
       })
-      token.value = tokenValue
+      // A detected account keeps its credential in the backend, exactly like
+      // CDP auto-login, so the page has no raw token to remember.
+      token.value = rawToken
 
       // After successful login, wait for SuperProperties fetch to complete
       // This ensures all data is ready before ending the loading state
@@ -383,6 +406,7 @@ export const useAuthStore = defineStore('auth', () => {
     nitroStatus,
     tryAutoDetect,
     loginWithToken,
+    loginWithDetectedAccount,
     loginViaCdp,
     refreshKnownAccounts,
     addKnownAccount,

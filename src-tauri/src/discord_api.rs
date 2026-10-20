@@ -192,6 +192,13 @@ pub struct DiscordApiClient {
 }
 
 impl DiscordApiClient {
+    /// The credential this client authenticates with. Crate-internal only: it
+    /// lets a remembered account be signed into again without the token ever
+    /// crossing the IPC boundary to the page.
+    pub(crate) fn token(&self) -> &str {
+        &self.token
+    }
+
     fn normalize_video_timestamp(timestamp: f64) -> u64 {
         if !timestamp.is_finite() || timestamp <= 0.0 {
             return 0;
