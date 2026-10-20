@@ -640,7 +640,9 @@ async fn auto_detect_token(
         }
     }
 
-    Ok(summarize_accounts(&state, |session| detected.contains(&session.user_id)))
+    Ok(summarize_accounts(&state, |session| {
+        detected.contains(&session.user_id)
+    }))
 }
 
 async fn validate_extracted_tokens<F, Fut, P>(
