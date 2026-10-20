@@ -116,11 +116,9 @@ pub fn restore_desktop_client_to_normal(
             });
         }
         crate::launcher::flatpak_spawn(app_id, command.as_deref(), None)?;
-        return wait_until_running(
-            &installation.display_name,
-            STARTUP_TIMEOUT,
-            || crate::launcher::flatpak_is_running(app_id, command.as_deref()),
-        );
+        return wait_until_running(&installation.display_name, STARTUP_TIMEOUT, || {
+            crate::launcher::flatpak_is_running(app_id, command.as_deref())
+        });
     }
     let executable = installation_executable_path(installation).ok_or_else(|| {
         LaunchError::InvalidInstallation {
@@ -155,11 +153,9 @@ pub fn restore_desktop_client_to_normal(
     if let Some(official) = crate::installation_as_official(installation) {
         SystemPlatform.spawn(&official, DiscordLaunchMode::Normal)?;
         let channel = Some(official.channel);
-        return wait_until_running(
-            &installation.display_name,
-            STARTUP_TIMEOUT,
-            move || crate::is_discord_running(channel),
-        );
+        return wait_until_running(&installation.display_name, STARTUP_TIMEOUT, move || {
+            crate::is_discord_running(channel)
+        });
     }
     if let Some(vesktop) = crate::installation_as_vesktop(installation) {
         crate::vesktop::spawn_vesktop(&vesktop, DiscordLaunchMode::Normal)?;

@@ -719,7 +719,9 @@ mod tests {
         assert!(desktop_exec_names_vesktop("/usr/bin/vesktop"));
         assert!(desktop_exec_names_vesktop("Vesktop"));
         assert!(desktop_exec_names_vesktop("vesktop"));
-        assert!(desktop_exec_names_vesktop("/home/user/vesktop-0.1.0.AppImage"));
+        assert!(desktop_exec_names_vesktop(
+            "/home/user/vesktop-0.1.0.AppImage"
+        ));
 
         // The wrappers resolve to a real executable, so nothing downstream rejects
         // them: the entry has to be refused here or flatpak is launched with
