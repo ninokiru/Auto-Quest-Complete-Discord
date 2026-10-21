@@ -24,11 +24,16 @@ env:
   CARGO_TARGET_DIR: ${{ github.workspace }}/target
 
 jobs:
+  # The release is opened as a draft here, before any build runner boots: the
+  # platform jobs upload their finished `.zip` and `.exe` straight onto it, so
+  # nothing has to be parked in workflow artifacts and re-downloaded by a second
+  # job. That removes the copies from the run's Artifacts panel and shaves a
+  # whole runner (checkout + unzip + repack) off the publish.
   release_policy:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: read
+      contents: write
     outputs:
       should_release: ${{ steps.policy.outputs.should_release }}
       version: ${{ steps.policy.outputs.version }}
@@ -64,6 +69,38 @@ jobs:
           echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
           echo "Release policy: ref=$ref version=$version should_release=$should_release prerelease=$prerelease"
+
+      - name: Open the draft release
+        if: steps.policy.outputs.should_release == 'true'
+        shell: bash
+        env:
+          GH_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.policy.outputs.version }}
+          PRERELEASE: ${{ steps.policy.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          flags=(--draft --title "$VERSION" --notes-file public/version-desc.txt)
+          if [ "$PRERELEASE" = 'true' ]; then
+            flags+=(--prerelease)
+          fi
+
+          if is_draft=$(gh release view "$VERSION" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$is_draft" = 'false' ]; then
+              echo "::error::Release $VERSION is already published. Bump public/version.txt before publishing again."
+              exit 1
+            fi
+            # Re-running a failed publish reuses the draft this workflow left
+            # behind instead of stranding two releases on one version.
+            gh release edit "$VERSION" "${flags[@]}"
+          elif gh api "repos/$GH_REPO/git/refs/tags/$VERSION" >/dev/null 2>&1; then
+            # A tag with no release is the normal state after a release was
+            # deleted, and gh refuses to attach to an existing tag unless the
+            # tag is verified rather than created.
+            gh release create "$VERSION" --verify-tag "${flags[@]}"
+          else
+            gh release create "$VERSION" --target "$GITHUB_SHA" "${flags[@]}"
+          fi
 
   # Every release-blocking check runs once here instead of three times in the
   # platform matrix: a single `cargo fmt --check` diff used to cost 3 x (node +
@@ -239,8 +276,10 @@ jobs:
             runner-ext: '.exe'
           # TEMP Windows-only publishing: the two entries below are switched off
           # so a release runs on one runner. macOS bundling is the slowest job and
-          # the Linux one adds four headless GUI smoke tests. To publish them again,
-          # uncomment these entries and the blocks tagged TEMP in the `release` job.
+          # the Linux one adds four headless GUI smoke tests. Their upload steps are
+          # already in this job behind `if: matrix.platform` guards, so re-enabling
+          # a platform only means uncommenting the entry here and adding its asset
+          # names to the check in the `release` job.
           # Nothing else needs restoring — the crates, sidecars, and platform code
           # are unchanged, and `quality` still builds and tests the Linux tree.
           # - platform: 'macos-14'  # Apple Silicon M1/M2 runner
@@ -310,20 +349,10 @@ jobs:
             dbus-x11 \
             libfuse2
 
-      - name: Cache Cargo registry
-        uses: actions/cache@v5
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-registry-
-      
-      - name: Cache Cargo index
-        uses: actions/cache@v5
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-index-
-
+      # `swatinem/rust-cache` below already restores and saves `~/.cargo`
+      # (registry, downloads and git dependencies) next to the target dir, so the
+      # hand-rolled registry/index caches only added a second ~40s restore and a
+      # ~16s save to every release.
       - name: Get version
         shell: bash
         env:
@@ -337,6 +366,19 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: '. -> target'
+
+      # Every release the bundler re-downloads NSIS (Windows) or the AppImage
+      # tools (Linux) into its own tools dir, and a dropped connection there
+      # throws away a compile that already finished. `rust-cache` above only
+      # covers `~/.cargo` and the target dir, never this one. The unused path on
+      # each platform is ignored by actions/cache.
+      - name: Cache Tauri bundler tools
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/AppData/Local/tauri
+            ~/.cache/tauri
+          key: ${{ runner.os }}-tauri-tools-v1
     
       - name: install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -364,11 +406,20 @@ jobs:
           TAURI_TARGET_TRIPLE: ${{ matrix.cdp_target }}
         run: pnpm run build:cdp-launcher
 
-      - uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          args: ${{ matrix.args }} -- --locked
+      # The Tauri CLI directly instead of tauri-apps/tauri-action: that action's
+      # release plumbing (release lookup or creation, updater `latest.json`, asset
+      # globbing and uploading) is duplicated by the steps below, and every run
+      # paid for the API round trips. The finished bundles now go onto the draft
+      # release opened by `release_policy`.
+      #
+      # `beforeBuildCommand` is blanked because the "Build frontend" step above
+      # already produced `dist/` (and `tauri::generate_context!` needs it at
+      # compile time); left alone, `tauri build` would run vue-tsc and vite a
+      # second time inside the bundle step. The single quotes around the JSON are
+      # literals in both pwsh on Windows and bash on macOS/Linux, which is why
+      # this step keeps the runner's default shell.
+      - name: Build the app bundle
+        run: pnpm tauri build ${{ matrix.args }} --config '{"build":{"beforeBuildCommand":""}}' -- --locked
 
       - name: Verify unsigned macOS bundle identity and integrity
         if: matrix.platform == 'macos-14'
@@ -386,7 +437,6 @@ jobs:
           fi
           echo "Verified bundle: $app"
           bundle_dir="$(cd "$(dirname "$app")/.." && pwd -P)"
-          echo "bundle_dir=$bundle_dir" >> "$GITHUB_ENV"
           bash scripts/verify-macos-bundle.sh "$app"
           node scripts/audit-packaged-identity.mjs \
             --platform macos \
@@ -454,15 +504,28 @@ jobs:
             wayland --kind appimage "$appimage" \
             target/release/bundle/identity-smoke-linux-appimage-wayland.json
 
-      - name: Stage Windows portable artifact
+      # The two shipped Windows files are built and uploaded here, once: the
+      # portable zip from the release binaries and the renamed NSIS installer.
+      # They used to travel as workflow artifacts into the `release` job, which
+      # re-zipped and re-uploaded the same bytes from a second runner.
+      #
+      # Runner binary is embedded in the main executable via include_bytes!
+      # CDP launcher sidecar must be included alongside the main exe for
+      # the "Create CDP Launcher Shortcut" feature to work in portable mode.
+      - name: Upload Windows assets to the draft release
         if: matrix.platform == 'windows-latest'
         shell: pwsh
         env:
+          GH_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ env.version }}
           CDP_TARGET: ${{ matrix.cdp_target }}
         run: |
+          $ErrorActionPreference = 'Stop'
           $portableDir = 'build/windows-portable'
           $mainExe = 'target/release/auto-quest-complete-discord.exe'
           $bridgeExe = "src-tauri/binaries/waybridge-$env:CDP_TARGET.exe"
+          $nsisDir = 'target/release/bundle/nsis'
           # A missing file here used to surface as a bare Copy-Item error several
           # minutes into the only Windows job of the release.
           foreach ($source in @($mainExe, $bridgeExe)) {
@@ -474,195 +537,139 @@ jobs:
           New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
           Copy-Item $mainExe "$portableDir/auto-quest-complete-discord.exe"
           Copy-Item $bridgeExe "$portableDir/waybridge.exe"
-      
-      # Upload Windows artifact (portable)
-      # Runner binary is embedded in the main executable via include_bytes!
-      # CDP launcher sidecar must be included alongside the main exe for
-      # the "Create CDP Launcher Shortcut" feature to work in portable mode.
-      - name: Upload Windows artifact (portable)
-        if: matrix.platform == 'windows-latest'
-        uses: actions/upload-artifact@v7
-        with:
-          name: tauri-win-portable
-          path: build/windows-portable/*
 
-      # Upload Windows artifact (NSIS installer executable)
-      # `--bundles nsis` above means the NSIS .exe is the only installer this
-      # job produces, so a missing match means the bundler changed behaviour, not
-      # a transient glitch: fail in the build job instead of shipping a release
-      # without it.
-      - name: Upload Windows artifact (EXE)
-        if: matrix.platform == 'windows-latest'
-        uses: actions/upload-artifact@v7
-        with:
-          name: tauri-win-nsis
-          path: target/release/bundle/nsis/*.exe
-          if-no-files-found: error
+          $zip = "build/auto-quest-complete-discord-Windows-x64-$env:VERSION-portable.zip"
+          Compress-Archive -Path "$portableDir/*" -DestinationPath $zip -Force
 
-      # Upload macOS artifact
-      - name: Upload macOS artifact
+          # `--bundles nsis` above means the NSIS .exe is the only installer this
+          # job produces, so a missing match means the bundler changed behaviour,
+          # not a transient glitch: fail in the build job instead of shipping a
+          # release without it.
+          $nsis = @(Get-ChildItem -Path $nsisDir -Filter '*.exe' -File)
+          if ($nsis.Count -eq 0) {
+            Write-Error "No *.exe inside $nsisDir"
+            exit 1
+          }
+          $installer = $nsis[0].FullName
+          $setup = "build/auto-quest-complete-discord-Windows-x64-$env:VERSION-setup.exe"
+          Copy-Item $installer $setup
+
+          # Native commands never raise a PowerShell error, so the upload has to
+          # report its own exit code or a rejected asset would pass as a success.
+          gh release upload "$env:VERSION" "$zip" "$setup" --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # TEMP Windows-only publishing: this step and the Linux one below mirror the
+      # Windows upload for the two disabled matrix entries, so re-enabling a
+      # platform adds a runner instead of re-adding release plumbing. macOS
+      # bundling is the slowest job and the Linux one adds four headless GUI
+      # smoke tests.
+      - name: Upload macOS assets to the draft release
         if: matrix.platform == 'macos-14'
-        uses: actions/upload-artifact@v7
-        with:
-          name: tauri-macos-arm64-release
-          path: ${{ env.bundle_dir }}
+        shell: bash
+        env:
+          GH_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ env.version }}
+        run: |
+          set -euo pipefail
+          prefix="auto-quest-complete-discord-MacOS-arm64-$VERSION"
+          mkdir -p build
+          uploaded=0
+          # Search all of target/: the bundler only honours --target when the
+          # cargo config says so, and a hard-coded path would fail silently.
+          dmg="$(find target -maxdepth 8 -type f -name '*.dmg' | head -n 1 || true)"
+          if [ -n "$dmg" ]; then
+            cp "$dmg" "build/$prefix.dmg"
+            gh release upload "$VERSION" "build/$prefix.dmg" --clobber
+            uploaded=1
+          fi
+          # `--keepParent` keeps the .app directory the user drags into
+          # Applications; plain `zip -r` would flatten its Versions/ symlinks.
+          app="$(find target -maxdepth 8 -type d -name '*.app' | head -n 1 || true)"
+          if [ -n "$app" ]; then
+            ditto -c -k --sequesterRsrc --keepParent "$app" "build/$prefix.zip"
+            gh release upload "$VERSION" "build/$prefix.zip" --clobber
+            uploaded=1
+          fi
+          if [ "$uploaded" = 0 ]; then
+            echo "::error::No macOS .dmg or .app produced by the bundle step"
+            exit 1
+          fi
 
-      # Upload Linux artifacts (AppImage + DEB)
-      - name: Upload Linux artifacts
+      - name: Upload Linux assets to the draft release
         if: matrix.platform == 'ubuntu-22.04'
-        uses: actions/upload-artifact@v7
-        with:
-          name: tauri-linux-x64-release
-          path: |
-            target/release/bundle/deb/*.deb
-            target/release/bundle/appimage/*.AppImage
-            target/release/bundle/identity-manifest-linux-*.json
-            target/release/bundle/identity-smoke-linux-*.json
+        shell: bash
+        env:
+          GH_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ env.version }}
+        run: |
+          set -euo pipefail
+          prefix="auto-quest-complete-discord-Linux-x86_64-$VERSION"
+          mkdir -p build
+          appimage="$(find target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' -type f | head -n 1 || true)"
+          deb="$(find target/release/bundle/deb -maxdepth 1 -name '*.deb' -type f | head -n 1 || true)"
+          if [ -z "$appimage" ] || [ -z "$deb" ]; then
+            echo "::error::Missing .deb or .AppImage (deb='$deb' appimage='$appimage')"
+            exit 1
+          fi
+          cp "$appimage" "build/$prefix.AppImage"
+          cp "$deb" "build/$prefix.deb"
+          gh release upload "$VERSION" "build/$prefix.AppImage" "build/$prefix.deb" --clobber
 
+  # Both branches rejoin here. The finished assets are already attached to the
+  # draft by the time this runs, so all that is left is to refuse to publish
+  # unless `quality` and every platform build came back green, and then flip the
+  # draft switch. No checkout, no artifact download, no repack: those were a
+  # second runner doing nothing but moving the same bytes onto the release.
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     needs:
       - release_policy
       - quality
       - build-tauri
-    # `build-tauri` no longer waits for `quality`, so this is where the two
-    # branches rejoin: no release is created unless both are green.
+    # `build-tauri` does not wait for `quality`, so this is where they meet.
+    # `always()` is what lets a failed build explain itself here instead of
+    # leaving a draft behind that nobody reports on.
     if: >-
-      needs.release_policy.outputs.should_release == 'true' &&
-      needs.quality.result == 'success' &&
-      needs.build-tauri.result == 'success'
+      always() &&
+      needs.release_policy.result == 'success' &&
+      needs.release_policy.outputs.should_release == 'true'
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v6
-
-      - name: get version
-        id: extract_version
-        env:
-          RELEASE_VERSION: ${{ needs.release_policy.outputs.version }}
-          RELEASE_PRERELEASE: ${{ needs.release_policy.outputs.prerelease }}
-        run: |
-          printf 'version=%s\n' "$RELEASE_VERSION" >> "$GITHUB_ENV"
-          printf 'PRERELEASE=%s\n' "$RELEASE_PRERELEASE" >> "$GITHUB_ENV"
+      - name: Publish the draft release
         shell: bash
-
-      - name: Download Windows artifact (portable)
-        uses: actions/download-artifact@v8
-        with:
-          name: tauri-win-portable
-          path: tauri-win-portable
-
-      - name: Download Windows artifact (EXE)
-        uses: actions/download-artifact@v8
-        with:
-          name: tauri-win-nsis
-          path: tauri-win-nsis
-
-      # TEMP (Windows-only publishing): these two artifacts do not exist while the
-      # macOS/Linux matrix entries are commented out, and a named
-      # download-artifact step fails when its artifact is missing.
-      # - name: Download macOS artifact
-      #   uses: actions/download-artifact@v8
-      #   with:
-      #     name: tauri-macos-arm64-release
-      #     path: tauri-macos-arm64-release
-
-      # - name: Download Linux artifact
-      #   uses: actions/download-artifact@v8
-      #   with:
-      #     name: tauri-linux-x64-release
-      #     path: tauri-linux-x64-release
-
-      - name: prepare files
         env:
-          VERSION: ${{ env.version }}
+          GH_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.release_policy.outputs.version }}
+          GATES: ${{ needs.quality.result }} ${{ needs.build-tauri.result }}
         run: |
-          version="$VERSION"
-          # Create output directory
-          mkdir -p ./build
-          
-          # Package Windows portable build
-          cd tauri-win-portable
-          zip -r "../build/auto-quest-complete-discord-Windows-x64-$version-portable.zip" .
-          cd ..
-          
-          # Copy the Windows installer. Bundle file names carry the product name,
-          # so locate it with find instead of a glob: an unquoted glob would split
-          # on any space the bundler ever emits.
-          nsis="$(find tauri-win-nsis -maxdepth 1 -type f -name '*.exe' | head -n 1 || true)"
-          if [ -z "$nsis" ]; then
-            echo "::error::No *.exe inside tauri-win-nsis"
-            find tauri-win-nsis -maxdepth 1 || true
+          set -euo pipefail
+          if [ "$GATES" != 'success success' ]; then
+            echo "::error::Release gates were: $GATES"
+            echo "::notice::Draft $VERSION is left unpublished; fix the failing job and re-run this workflow."
             exit 1
           fi
-          cp "$nsis" "./build/auto-quest-complete-discord-Windows-x64-$version-setup.exe"
-          
-          # TEMP (Windows-only publishing): the macOS and Linux asset assembly is
-          # disabled with their matrix entries. Keep the guard style: it reads from
-          # artifact directories that only exist when those jobs run.
-          # # Package macOS build: `files:` below declares both a .dmg and a
-          # # portable .app zip, so emit whichever the build actually produced.
-          # cd tauri-macos-arm64-release
-          # build_dir="$(cd ../build && pwd -P)"
-          # dmg="$(find . -maxdepth 3 -name '*.dmg' -type f | head -n 1 || true)"
-          # app="$(find . -maxdepth 4 -type d -name '*.app' | head -n 1 || true)"
-          # if [ -z "$dmg" ] && [ -z "$app" ]; then
-          #   echo "::error::No macOS .dmg or .app inside tauri-macos-arm64-release"
-          #   find . -maxdepth 3 | head -n 40
-          #   exit 1
-          # fi
-          # [ -n "$dmg" ] && cp "$dmg" "$build_dir/auto-quest-complete-discord-MacOS-arm64-$version.dmg"
-          # if [ -n "$app" ]; then
-          #   # -y keeps the bundle's Versions/ symlinks instead of duplicating them.
-          #   (cd "$(dirname "$app")" && zip -qry "$build_dir/auto-quest-complete-discord-MacOS-arm64-$version.zip" "$(basename "$app")")
-          # fi
-          # cd ..
 
-          # # Copy Linux AppImage + DEB (paths are flattened by upload-artifact)
-          # appimage=$(find tauri-linux-x64-release -name '*.AppImage' | head -n 1)
-          # deb=$(find tauri-linux-x64-release -name '*.deb' | head -n 1)
-          # if [ -z "$appimage" ]; then
-          #   echo "::error::No Linux AppImage found in tauri-linux-x64-release"
-          #   exit 1
-          # fi
-          # cp "$appimage" ./build/auto-quest-complete-discord-Linux-x86_64-$version.AppImage
-          # if [ -z "$deb" ]; then
-          #   echo "::error::No Linux .deb found in tauri-linux-x64-release"
-          #   exit 1
-          # fi
-          # cp "$deb" ./build/auto-quest-complete-discord-Linux-x86_64-$version.deb
+          # TEMP (Windows-only publishing): extend this list with the macOS and
+          # Linux asset names when their matrix entries come back, so a bundler
+          # that stops producing an asset cannot publish a half-release.
+          assets="$(gh release view "$VERSION" --json assets --jq '.assets[].name')"
+          for expected in \
+            "auto-quest-complete-discord-Windows-x64-$VERSION-setup.exe" \
+            "auto-quest-complete-discord-Windows-x64-$VERSION-portable.zip"; do
+            if ! grep -qxF "$expected" <<< "$assets"; then
+              echo "::error::Draft $VERSION is missing the asset $expected"
+              printf '%s\n' "$assets"
+              exit 1
+            fi
+          done
 
-          echo "win_portable=auto-quest-complete-discord-Windows-x64-$version-portable" >> $GITHUB_ENV
-          echo "win_exe=auto-quest-complete-discord-Windows-x64-$version-setup" >> $GITHUB_ENV
-          # TEMP: unset, so `files:` must not reference them either.
-          # echo "macos_build_release=auto-quest-complete-discord-MacOS-arm64-$version" >> $GITHUB_ENV
-          # echo "linux_build_release=auto-quest-complete-discord-Linux-x86_64-$version" >> $GITHUB_ENV
-
-      - name: Create and Upload Release
-        id: create_release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ env.version }}
-          name: ${{ env.version }}
-          body_path: ./public/version-desc.txt
-          # TEMP (Windows-only publishing): the macOS and Linux asset lines are
-          # dropped from this list along with their matrix entries, the two Download
-          # steps, and the env exports in `prepare files`. Inside a block scalar a
-          # `#` would be a literal file pattern, so the note lives here instead:
-          #   build path for env.macos_build_release, .dmg and .zip
-          #   build path for env.linux_build_release, .AppImage and .deb
-          files: |
-            ./build/${{ env.win_portable }}.zip
-            ./build/${{ env.win_exe }}.exe
-          prerelease: ${{ env.PRERELEASE }}
-          draft: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish Release
-        run: gh release edit "${{ env.version }}" --draft=false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
+          gh release edit "$VERSION" --draft=false
 
   reset-develop:
     name: Reset develop after stable release
