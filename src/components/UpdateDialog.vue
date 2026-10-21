@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { open } from '@tauri-apps/plugin-shell'
-import { ArrowDownCircle, ExternalLink, LoaderCircle } from 'lucide-vue-next'
+import { ArrowDownCircle, ExternalLink, LoaderCircle, X } from 'lucide-vue-next'
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -142,13 +142,22 @@ watch(() => versionStore.pendingUpdateTag, (tag) => {
 
 <template>
   <AlertDialog :open="visible" @update:open="handleOpenChange">
-    <AlertDialogContent class="max-h-[85vh] gap-3 overflow-hidden sm:max-w-xl">
+    <AlertDialogContent class="flex max-h-[85vh] flex-col gap-3 overflow-hidden sm:max-w-xl">
+      <!-- The panel is capped, so without an on-screen exit the only way out of a
+           long changelog is Escape — invisible to anyone who does not know it. -->
+      <AlertDialogCancel
+        :disabled="installing"
+        :aria-label="t('general.close')"
+        class="absolute right-3 top-3 mt-0 h-8 w-8 shrink-0 rounded-md border-transparent bg-transparent p-0 text-muted-foreground opacity-80 hover:bg-accent hover:opacity-100 disabled:pointer-events-none disabled:opacity-40"
+      >
+        <X class="h-4 w-4" />
+      </AlertDialogCancel>
       <AlertDialogHeader class="space-y-2">
         <div class="flex items-start gap-3">
           <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
             <ArrowDownCircle class="h-5 w-5" />
           </div>
-          <div class="min-w-0 space-y-1">
+          <div class="min-w-0 shrink space-y-1 pr-9">
             <AlertDialogTitle class="text-base leading-snug">
               {{ t('notify.dialog.title', { version: release?.tag_name ?? '' }) }}
             </AlertDialogTitle>
@@ -162,7 +171,7 @@ watch(() => versionStore.pendingUpdateTag, (tag) => {
         </div>
       </AlertDialogHeader>
 
-      <div class="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border/60 bg-muted/30 p-3">
+      <div class="changelog-scroll min-h-0 flex-1 overflow-y-auto rounded-lg border border-border/60 bg-muted/30 p-3">
         <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           {{ t('notify.dialog.notes') }}
         </p>
@@ -180,24 +189,47 @@ watch(() => versionStore.pendingUpdateTag, (tag) => {
       </p>
       <p v-else class="text-xs text-muted-foreground">{{ t('notify.dialog.hint') }}</p>
 
-      <AlertDialogFooter class="flex-row flex-wrap gap-2 sm:space-x-0">
-        <AlertDialogCancel :disabled="installing" class="border-border/70">
+      <AlertDialogFooter class="flex-row flex-wrap shrink-0 gap-2 border-t border-border/50 pt-3 sm:space-x-0">
+        <AlertDialogCancel
+          :disabled="installing"
+          class="border-transparent bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
           {{ t('notify.dialog.later') }}
         </AlertDialogCancel>
         <Button
           v-if="release?.html_url"
           variant="outline"
-          class="gap-2"
+          class="gap-2 border-border/70"
           :disabled="installing"
           @click="downloadLatest"
         >
           <ExternalLink class="h-4 w-4" />
           {{ t('version.download') }}
         </Button>
-        <Button v-if="canSelfUpdate" :disabled="installing" @click="installUpdate">
+        <Button v-if="canSelfUpdate" class="min-w-[8rem] gap-2 shadow-sm" :disabled="installing" @click="installUpdate">
+          <LoaderCircle v-if="installing" class="h-4 w-4 animate-spin" />
+          <ArrowDownCircle v-else class="h-4 w-4" />
           {{ t('notify.update.button') }}
         </Button>
       </AlertDialogFooter>
     </AlertDialogContent>
   </AlertDialog>
 </template>
+
+<style scoped>
+/* The changelog is the only scrolling part of a height-capped panel, and the classic
+   scrollbar (with its stepper buttons) reads as a foreign object inside it. Wheel,
+   touch drag and the keyboard all still scroll the notes. */
+.changelog-scroll {
+  scrollbar-width: none;
+  scrollbar-color: transparent;
+}
+
+.changelog-scroll::-webkit-scrollbar,
+.changelog-scroll::-webkit-scrollbar-button {
+  width: 0;
+  height: 0;
+  display: none;
+  appearance: none;
+}
+</style>
