@@ -2,13 +2,13 @@
 
 Auto-complete Discord **video, stream and game quests** from one window. Tauri 2 + Rust behind the scenes, Vue 3 on the surface, and no cloud service in between: everything runs on your machine.
 
-### What's new in 0.0.4
+## What's New in 0.0.4
 
 This release is about running several accounts at once, and about never losing a quest to a launch that went wrong.
 
 - **Quests on several accounts at the same time.** A quest keeps running for the account that started it, even after you switch. The account menu shows who is signed in, how many quests each one is running, and a **Stop** per quest; switching no longer stops anything. **Add another account** signs a second profile in without disturbing the first, and **Remove** refuses while that account still has work running.
 - **Background quests panel.** Quests owned by another account are listed apart from yours, grouped under that account's avatar, with counts taken from the backend registry rather than this page — so a quest you cannot see is never mistaken for one that stopped.
-- **Tokens no longer leave the backend.** The local scan now reports profiles only: picking a detected account signs it in by Discord user id, and the page never receives the raw token. The stop button and the quest list behave the same for every account, so nothing needs the credential on screen.
+- **Tokens no longer leave the backend.** The local scan now reports profiles only: picking a detected account signs it in by Discord user id, and the page never receives the raw token. The backend type that carries a token has no serialisation at all, so a command that tried to hand one over would not compile.
 - **The quest list refreshes itself** every 10 seconds while you are signed in, so newly published quests, claim states and the Orbs balance stop going stale in a window left open.
 - **Progress in the right unit.** Activity quests count checkpoints, cloud-game and app quests count seconds — each slot now carries its own unit instead of the interface guessing.
 - **Dates and numbers follow the interface language** in the inbox and the update log.
@@ -27,6 +27,39 @@ These are the fixes that stop a quest from dying quietly:
 - Starting a quest and switching an account are serialized, so a switch that lands while a start is queued can no longer leave the new account posting heartbeats for the account you just left.
 - Flatpak and Vesktop sessions report the channel you actually selected instead of always claiming Stable.
 - Super properties fall back to Discord `1.0.9262` (client build 641004, Electron 42.11.11) when live extraction fails.
+
+## What's Changed
+
+**Sign-in and accounts**
+
+- `auto_detect_token` returns account profiles instead of tokens, and a new `login_with_account` command signs a detected account in by Discord user id.
+- The backend remembers one API client and one credential per account found on the machine; the page addresses them by user id only.
+- Account menu with switch / add / remove, plus a panel for quests another account is running. A stop is addressed by the `(account, quest)` pair, so stopping one account's quest can no longer cancel another's copy of the same quest id.
+
+**Quest engine**
+
+- The quest list owns its own refresh timer while signed in, and yields to a running quest's poll instead of racing it.
+- Each running slot carries its progress unit, and the progress panel reads the count from the backend's task registry.
+- A finished, failed or cancelled task is reported separately from a slot that is still running, so an old record cannot re-announce itself.
+
+**CDP launcher (`discord-cdp-launch-core`)**
+
+- Failed CDP readiness now cleans up the instance it started and restores normal mode, on the official, Vesktop and Flatpak paths.
+- Restore waits for the reopened client to be visible; `.desktop` entries are filtered by the program they actually name; symlinked installs compare by canonical path; Flatpak and Vesktop results report the selected channel.
+
+**Interface**
+
+- New application icon and in-app logo from original artwork (all raster sizes, `.ico`, `.icns` and the vector mark regenerated).
+- Quest slots ease in and sections slide instead of snapping, and the debug, settings and toast surfaces moved onto theme colour tokens with real dark-mode variants.
+- Dates, times and numbers are formatted for the selected interface language.
+
+**Data and checks**
+
+- Super-property fallback build numbers raised to the October 2026 Discord client.
+- Two new frontend suites cover account sign-in and account switching; the launcher gained Rust tests for the reopened-client wait, symlinked installs, `.desktop` filtering and unjournaled debug ports.
+- 10 new interface strings, translated into all 16 locales.
+
+**Full Changelog**: https://github.com/ninokiru/Auto-Quest-Complete-Discord/compare/0.0.3...0.0.4
 
 ### How the in-app update works
 
