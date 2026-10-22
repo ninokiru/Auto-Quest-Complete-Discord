@@ -51,23 +51,27 @@ jobs:
           components: clippy, rustfmt
 
       # src-tauri links against WebKitGTK, so clippy and cargo test need the same
-      # Tauri 2 build dependencies the release build installs.
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libxdo-dev \
-            libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            desktop-file-utils \
-            xdg-utils
+      # Tauri 2 build dependencies the release build installs. This job currently
+      # skips them — see the two steps below, which exclude the Tauri crate — so
+      # the apt round trip (~90 s) is hidden rather than deleted. To bring the
+      # Tauri crate back into the lint/test gates, uncomment this step and drop
+      # both --exclude flags.
+      # - name: Install Linux dependencies
+      #   run: |
+      #     sudo apt-get update
+      #     sudo apt-get install -y \
+      #       libwebkit2gtk-4.1-dev \
+      #       build-essential \
+      #       curl \
+      #       wget \
+      #       file \
+      #       libxdo-dev \
+      #       libssl-dev \
+      #       libayatana-appindicator3-dev \
+      #       librsvg2-dev \
+      #       patchelf \
+      #       desktop-file-utils \
+      #       xdg-utils
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -95,8 +99,9 @@ jobs:
           pnpm run test:identity-audit
           pnpm run test:packaged-identity
 
-      # `tauri::generate_context!` resolves `frontendDist` (../dist) at compile
-      # time, so the bundle must exist before any cargo step touches src-tauri.
+      # `vue-tsc` is the frontend type gate, and the bundle is what
+      # `tauri::generate_context!` would resolve if a cargo step compiled src-tauri
+      # here — it no longer does, but ci.yml still expects `dist/` to exist.
       - name: Build frontend
         run: pnpm run build
 
@@ -118,22 +123,32 @@ jobs:
       # backlog in this crate — roughly 190 `|value| value.method()` closures
       # alone — so it stays warning-level until that is cleared, then this can
       # tighten back to `-D warnings`.
+      #
+      # `--exclude auto-quest-complete-discord`: the Tauri crate cannot compile
+      # without the WebKitGTK headers this job no longer installs. The format step
+      # above still checks it, because formatting only parses source.
       - name: Rust clippy
         shell: bash
         run: |
           set -o pipefail
-          cargo clippy --workspace --all-targets --all-features --message-format=short \
+          cargo clippy --workspace --exclude auto-quest-complete-discord --all-targets --all-features \
+            --message-format=short \
             -- -D unused -D clippy::correctness -D clippy::suspicious 2>&1 |
             tee target/rust-clippy.log
 
       # Single-threaded on purpose: several tests mutate process env or rely on a
       # released loopback port staying free, which only holds when no other test
       # runs beside them. A flake here costs a full CI round trip.
+      #
+      # The Tauri crate's tests are skipped here for the same reason clippy's are;
+      # ci.yml and build-release.yml both still install the Linux headers and run
+      # them over the whole workspace.
       - name: Rust tests
         shell: bash
         run: |
           set -o pipefail
-          cargo test --workspace --no-fail-fast -- --test-threads=1 2>&1 |
+          cargo test --workspace --exclude auto-quest-complete-discord --no-fail-fast \
+            -- --test-threads=1 2>&1 |
             tee target/rust-tests.log
 
       # Job logs and job summaries both need a GitHub login, but annotations are

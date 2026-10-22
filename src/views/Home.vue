@@ -385,6 +385,36 @@
             <p>{{ t('game_sim.no_exe_hint') }}</p>
             <p>{{ t('game_sim.no_exe_custom_warning') }}</p>
           </div>
+          <div v-if="pendingPlayQuest" class="space-y-2">
+            <Button
+              variant="outline"
+              class="w-full h-auto py-2"
+              :disabled="switchingToCdp"
+              @click="startPendingQuestInCdpMode"
+            >
+              <Loader2 v-if="switchingToCdp" class="w-4 h-4 mr-2 animate-spin" />
+              <span class="whitespace-normal text-center">
+                {{ t('quest.soft_error_switch_cdp') }}
+              </span>
+            </Button>
+            <p class="text-xs text-muted-foreground">{{ t('game_sim.custom_exe_cdp_hint') }}</p>
+          </div>
+          <div v-if="customExeSuggestions.length" class="space-y-2">
+            <p class="text-xs font-medium text-muted-foreground">
+              {{ t('game_sim.custom_exe_suggestions') }}
+            </p>
+            <div class="flex flex-wrap gap-1.5">
+              <Button
+                v-for="exe in customExeSuggestions"
+                :key="exe"
+                variant="outline"
+                class="h-auto px-2 py-1 font-mono text-xs"
+                @click="customExeInput = exe"
+              >
+                {{ exe }}
+              </Button>
+            </div>
+          </div>
           <div class="space-y-2">
             <Input
               v-model="customExeInput"
@@ -396,7 +426,10 @@
         </div>
         <DialogFooter>
           <Button variant="ghost" @click="cancelCustomExeDialog">{{ t('dialog.cancel') }}</Button>
-          <Button @click="submitCustomExeAndStartPlay" :disabled="!customExeInput.trim()">{{ t('dialog.confirm') }}</Button>
+          <Button
+            @click="submitCustomExeAndStartPlay"
+            :disabled="!isSimulationSafeExecutableName(customExeInput)"
+          >{{ t('dialog.confirm') }}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -634,7 +667,11 @@ import {
 } from '@/utils/questTasks'
 import { getQuestRewardCategory } from '@/utils/questRewards'
 import { formatDateTime } from '@/utils/relativeTime'
-import { getSimulationExecutables } from '@/utils/executables'
+import {
+  getSimulationExecutables,
+  isSimulationSafeExecutableName,
+  suggestExecutableNames,
+} from '@/utils/executables'
 import { useToastStore } from '@/stores/toast'
 import { navigateToTab } from '@/utils/navigate'
 import {
@@ -674,6 +711,19 @@ function simulationExesFor(game: DetectableGame, capabilities: PlatformCapabilit
 
 const isLinuxHost = computed(() => questsStore.platformCapabilities?.os === 'linux')
 
+/** Open the custom process-name dialog, pre-filled with whatever Discord's own
+ *  list supports for this title (empty when there is no such evidence). */
+function openCustomExeDialog(
+  game: DetectableGame,
+  catalog: DetectableGame[],
+  hostOs: string
+) {
+  customExeGameName.value = game.name
+  customExeInput.value = ''
+  customExeSuggestions.value = suggestExecutableNames(game, catalog, hostOs)
+  showCustomExeDialog.value = true
+}
+
 // The soft-error dialog stays open for the whole CDP switch: dismissing it
 // mid-flight would clear the error and skip the paused queue item.
 const switchingToCdp = ref(false)
@@ -683,6 +733,28 @@ async function handleSwitchToCdp() {
   switchingToCdp.value = true
   try {
     await questsStore.switchToCdpAndRetry()
+  } finally {
+    switchingToCdp.value = false
+  }
+}
+
+/** CDP writes the running game straight into Discord's own stores, so it also
+ *  covers the games Discord registers no executable for — which is precisely the
+ *  case this dialog opens for, and the one a typed process name cannot fix when
+ *  Discord has nothing to match it against. Only offered for a single quest: a
+ *  batch pre-selection has no quest in hand yet. */
+async function startPendingQuestInCdpMode() {
+  const pending = pendingPlayQuest.value
+  if (!pending || switchingToCdp.value) return
+  pendingPlayQuest.value = null
+  showCustomExeDialog.value = false
+  switchingToCdp.value = true
+  try {
+    await questsStore.switchToCdpAndRetry({
+      quest: pending.quest,
+      secondsNeeded: pending.secondsNeeded,
+      initialProgress: pending.initialProgress,
+    })
   } finally {
     switchingToCdp.value = false
   }
@@ -830,6 +902,9 @@ const pendingPlayQuest = ref<{ quest: Quest, secondsNeeded: number, initialProgr
 const showCustomExeDialog = ref(false)
 const customExeGameName = ref('')
 const customExeInput = ref('')
+// Process names Discord registers for the same title or series — offered as
+// one-click candidates, empty when there is no such evidence.
+const customExeSuggestions = ref<string[]>([])
 
 // Activity quest launch dialog state
 const showActivityLaunchDialog = ref(false)
@@ -1278,7 +1353,7 @@ async function preselectExesForGameQuests(gameQuests: Quest[]): Promise<void> {
       // steering to CDP mode when the queue reaches this quest.
       if (isLinuxHost.value) continue
       // No known executables — show custom input dialog
-      const custom = await showBatchCustomExeDialogAsync(game.name)
+      const custom = await showBatchCustomExeDialogAsync(game, gamesList, capabilities.os)
       if (custom === null) throw new Error('User cancelled')
       batchExeSelections.value.set(quest.id, custom)
     } else {
@@ -1302,15 +1377,17 @@ function showBatchExeSelectDialogAsync(options: string[], gameName: string): Pro
 }
 
 /** Show custom exe input dialog and return entered name, or null if cancelled */
-function showBatchCustomExeDialogAsync(gameName: string): Promise<string | null> {
+function showBatchCustomExeDialogAsync(
+  game: DetectableGame,
+  catalog: DetectableGame[],
+  hostOs: string
+): Promise<string | null> {
   return new Promise(resolve => {
-    customExeGameName.value = gameName
-    customExeInput.value = ''
+    openCustomExeDialog(game, catalog, hostOs)
     // Reuse existing custom exe dialog with a different resolve
     // (settling any stale resolver first, as above).
     batchExeSelectResolve.value?.(null)
     batchExeSelectResolve.value = resolve
-    showCustomExeDialog.value = true
   })
 }
 
@@ -1328,6 +1405,9 @@ function cancelBatchExeSelect() {
 
 function cancelCustomExeDialog() {
   showCustomExeDialog.value = false
+  // A stale pending quest would make the next *batch* prompt look like a
+  // single-quest one, since both flows share this dialog.
+  pendingPlayQuest.value = null
   // If in batch pre-selection mode, resolve with null to cancel
   if (batchExeSelectResolve.value) {
     batchExeSelectResolve.value(null)
@@ -1353,7 +1433,9 @@ async function selectExeAndStartPlay(exeName: string) {
 
 async function submitCustomExeAndStartPlay() {
   const exeName = customExeInput.value.trim()
-  if (!exeName) return
+  // The Confirm button already refuses an unsafe name; Enter has to refuse it
+  // too, otherwise the dialog closes and the simulator is handed the path.
+  if (!isSimulationSafeExecutableName(exeName)) return
   showCustomExeDialog.value = false
 
   // Batch mode — resolve the pre-selection promise
@@ -1465,10 +1547,8 @@ async function startQuest(quest: Quest) {
                 return // Wait for user selection
               } else if (simExes.length === 0 && !isLinuxHost.value) {
                 // No known executables — show custom input dialog
-                customExeGameName.value = game.name
-                customExeInput.value = ''
+                openCustomExeDialog(game, gamesList, capabilities.os)
                 pendingPlayQuest.value = { quest, secondsNeeded, initialProgress }
-                showCustomExeDialog.value = true
                 return // Wait for user input
               }
               // On Linux an empty list falls through: startPlay raises the

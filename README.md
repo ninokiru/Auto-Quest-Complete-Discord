@@ -110,7 +110,7 @@ server of its own, and no telemetry.
 
 | | |
 | --- | --- |
-| 🌏 **16 languages** | English, Vietnamese, Simplified Chinese, Traditional Chinese, Japanese, Korean, Russian, Spanish, German, French, Indonesian, Polish, Brazilian Portuguese, European Portuguese, Thai, Turkish. The language follows your system setting on first run. |
+| 🌏 **Two languages** | English and Vietnamese. The language follows your system setting on first run. |
 | 🎨 **Light and dark themes** | A white and blue interface with a dark variant, switchable in Settings. |
 | 🧪 **Debug view** | Live quest payload inspection, CDP state, runner build info, running-game detection snapshots, and token state for self-diagnosis. |
 | 📤 **Sanitized log export** | One click exports this session's logs with tokens and account data redacted. |
@@ -431,7 +431,7 @@ pnpm tauri:dev
 | `pnpm tauri:build` | Production build (same sidecar and version steps). Output: `target/release/bundle/`. |
 | `pnpm dev` / `pnpm build` | Frontend only — Vite dev server on `:1420`, and `vue-tsc` + production bundle. |
 | `pnpm test` | Frontend unit tests (Vitest). |
-| `pnpm i18n:check` | Validate all 16 locale files for missing or extra keys. |
+| `pnpm i18n:check` | Validate the English and Vietnamese locale files for missing or extra keys. |
 | `pnpm sync-version` | Propagate `public/version.txt` into the app, Tauri, and Cargo configs. |
 | `pnpm build:runner` / `pnpm build:cdp-launcher` | Build one sidecar. |
 | `pnpm check:runtime-identity`, `pnpm test:identity-audit`, `pnpm test:packaged-identity` | Identity config and packaged-binary audits. |

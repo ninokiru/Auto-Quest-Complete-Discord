@@ -57,7 +57,7 @@ GitHub's release API.
 | --- | --- | --- |
 | `main.ts` | ~12 | Bootstraps the app: `createApp(App)`, Pinia, i18n, mount |
 | `App.vue` | 505 | Window shell: header, theme + language controls, tab switching between the four views, update banner, login/logout transitions. Navigation is **state**, not routes |
-| `i18n.ts` | 84 | Registers all 16 locales + English baseline, chooses the language (saved choice, else system) |
+| `i18n.ts` | 26 | Registers the English and Vietnamese locales, chooses the language (saved choice, else system) |
 | `style.css` | — | Tailwind 4 entry plus the design tokens (the white/blue palette and its dark variant) |
 | `lib/utils.ts` | — | `cn()` — Tailwind class merge used by every component |
 
@@ -124,16 +124,16 @@ GitHub's release API.
 | `composables/useSettingsNavigation.ts` | 71 | Persists/restores the selected Settings section |
 | `utils/questTasks.ts` | 206 | Task-type interpretation, target math, progress percent — including the cap at 99 until Discord reports completion |
 | `utils/questRewards.ts` | 132 | Reward/badge formatting into i18n keys (`{ key, params }` — these are dynamic keys, invisible to a literal `t('…')` grep) |
-| `utils/executables.ts` | 100 | Known per-game executable table used by simulation |
+| `utils/executables.ts` | 295 | Per-OS executable selection, the custom-name safety check, and process-name suggestions from a game's series siblings or base game |
 | `utils/cdpDiagnostics.ts` | 97 | Turns raw CDP probe output into the readable diagnostics panel |
 | `api/tauri.ts` | 1096 | **Every** IPC call and its types: one function per `#[tauri::command]`. If a frontend needs data from Rust, it is declared here |
 
 ### Locales
 
-`src/locales/` holds 17 JSON files — `en.json` is the baseline (622 keys) and the other 16 are
-de, es, fr, id, ja, ko, pl, pt-BR, pt-PT, ru, th, tr, vi, zh, zh-TW. Key parity is enforced by
-`node scripts/i18n-validate.mjs`. A key referenced by code but absent from `en.json` does **not**
-fail CI — it breaks at runtime, so new strings must be added to all 16 files.
+`src/locales/` holds 2 JSON files — `en.json` is the baseline (675 keys) and `vi.json` is the only
+translation. Key parity is enforced by `node scripts/i18n-validate.mjs`. A key referenced by code but
+absent from `en.json` does **not** fail CI — it breaks at runtime, so new strings must be added to
+both files.
 
 ## Rust backend — `src-tauri/`
 
@@ -258,12 +258,12 @@ Files in `scripts/` must keep their executable bit in git or CI steps fail on pe
 | A new IPC value the UI needs | `src-tauri/src/lib.rs` (command) | `src/api/tauri.ts`, `src-tauri/capabilities/default.json`, a test |
 | Quest start/stop/queue behavior | `src/stores/quests.ts` | `src-tauri/src/cdp_quest.rs`, `src/utils/questTasks.ts` |
 | How progress is displayed | `src/components/QuestProgress.vue` | `src/utils/questTasks.ts` (units, 99 cap) |
-| Reward text/format | `src/utils/questRewards.ts` | all 16 locale files (dynamic keys) |
+| Reward text/format | `src/utils/questRewards.ts` | both locale files (dynamic keys) |
 | A CDP timeout, retry or probe order | `src-tauri/src/cdp_client.rs` | [docs/cdp-runtime-validation.md](docs/cdp-runtime-validation.md) — justify the value there |
 | Client discovery/launch on an OS | `crates/discord-cdp-launch-core/src/platform/*.rs` | `launcher.rs`, that crate's tests |
-| A new user-facing string | `src/locales/en.json` | the other 15 locales, then `pnpm run i18n:check` |
+| A new user-facing string | `src/locales/en.json` | `vi.json`, then `pnpm run i18n:check` |
 | Colors/theme | `src/style.css` tokens | components that use `primary`/`muted` classes |
-| Settings toggle | `src/components/settings/QuestBehaviorSettings.vue` | the store that consumes it, `en.json`, 15 more locales |
+| Settings toggle | `src/components/settings/QuestBehaviorSettings.vue` | the store that consumes it, `en.json`, `vi.json` |
 | Packed binary names/identity | `src-tauri/tauri.conf.json` | `scripts/check-runtime-identity-config.mjs`, `docs/runtime-identity-audit.schema.json` |
 | Version | `public/version.txt` | `pnpm run sync-version`, then hand-edit `Cargo.lock` (CI is `--locked`) |
 | Release text | `public/version-desc.txt` | it *is* the GitHub Release body |

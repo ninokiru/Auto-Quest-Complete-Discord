@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Quest } from '@/api/tauri'
 import en from '@/locales/en.json'
-import zh from '@/locales/zh.json'
+import vi from '@/locales/vi.json'
 import {
   firstProgressValue,
   firstStartableTask,
@@ -98,7 +98,7 @@ describe('PLAY_ACTIVITY task helpers', () => {
 
   it('provides localized cloud-game badge labels', () => {
     expect(en.filter.activity_cloud_game).toBe('Activity - Cloud Game')
-    expect(zh.filter.activity_cloud_game).toBe('活动 - 云游戏')
+    expect(vi.filter.activity_cloud_game).toBe('Hoạt động - Trò chơi đám mây')
   })
 
   it('scores cloud-game progress in seconds and checkpoint progress in counts', () => {

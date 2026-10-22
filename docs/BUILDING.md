@@ -105,7 +105,7 @@ so a local pass saves a round trip.
 | --- | --- | --- |
 | `pnpm run build` | TypeScript | `vue-tsc && vite build`. `vue-tsc` is the type gate — there is no separate `typecheck` script |
 | `pnpm test` | Frontend unit tests | `vitest run src` |
-| `pnpm run i18n:check` | Locales | Validates all 16 locale files against `src/locales/en.json`. Fails on missing/extra keys, placeholder mismatch, empty strings, `TODO`/`[[` markers, non-string leaves. Translations identical to English only **warn** |
+| `pnpm run i18n:check` | Locales | Validates `src/locales/vi.json` against the `src/locales/en.json` baseline. Fails on missing/extra keys, placeholder mismatch, empty strings, `TODO`/`[[` markers, non-string leaves. Translations identical to English only **warn** |
 | `pnpm run sync-version` | Version | Also validates that each file was actually patched |
 | `pnpm run check:runtime-identity`, `pnpm run test:identity-audit`, `pnpm run test:packaged-identity` | Runtime identity | Policy check plus audit-tool tests |
 | `pnpm run check:cdp-core-deps` | Architecture | `crates/discord-cdp-launch-core` must not depend on Tauri |

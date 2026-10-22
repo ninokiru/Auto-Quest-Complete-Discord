@@ -4,7 +4,8 @@ The [repository README](../README.md) explains **what** this app is. The files h
 how to use it, how to compile it, and how to read an error when something refuses to work.
 
 All documentation in this repository is written in English. There is no Vietnamese-only doc; the
-interface itself is translated into 16 languages, but the code and its documentation are English.
+interface itself is translated into English and Vietnamese, but the code and its documentation are
+English.
 
 ## Which file do you need?
 

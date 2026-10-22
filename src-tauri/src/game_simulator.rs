@@ -3,7 +3,7 @@ use serde::Serialize;
 #[cfg(target_os = "windows")]
 use std::collections::HashSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 
@@ -119,6 +119,34 @@ fn ensure_simulated_executable_parent(target_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// A simulated process name may sit in a relative subdirectory of the
+/// simulation folder, but never outside it: `PathBuf::join` honours `..` and
+/// absolute paths, and the joined path is written and then launched.
+fn is_inside_simulation_dir(executable_name: &str) -> bool {
+    if executable_name.is_empty() || executable_name.chars().any(char::is_control) {
+        return false;
+    }
+    for part in Path::new(executable_name).components() {
+        if !matches!(part, Component::Normal(_)) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Join a simulated executable name onto the simulation directory.
+///
+/// Process names are free text in the UI — the custom-name dialog exists for
+/// games Discord has no executable for — so a name is checked before it gets to
+/// choose where the runner binary lands.
+fn simulated_executable_path(path: &str, executable_name: &str) -> Result<PathBuf> {
+    if !is_inside_simulation_dir(executable_name) {
+        anyhow::bail!("Invalid simulated game executable name: {:?}", executable_name);
+    }
+
+    Ok(PathBuf::from(path).join(executable_name))
+}
+
 /// Create a simulated game executable
 ///
 /// Writes the embedded runner executable to the specified path with the target game name.
@@ -129,6 +157,9 @@ pub fn create_simulated_game(path: &str, executable_name: &str, _app_id: &str) -
         "create_simulated_game called with path: '{}', exe: '{}'",
         path, executable_name
     );
+
+    // Reject a hostile name before anything is created on disk.
+    let target_exe = simulated_executable_path(path, executable_name)?;
 
     // Create target directory
     let target_dir = PathBuf::from(path);
@@ -146,15 +177,9 @@ pub fn create_simulated_game(path: &str, executable_name: &str, _app_id: &str) -
         ))?;
     }
 
-    // Target executable path
-    let target_exe = target_dir.join(executable_name);
-
-    // Ensure parent directory exists (for executable_name with subdirectories)
-    if let Some(parent) = target_exe.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent).context("Could not create target subdirectory")?;
-        }
-    }
+    // Discord gives most executables a folder prefix ("ea sports fc 26/fc26.exe"),
+    // so the directory the runner lands in usually does not exist yet.
+    ensure_simulated_executable_parent(&target_exe)?;
 
     // If file exists, try to delete it first
     if target_exe.exists() {
@@ -197,7 +222,7 @@ pub fn run_simulated_game(
     executable_name: &str,
     _app_id: &str,
 ) -> Result<()> {
-    let exe_to_run = PathBuf::from(path).join(executable_name);
+    let exe_to_run = simulated_executable_path(path, executable_name)?;
     ensure_simulated_executable_parent(&exe_to_run)?;
 
     // Always try to update the runner binary from the embedded bytes
@@ -237,7 +262,7 @@ pub fn run_simulated_game(
 ) -> Result<()> {
     use std::process::Stdio;
 
-    let exe_to_run = PathBuf::from(path).join(executable_name);
+    let exe_to_run = simulated_executable_path(path, executable_name)?;
     ensure_simulated_executable_parent(&exe_to_run)?;
 
     // Refresh the runner bytes when possible; a running instance keeps the file
@@ -814,6 +839,42 @@ mod tests {
                 let _ = fs::remove_dir_all(&temp_dir);
             }
             Err(e) => println!("Test skipped (expected): {}", e),
+        }
+    }
+
+    #[test]
+    fn simulated_executable_names_stay_inside_the_simulation_directory() {
+        let base = PathBuf::from("/sim");
+        let joined = simulated_executable_path("/sim", "FC27.exe").unwrap();
+        assert_eq!(joined, base.join("FC27.exe"));
+
+        // Relative subdirectories are the common case: most of Discord's own
+        // detectable list names executables like "ea sports fc 26/fc26.exe".
+        let nested = simulated_executable_path("/sim", "Binaries/FC27.exe").unwrap();
+        assert_eq!(nested, base.join("Binaries").join("FC27.exe"));
+
+        for bad in ["../evil.exe", "a/../evil.exe", "/", "..", "", "a\u{0}b"] {
+            assert!(simulated_executable_path("/sim", bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn nested_simulated_executable_gets_its_parent_directory_created() {
+        let root = env::temp_dir().join("aqcd-simulated-parent-test");
+        let _ = fs::remove_dir_all(&root);
+        let target = root.join("ea sports fc 27").join("fc27.exe");
+
+        ensure_simulated_executable_parent(&target).unwrap();
+        assert!(target.parent().unwrap().is_dir());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_absolute_executable_names_cannot_leave_the_simulation_directory() {
+        for bad in ["C:\\Windows\\evil.exe", "C:/Windows/evil.exe", "\\\\host\\s\\e.exe"] {
+            assert!(simulated_executable_path("C:\\sim", bad).is_err(), "{bad:?}");
         }
     }
 

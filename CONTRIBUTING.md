@@ -73,7 +73,7 @@ auto-quest-complete-discord/
 │   │   └── ui/                       # shadcn-vue primitives (Button, Card, Dialog, etc.)
 │   ├── composables/                  # Vue composables (useHomeQuestState, useSettingsNavigation)
 │   ├── lib/utils.ts                  # cn() classname merge utility
-│   ├── locales/                      # i18n translations (16 languages, JSON)
+│   ├── locales/                      # i18n translations (English + Vietnamese, JSON)
 │   ├── stores/                       # Pinia state management (auth, quests, version, toast)
 │   ├── utils/                        # Utility functions (navigate, questRewards, questTasks)
 │   ├── views/                        # Page views (Home, GameSimulator, Settings, Debug)

@@ -206,7 +206,7 @@ about a reward you had not earned yet.
 | **Account** | Signed-in account, login method, manual token entry, token storage note |
 | **Quest Behavior** | Video completion speed (0.1x–2.0x, default 1.0x), video progress submission interval (10–30 s, default 15 s), game progress polling interval (30–300 s, default 120 s), game quest mode (Simulate or CDP injection), simulation directory, Orb/Nitro display toggle |
 | **Discord Integration** | Client and installation picker (Discord Stable/PT/Canary, Vesktop, custom path), CDP connection state, launch or restart the client with the debug port, sync client info over CDP |
-| **Appearance** | Light/dark theme and language. 16 languages; the language follows your system setting on first run |
+| **Appearance** | Light/dark theme and language. English and Vietnamese; the language follows your system setting on first run |
 | **Diagnostics** | Export this session's sanitized logs |
 | **Advanced** | CDP debug port (default 9223), developer mode, legacy recovery options |
 | **About** | Version, license, and what the app does |

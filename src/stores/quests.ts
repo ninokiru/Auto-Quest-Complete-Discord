@@ -2069,9 +2069,17 @@ export const useQuestsStore = defineStore('quests', () => {
    * Recover from a recoverable soft error (e.g. a win32-only game on Linux) by
    * switching to CDP mode and retrying the same quest / resuming the queue.
    * Falls back to a clear error if CDP can't be reached.
+   *
+   * `request` lets a caller that already holds the quest — the no-executable
+   * dialog, which opens before any play request has been recorded — retry that
+   * quest instead of whatever `lastPlayRequest` happens to point at.
    */
-  async function switchToCdpAndRetry(): Promise<void> {
-    const req = lastPlayRequest.value
+  async function switchToCdpAndRetry(request?: {
+    quest: Quest
+    secondsNeeded: number
+    initialProgress: number
+  }): Promise<void> {
+    const req = request ?? lastPlayRequest.value
     gameQuestMode.value = 'cdp'
 
     // Confirm the CDP port is actually reachable; initCdpMode flips back to
