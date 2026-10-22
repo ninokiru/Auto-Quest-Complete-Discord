@@ -415,11 +415,23 @@ jobs:
       # `beforeBuildCommand` is blanked because the "Build frontend" step above
       # already produced `dist/` (and `tauri::generate_context!` needs it at
       # compile time); left alone, `tauri build` would run vue-tsc and vite a
-      # second time inside the bundle step. The single quotes around the JSON are
-      # literals in both pwsh on Windows and bash on macOS/Linux, which is why
-      # this step keeps the runner's default shell.
+      # second time inside the bundle step. The blank is a file, not an inline
+      # JSON string: on Windows the step runs through the `pnpm.cmd` shim, cmd.exe
+      # eats the embedded double quotes, the CLI gets `{build:{...}}` and the job
+      # dies in one second on a parse error. A relative `--config` path resolves
+      # against the working directory and merges into tauri.conf.json.
+      #
+      # No `-- --locked` here: `quality` already gates the lockfile with
+      # `cargo clippy --locked` and `cargo test --locked`, and `tauri build` does
+      # not document forwarding cargo flags through `pnpm run tauri`.
+      - name: Write the bundle config override
+        shell: bash
+        run: |
+          mkdir -p build
+          printf '{"build":{"beforeBuildCommand":""}}\n' > build/tauri-bundle-override.json
+
       - name: Build the app bundle
-        run: pnpm tauri build ${{ matrix.args }} --config '{"build":{"beforeBuildCommand":""}}' -- --locked
+        run: pnpm tauri build ${{ matrix.args }} --config build/tauri-bundle-override.json
 
       - name: Verify unsigned macOS bundle identity and integrity
         if: matrix.platform == 'macos-14'
