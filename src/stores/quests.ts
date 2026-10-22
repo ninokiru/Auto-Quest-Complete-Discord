@@ -26,6 +26,14 @@ interface QueueItem extends Quest {
   selectedExeName?: string
 }
 
+/** One `startPlay` call, kept so a quest can be retried after a mode switch. */
+interface PlayQuestRequest {
+  quest: Quest
+  secondsNeeded: number
+  initialProgress: number
+  selectedExeName?: string
+}
+
 /**
  * A quest the backend tracks that this page is not driving: a direct-API task
  * started for another account, which keeps running across an account switch
@@ -341,7 +349,7 @@ export const useQuestsStore = defineStore('quests', () => {
   const softError = ref<QuestSoftError | null>(null)
   const queuePauseReason = ref<QueuePauseReason | null>(null)
   // Remember the last Play-Quest request so "switch to CDP and retry" can resume it.
-  const lastPlayRequest = ref<{ quest: Quest; secondsNeeded: number; initialProgress: number; selectedExeName?: string } | null>(null)
+  const lastPlayRequest = ref<PlayQuestRequest | null>(null)
 
   // CDP availability status
   const cdpAvailable = ref(false)
@@ -2074,11 +2082,7 @@ export const useQuestsStore = defineStore('quests', () => {
    * dialog, which opens before any play request has been recorded — retry that
    * quest instead of whatever `lastPlayRequest` happens to point at.
    */
-  async function switchToCdpAndRetry(request?: {
-    quest: Quest
-    secondsNeeded: number
-    initialProgress: number
-  }): Promise<void> {
+  async function switchToCdpAndRetry(request?: PlayQuestRequest): Promise<void> {
     const req = request ?? lastPlayRequest.value
     gameQuestMode.value = 'cdp'
 
