@@ -141,7 +141,10 @@ fn is_inside_simulation_dir(executable_name: &str) -> bool {
 /// choose where the runner binary lands.
 fn simulated_executable_path(path: &str, executable_name: &str) -> Result<PathBuf> {
     if !is_inside_simulation_dir(executable_name) {
-        anyhow::bail!("Invalid simulated game executable name: {:?}", executable_name);
+        anyhow::bail!(
+            "Invalid simulated game executable name: {:?}",
+            executable_name
+        );
     }
 
     Ok(PathBuf::from(path).join(executable_name))
@@ -873,8 +876,15 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_absolute_executable_names_cannot_leave_the_simulation_directory() {
-        for bad in ["C:\\Windows\\evil.exe", "C:/Windows/evil.exe", "\\\\host\\s\\e.exe"] {
-            assert!(simulated_executable_path("C:\\sim", bad).is_err(), "{bad:?}");
+        for bad in [
+            "C:\\Windows\\evil.exe",
+            "C:/Windows/evil.exe",
+            "\\\\host\\s\\e.exe",
+        ] {
+            assert!(
+                simulated_executable_path("C:\\sim", bad).is_err(),
+                "{bad:?}"
+            );
         }
     }
 
