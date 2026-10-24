@@ -664,6 +664,7 @@ import {
   isPlayActivityTask,
   isStreamTask,
   isVideoTask,
+  questApplicationId,
 } from '@/utils/questTasks'
 import { getQuestRewardCategory } from '@/utils/questRewards'
 import { formatDateTime } from '@/utils/relativeTime'
@@ -1333,7 +1334,7 @@ async function preselectExesForGameQuests(gameQuests: Quest[]): Promise<void> {
   const gamesList = await questsStore.getDetectableGames()
 
   for (const quest of gameQuests) {
-    const appId = quest.config.application?.id
+    const appId = questApplicationId(quest)
     if (!appId) continue
 
     const game = gamesList.find(g => g.id === appId)
@@ -1530,7 +1531,7 @@ async function startQuest(quest: Quest) {
         // user choose. Skip exe selection entirely for CDP mode (doesn't need
         // executables)
         if (questsStore.gameQuestMode === 'simulate') {
-          const appId = quest.config.application?.id
+          const appId = questApplicationId(quest)
           if (appId) {
             const capabilities = await questsStore.initPlatformCapabilities()
             if (!capabilities) throw new Error(t('game_sim.platform_capabilities_unavailable'))

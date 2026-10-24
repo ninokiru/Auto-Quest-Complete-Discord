@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Quest } from '@/api/tauri'
+import type { Quest, QuestTaskConfigEntry } from '@/api/tauri'
 import en from '@/locales/en.json'
 import vi from '@/locales/vi.json'
 import {
@@ -13,6 +13,7 @@ import {
   isPlayActivityQuest,
   isPlayActivityTask,
   playActivityProgressPercentage,
+  questApplicationId,
 } from './questTasks'
 
 function playActivityQuest(): Quest {
@@ -154,5 +155,54 @@ describe('manual versus batch-eligible quest kinds', () => {
     expect(isBatchCompletableQuest(singleTaskQuest('stream', 'STREAM_ON_DESKTOP', 900))).toBe(false)
     expect(isManualQuest(withoutTarget)).toBe(false)
     expect(isBatchCompletableQuest(withoutTarget)).toBe(false)
+  })
+})
+
+function appIdQuest(
+  tasks: Record<string, QuestTaskConfigEntry>,
+  application?: NonNullable<Quest['config']['application']>
+): Quest {
+  return {
+    id: 'app-id-quest',
+    config: {
+      messages: { quest_name: 'App ID Quest' },
+      ...(application ? { application } : {}),
+      task_config_v2: { tasks },
+    },
+    user_status: { enrolled_at: '2026-08-04T00:00:00.000Z' },
+  }
+}
+
+describe('quest application id', () => {
+  it('keeps using config.application.id while Discord still sends it', () => {
+    const quest = appIdQuest(
+      { PLAY_ON_DESKTOP: { type: 'PLAY_ON_DESKTOP', target: 600, applications: [{ id: '222' }] } },
+      { id: '111', name: 'Legacy App', link: '' }
+    )
+
+    expect(questApplicationId(quest)).toBe('111')
+  })
+
+  it('falls back to the task application once config.application is gone', () => {
+    const quest = appIdQuest({
+      PLAY_ON_DESKTOP: { type: 'PLAY_ON_DESKTOP', target: 600, applications: [{ id: '222' }] },
+    })
+
+    expect(questApplicationId(quest)).toBe('222')
+  })
+
+  it('reads the application of the task actually being driven', () => {
+    const quest = appIdQuest({
+      PLAY_ON_DESKTOP: { type: 'PLAY_ON_DESKTOP', target: 600, applications: [{ id: '111' }] },
+      ACHIEVEMENT_IN_ACTIVITY: { type: 'ACHIEVEMENT_IN_ACTIVITY', target: 3, applications: [{ id: '222' }] },
+    })
+
+    expect(firstStartableTask(quest)?.type).toBe('PLAY_ON_DESKTOP')
+    expect(questApplicationId(quest)).toBe('111')
+  })
+
+  it('reports no application for a quest that carries none', () => {
+    expect(questApplicationId(appIdQuest({ PLAY_ON_DESKTOP: { type: 'PLAY_ON_DESKTOP', target: 600 } }))).toBeUndefined()
+    expect(questApplicationId(undefined)).toBeUndefined()
   })
 })

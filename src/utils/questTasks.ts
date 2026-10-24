@@ -204,3 +204,18 @@ export function firstStartableTask(quest: Quest): QuestTaskView | null {
     ?? tasks.find(task => isActivityTask(task) && task.target != null && task.target > 0)
     ?? null
 }
+
+/**
+ * The application a quest belongs to. `config.application.id` is the legacy
+ * home; taskConfigV2 moved the id onto the task itself, so newer quests carry
+ * it only at `tasks[KEY].applications[0].id`. Prefer the task actually being
+ * driven, since a quest can list several tasks with different applications.
+ */
+export function questApplicationId(quest?: Quest | null): string | undefined {
+  const fromConfig = quest?.config.application?.id
+  if (fromConfig) return fromConfig
+  if (!quest) return undefined
+  const startable = firstStartableTask(quest)
+  return startable?.applications?.[0]?.id
+    ?? getQuestTasks(quest).find(task => task.applications?.[0]?.id)?.applications?.[0]?.id
+}

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { Quest } from '@/api/tauri'
-import { getQuestTasks } from '@/utils/questTasks'
+import { getQuestTasks, questApplicationId } from '@/utils/questTasks'
 import { Button } from '@/components/ui/button'
 import { Check, ChevronDown, Copy } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
@@ -67,7 +67,7 @@ async function copyValue(value: string, key: string) {
 
         <dt class="text-muted-foreground">Application</dt>
         <dd class="min-w-0 break-all font-mono">
-          {{ quest.config.application?.id || 'none' }}
+          {{ questApplicationId(quest) || 'none' }}
           <span v-if="quest.config.application?.name" class="text-muted-foreground">({{ quest.config.application.name }})</span>
         </dd>
         <dd />

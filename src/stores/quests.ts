@@ -10,6 +10,7 @@ import {
   isManualStreamQuest,
   isPlayActivityQuest,
   playActivityProgressPercentage,
+  questApplicationId,
 } from '@/utils/questTasks'
 import { resolveSimulationExecutable } from '@/utils/executables'
 import { announceQuestEnd } from '@/utils/questNotifier'
@@ -1255,7 +1256,7 @@ export const useQuestsStore = defineStore('quests', () => {
     const progressPct = (secondsNeeded > 0) ? (initialProgress / secondsNeeded) * 100 : 0
     try {
       // 1. Get Application ID
-      const appId = quest.config.application?.id
+      const appId = questApplicationId(quest)
       if (!appId) throw new Error('Quest missing application ID')
       const appName = quest.config.application?.name || quest.config.messages.game_title || 'Game'
 
@@ -1477,7 +1478,7 @@ export const useQuestsStore = defineStore('quests', () => {
 
       console.log(`Starting activity quest via CDP: completed=${completedCheckpoints}/${checkpointCount}, remaining=${remainingCheckpointCount}, times=[${checkpointTimes.join(', ')}], remaining=${remainingSeconds}s, estimatedTotal=${totalSeconds}s`)
 
-      const appId = quest.config.application?.id || ''
+      const appId = questApplicationId(quest) ?? ''
       const appName = quest.config.application?.name || quest.config.messages?.quest_name || 'Activity'
 
       await startCdpQuest(
@@ -1511,7 +1512,7 @@ export const useQuestsStore = defineStore('quests', () => {
     error.value = null
     let preserveActiveState = false
     try {
-      const appId = quest.config.application?.id
+      const appId = questApplicationId(quest)
       if (!appId) throw new Error('Cloud game Activity quest is missing an application ID')
 
       if (gameQuestMode.value === 'cdp' && !cdpAvailable.value) {
@@ -1611,7 +1612,7 @@ export const useQuestsStore = defineStore('quests', () => {
   async function recoverExecutableName(questId: string): Promise<string | null> {
     console.warn(`No executable recorded for ${questId}, recovering it from the quest list...`)
     const quest = quests.value.find(q => q.id === questId)
-    const appId = quest?.config.application?.id
+    const appId = questApplicationId(quest)
     if (!appId) return null
     try {
       const games = await fetchDetectableGames()

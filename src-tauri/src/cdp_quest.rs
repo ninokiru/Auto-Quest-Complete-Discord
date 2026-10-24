@@ -573,7 +573,11 @@ fn js_spoof_play_game_for(
                     let progress = 0;
                     if (data && data.userStatus) {{
                         if (data.userStatus.progress) {{
-                            const vals = Object.values(data.userStatus.progress);
+                            // Newer clients hand `progress` over as a Map, where
+                            // Object.values() comes back empty and the bar would
+                            // stall at zero forever.
+                            const prog = data.userStatus.progress;
+                            const vals = prog instanceof Map ? Array.from(prog.values()) : Object.values(prog);
                             if (vals.length > 0 && vals[0].value !== undefined) {{
                                 progress = Math.floor(vals[0].value);
                             }}
@@ -761,7 +765,8 @@ fn js_spoof_stream(app_id: &str) -> String {
                 let progress = 0;
                 if (data && data.userStatus) {{
                     if (data.userStatus.progress) {{
-                        const vals = Object.values(data.userStatus.progress);
+                        const prog = data.userStatus.progress;
+                        const vals = prog instanceof Map ? Array.from(prog.values()) : Object.values(prog);
                         if (vals.length > 0 && vals[0].value !== undefined) {{
                             progress = Math.floor(vals[0].value);
                         }}
@@ -970,7 +975,8 @@ fn js_start_video_quest(quest_id: &str, seconds_needed: u32, initial_seconds: f6
                     if (q && q.userStatus) {{
                         storeCompleted = !!q.userStatus.completedAt;
                         if (q.userStatus.progress) {{
-                            const vals = Object.values(q.userStatus.progress);
+                            const prog = q.userStatus.progress;
+                            const vals = prog instanceof Map ? Array.from(prog.values()) : Object.values(prog);
                             if (vals.length > 0 && vals[0].value !== undefined) {{
                                 storeProgress = vals[0].value;
                             }}
@@ -1085,7 +1091,8 @@ fn js_query_progress(quest_id: &str) -> String {
 
         let progressSeconds = 0;
         if (userStatus.progress) {{
-            const vals = Object.values(userStatus.progress);
+            const prog = userStatus.progress;
+            const vals = prog instanceof Map ? Array.from(prog.values()) : Object.values(prog);
             if (vals.length > 0 && vals[0].value !== undefined) {{
                 progressSeconds = vals[0].value;
             }}
