@@ -44,7 +44,9 @@ impl GameIdleConfig {
             return Err("Game simulation duration must be a positive integer".to_string());
         }
         if !(1..=(MAX_CONCURRENT_GAMES as u32)).contains(&self.concurrent_games) {
-            return Err(format!("Simultaneous games must be 1 to {MAX_CONCURRENT_GAMES}"));
+            return Err(format!(
+                "Simultaneous games must be 1 to {MAX_CONCURRENT_GAMES}"
+            ));
         }
         if self.mode == GameIdleMode::Cdp && self.cdp_port == 0 {
             return Err("CDP port must be between 1 and 65535".to_string());
@@ -562,7 +564,10 @@ impl GameIdleManager {
             if let Some(cancel) = session.cancel.take() {
                 let _ = cancel.send(true);
             }
-            (Arc::clone(&session.shared), session.joins.drain(..).collect::<Vec<_>>())
+            (
+                Arc::clone(&session.shared),
+                session.joins.drain(..).collect::<Vec<_>>(),
+            )
         };
 
         // Do not abort an in-flight spawn_blocking call: Tokio cannot cancel
@@ -640,7 +645,10 @@ async fn stop_remaining_lanes(
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(format!("Failed to stop simulated games: {}", errors.join("; ")))
+        Err(format!(
+            "Failed to stop simulated games: {}",
+            errors.join("; ")
+        ))
     }
 }
 
