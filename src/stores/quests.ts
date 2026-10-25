@@ -2287,11 +2287,7 @@ export const useQuestsStore = defineStore('quests', () => {
   let gamesFetchInFlight: Promise<DetectableGame[]> | null = null
 
   function fetchDetectableGamesOnce(): Promise<DetectableGame[]> {
-    // Assigned outside the async body so its `finally` can compare against the
-    // promise it belongs to; a `const` read inside its own initializer is what
-    // vue-tsc reports as used before assigned.
-    let request: Promise<DetectableGame[]>
-    request = (async () => {
+    return (async () => {
       try {
         const games = await fetchDetectableGames()
         // An empty response is Discord being unreachable or rate-limiting, not a
@@ -2304,11 +2300,8 @@ export const useQuestsStore = defineStore('quests', () => {
       } catch (e) {
         console.error('Failed to fetch detectable games:', e)
         throw e
-      } finally {
-        if (gamesFetchInFlight === request) gamesFetchInFlight = null
       }
     })()
-    return request
   }
 
   function getDetectableGames(force = false): Promise<DetectableGame[]> {
@@ -2317,8 +2310,15 @@ export const useQuestsStore = defineStore('quests', () => {
     }
     if (gamesFetchInFlight) return gamesFetchInFlight
 
-    gamesFetchInFlight = fetchDetectableGamesOnce()
-    return gamesFetchInFlight
+    const request = fetchDetectableGamesOnce()
+    gamesFetchInFlight = request
+    // Settle the shared slot whether the call resolved or failed, but only if it
+    // still belongs to this request: a logout may have started a newer one.
+    const clear = () => {
+      if (gamesFetchInFlight === request) gamesFetchInFlight = null
+    }
+    void request.then(clear, clear)
+    return request
   }
 
   function resetForLogout() {
