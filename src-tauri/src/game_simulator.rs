@@ -741,7 +741,7 @@ pub fn running_simulated_game_names() -> Vec<String> {
 /// Upper bound on simultaneously running simulated games. The limit keeps
 /// Discord's running-game list believable, bounds the number of child
 /// processes, and bounds how many history segments one Stop has to write.
-pub const MAX_PARALLEL_SIMULATED_GAMES: usize = 5;
+pub const MAX_PARALLEL_SIMULATED_GAMES: usize = 36;
 
 /// Whether a simulated game with this executable name is already running.
 ///

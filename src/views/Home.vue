@@ -189,13 +189,36 @@
           <p class="text-sm text-muted-foreground">{{ t('general.login_prompt') }}</p>
         </div>
 
+        <!-- The first fetch used to leave a lone spinner in an empty column, which
+             reads as a stalled window. These rows copy the compact quest card's own
+             measurements — banner, icon and title line, action row — so the list
+             appears to fill in instead of arriving all at once. -->
         <div
           v-else-if="questsStore.loading && !questsStore.hasLoadedQuests && questsStore.quests.length === 0"
-          class="flex flex-col items-center gap-2.5 rounded-xl border border-dashed px-4 py-14 text-center text-sm text-muted-foreground"
+          class="space-y-3"
           role="status"
         >
-          <Loader2 class="h-6 w-6 animate-spin text-primary" />
-          {{ t('general.loading') }}
+          <div
+            v-for="row in 4"
+            :key="row"
+            class="animate-pulse overflow-hidden rounded-lg border border-border/50 bg-card shadow-sm motion-reduce:animate-none"
+            :style="{ animationDelay: `${(row - 1) * 140}ms` }"
+            aria-hidden="true"
+          >
+            <div class="h-12 bg-muted sm:h-16" />
+            <div class="flex items-center gap-3 px-5 pt-3">
+              <div class="h-9 w-9 shrink-0 rounded-md bg-muted" />
+              <div class="min-w-0 flex-1 space-y-1.5">
+                <div class="h-3.5 rounded-full bg-muted" :class="row % 2 === 0 ? 'w-1/2' : 'w-2/3'" />
+                <div class="h-2.5 w-1/4 rounded-full bg-muted/70" />
+              </div>
+            </div>
+            <div class="flex items-center justify-between gap-3 px-5 pb-4 pt-3">
+              <div class="h-3 w-28 rounded-full bg-muted/70" />
+              <div class="h-9 w-28 rounded-md bg-muted" />
+            </div>
+          </div>
+          <p class="pt-1 text-center text-xs text-muted-foreground">{{ t('general.loading') }}</p>
         </div>
         
         <template v-else>
@@ -283,6 +306,10 @@
         </template>
       </div>
 
+      <!-- Every other signed-in account's quests, with its avatar and name, so a
+           whole account can be farmed without signing into it. -->
+      <AccountQuestGroupsPanel />
+
       <!-- The only way to stop a quest the page no longer drives. -->
       <BackgroundQuestsPanel />
     </div>
@@ -322,7 +349,7 @@
           <AlertDialogTitle>{{ t('dialog.complete_quests_title') }}</AlertDialogTitle>
           <AlertDialogDescription>
             <div class="space-y-4 my-4">
-              <p>{{ t('dialog.complete_quests_desc', { count: pendingCompleteQuests.length }) }}</p>
+              <p>{{ t('dialog.complete_quests_desc', { count: pendingCompleteQuests.length, max: questsStore.maxParallelQuests }) }}</p>
               <div class="border rounded-md p-3 bg-secondary/20 max-h-[300px] overflow-y-auto space-y-2 text-xs">
                  <div v-for="q in pendingCompleteQuests" :key="q.id" class="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1">
                     <span class="font-medium truncate text-foreground">{{ q.config.messages.quest_name }}</span>
@@ -495,8 +522,8 @@
             <div class="space-y-4 my-4">
               <p>
                 {{ batchCompleteType === 'game'
-                  ? t('dialog.complete_game_desc', { count: pendingBatchCompleteQuests.length })
-                  : t('dialog.complete_all_desc', { count: pendingBatchCompleteQuests.length })
+                  ? t('dialog.complete_game_desc', { count: pendingBatchCompleteQuests.length, max: parallelCap })
+                  : t('dialog.complete_all_desc', { count: pendingBatchCompleteQuests.length, max: questsStore.maxParallelQuests })
                 }}
               </p>
               <p v-if="batchCompleteType === 'all'" class="text-xs text-muted-foreground italic">
@@ -596,13 +623,14 @@
 
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useQuestsStore } from '@/stores/quests'
 import { useVersionStore } from '@/stores/version'
 import { useGameIdleStore } from '@/stores/gameIdle'
 import OrbsNitroStatus from '@/components/OrbsNitroStatus.vue'
 import BackgroundQuestsPanel from '@/components/BackgroundQuestsPanel.vue'
+import AccountQuestGroupsPanel from '@/components/AccountQuestGroupsPanel.vue'
 import QuestListHeader from '@/components/home/QuestListHeader.vue'
 import QuestViewTabs from '@/components/home/QuestViewTabs.vue'
 import QuestCard from '@/components/QuestCard.vue'
@@ -849,10 +877,11 @@ const startingQuestId = computed(() => preparingQuestId.value ?? questsStore.sta
 
 /** Whether a parallel slot is free. CDP mode drives the single Discord client,
  *  so the backend only admits one CDP task at a time there. */
-const hasFreeQuestSlot = computed(() => {
-  const cap = questsStore.gameQuestMode === 'cdp' ? 1 : questsStore.maxParallelQuests
-  return questsStore.runningQuests.length < cap
-})
+const parallelCap = computed(() =>
+  questsStore.gameQuestMode === 'cdp' ? 1 : questsStore.maxParallelQuests
+)
+
+const hasFreeQuestSlot = computed(() => questsStore.runningQuests.length < parallelCap.value)
 
 function isQuestRunning(questId: string): boolean {
   return questsStore.runningQuests.some(slot => slot.questId === questId)
@@ -968,6 +997,11 @@ onMounted(() => {
       console.warn('Background Nitro program reward fetch failed:', err)
     })
   }
+  document.addEventListener('keydown', handleHomeKeydown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleHomeKeydown)
 })
 
 watch(() => authStore.user, (newUser) => {
@@ -987,6 +1021,34 @@ watch(() => authStore.user, (newUser) => {
 
 async function refreshQuests() {
   await questsStore.fetchQuests(false, true)
+}
+
+/**
+ * Ctrl/Cmd+R would reload the webview and throw away the running dashboard, so it
+ * is retargeted to a quest refresh. "/" only steals focus when the keystroke was
+ * not typed into a field.
+ */
+function handleHomeKeydown(event: KeyboardEvent) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r') {
+    event.preventDefault()
+    if (!authStore.user || questsStore.loading || questsStore.refreshing) return
+    void refreshQuests()
+    return
+  }
+
+  if (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    const target = event.target as HTMLElement | null
+    if (target && isTextEntryTarget(target)) return
+    const field = document.getElementById('quest-search')
+    if (!field) return
+    event.preventDefault()
+    field.focus()
+  }
+}
+
+function isTextEntryTarget(el: HTMLElement): boolean {
+  const tag = el.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable
 }
 
 

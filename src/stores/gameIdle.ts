@@ -20,19 +20,29 @@ import { useQuestsStore } from './quests'
 const PLAY_MINUTES_KEY = 'questHelper_gameIdlePlayMinutes'
 const REST_MINUTES_KEY = 'questHelper_gameIdleRestMinutes'
 const MODE_KEY = 'questHelper_gameIdleMode'
+const CONCURRENT_GAMES_KEY = 'questHelper_gameIdleConcurrentGames'
 
-function savedInteger(key: string, fallback: number, minimum: number): number {
+// Mirrors `MAX_CONCURRENT_GAMES` in src-tauri/src/game_idle.rs: Discord has one
+// rich-presence slot, so extra lanes are detected only as running processes.
+export const MAX_CONCURRENT_GAMES = 36
+
+function savedInteger(
+  key: string,
+  fallback: number,
+  minimum: number,
+  maximum = Number.MAX_SAFE_INTEGER
+): number {
   const raw = localStorage.getItem(key)
   if (raw === null) return fallback
   const value = Number(raw)
-  return Number.isSafeInteger(value) && value >= minimum ? value : fallback
+  return Number.isSafeInteger(value) && value >= minimum && value <= maximum ? value : fallback
 }
 
 function clearStoppedQueue(value: GameIdleStatus | null): GameIdleStatus | null {
   if (!value || value.phase !== 'stopped') return value
   return {
     ...value,
-    current: null,
+    lanes: [],
     recent: [],
     upcoming: [],
   }
@@ -50,6 +60,7 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
   const quests = useQuestsStore()
   const playMinutes = ref(savedInteger(PLAY_MINUTES_KEY, 60, 1))
   const restMinutes = ref(savedInteger(REST_MINUTES_KEY, 0, 0))
+  const concurrentGames = ref(savedInteger(CONCURRENT_GAMES_KEY, 1, 1, MAX_CONCURRENT_GAMES))
   const savedMode = localStorage.getItem(MODE_KEY)
   const mode = ref<GameIdleMode>(savedMode === 'process' || savedMode === 'cdp' ? savedMode : 'process')
   const status = ref<GameIdleStatus | null>(null)
@@ -70,9 +81,16 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
     return phase !== undefined && phase !== 'stopped'
   })
 
+  // A CDP spoof is written into the Discord client one game at a time, so the
+  // requested lane count only applies to process simulation.
+  const effectiveConcurrentGames = computed(() =>
+    mode.value === 'cdp' ? 1 : concurrentGames.value
+  )
+
   function persistConfig() {
     localStorage.setItem(PLAY_MINUTES_KEY, String(playMinutes.value))
     localStorage.setItem(REST_MINUTES_KEY, String(restMinutes.value))
+    localStorage.setItem(CONCURRENT_GAMES_KEY, String(concurrentGames.value))
     localStorage.setItem(MODE_KEY, mode.value)
   }
 
@@ -82,6 +100,14 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
     }
     if (!Number.isSafeInteger(restMinutes.value) || restMinutes.value < 0) {
       return 'rest_minutes'
+    }
+    if (
+      mode.value === 'process' &&
+      (!Number.isSafeInteger(concurrentGames.value) ||
+        concurrentGames.value < 1 ||
+        concurrentGames.value > MAX_CONCURRENT_GAMES)
+    ) {
+      return 'concurrent_games'
     }
     return null
   }
@@ -119,6 +145,7 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
       if (activeStatus && activeStatus.phase !== 'stopped') {
         playMinutes.value = activeStatus.playMinutes
         restMinutes.value = activeStatus.restMinutes
+        concurrentGames.value = activeStatus.concurrentGames
         mode.value = activeStatus.mode
       }
       statusUnlisten = await onGameIdleStatus(next => {
@@ -160,6 +187,7 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
             mode: mode.value,
             playMinutes: playMinutes.value,
             restMinutes: restMinutes.value,
+            concurrentGames: effectiveConcurrentGames.value,
             cdpPort: quests.cdpPort,
             simulationPath,
           },
@@ -239,6 +267,7 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
   return {
     playMinutes,
     restMinutes,
+    concurrentGames,
     mode,
     status,
     history,
@@ -247,6 +276,7 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
     stopRequested,
     error,
     isActive,
+    effectiveConcurrentGames,
     initialize,
     refreshHistory,
     start,

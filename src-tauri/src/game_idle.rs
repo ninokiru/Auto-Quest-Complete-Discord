@@ -11,6 +11,14 @@ use tauri::Emitter;
 const UPCOMING_LENGTH: usize = 5;
 const RECENT_LENGTH: usize = 5;
 const MAX_CONSECUTIVE_FAILURES: usize = 5;
+/// Upper bound on games simulated at the same time. Discord detects every
+/// simulated process, but only one lane can hold the rich-presence slot, so the
+/// additional lanes are reported through process detection alone.
+const MAX_CONCURRENT_GAMES: usize = 36;
+/// How long a lane waits before retrying when every candidate is already held
+/// by another lane. A pool smaller than the lane count is a normal configuration
+/// during a rest gap, not a failure.
+const LANE_RETRY_DELAY: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -25,6 +33,7 @@ pub struct GameIdleConfig {
     pub mode: GameIdleMode,
     pub play_minutes: u32,
     pub rest_minutes: u32,
+    pub concurrent_games: u32,
     pub cdp_port: u16,
     pub simulation_path: String,
 }
@@ -34,6 +43,9 @@ impl GameIdleConfig {
         if self.play_minutes == 0 {
             return Err("Game simulation duration must be a positive integer".to_string());
         }
+        if !(1..=(MAX_CONCURRENT_GAMES as u32)).contains(&self.concurrent_games) {
+            return Err(format!("Simultaneous games must be 1 to {MAX_CONCURRENT_GAMES}"));
+        }
         if self.mode == GameIdleMode::Cdp && self.cdp_port == 0 {
             return Err("CDP port must be between 1 and 65535".to_string());
         }
@@ -41,6 +53,16 @@ impl GameIdleConfig {
             return Err("Simulation directory is required for process mode".to_string());
         }
         Ok(())
+    }
+
+    /// Lanes this config may actually run. A CDP spoof is written into the
+    /// Discord client by `start_manual_game_spoof`, which always clears the
+    /// previous spoof first, so CDP is single-lane whatever the request asks.
+    pub fn lanes(&self) -> usize {
+        match self.mode {
+            GameIdleMode::Cdp => 1,
+            GameIdleMode::Process => self.concurrent_games as usize,
+        }
     }
 }
 
@@ -69,19 +91,31 @@ pub enum GameIdlePhase {
     Stopped,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GameIdleLane {
+    pub item: GameIdleItem,
+    /// `Starting`, `Playing` or `Resting`: the states a lane can be in while the
+    /// session is live.
+    pub phase: GameIdlePhase,
+    pub started_at: i64,
+    pub ends_at: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GameIdleStatus {
     pub session_id: String,
     pub mode: GameIdleMode,
+    /// Session-wide summary of `lanes`, plus the explicit `Stopping`, `Error`
+    /// and `Stopped` states the manager sets itself.
     pub phase: GameIdlePhase,
     pub play_minutes: u32,
     pub rest_minutes: u32,
-    pub current: Option<GameIdleItem>,
+    pub concurrent_games: u32,
+    pub lanes: Vec<GameIdleLane>,
     pub recent: Vec<GameIdleItem>,
     pub upcoming: Vec<GameIdleItem>,
-    pub phase_started_at: i64,
-    pub phase_ends_at: Option<i64>,
     pub accumulated_played_seconds: u64,
     pub warning: Option<String>,
 }
@@ -94,16 +128,37 @@ enum RunningSimulation {
 
 struct StartSimulationError {
     message: String,
+    /// A native resource whose cleanup failed. Stop must keep owning it so a
+    /// retry can finish the job instead of orphaning a simulated game.
     running: Option<RunningSimulation>,
 }
 
-impl From<String> for StartSimulationError {
-    fn from(message: String) -> Self {
+impl StartSimulationError {
+    fn new(message: String) -> Self {
         Self {
             message,
             running: None,
         }
     }
+}
+
+impl From<String> for StartSimulationError {
+    fn from(message: String) -> Self {
+        Self::new(message)
+    }
+}
+
+/// One concurrent lane, owned by the worker whose `slot` this is.
+#[derive(Debug, Clone)]
+struct LaneRecord {
+    slot: usize,
+    item: GameIdleItem,
+    running: Option<RunningSimulation>,
+    /// Whether this lane holds the single Discord rich-presence slot.
+    presence: bool,
+    phase: GameIdlePhase,
+    started_at: i64,
+    ends_at: Option<i64>,
 }
 
 #[derive(Debug)]
@@ -114,13 +169,68 @@ struct IdleShared {
     removed_this_cycle: HashSet<String>,
     upcoming: VecDeque<GameIdleItem>,
     recent: VecDeque<GameIdleItem>,
-    running: Option<RunningSimulation>,
+    lanes: Vec<LaneRecord>,
+    consecutive_failures: usize,
 }
 
 impl IdleShared {
     fn refresh_status_lists(&mut self) {
         self.status.recent = self.recent.iter().cloned().collect();
         self.status.upcoming = self.upcoming.iter().cloned().collect();
+    }
+
+    /// Publish the lane records and re-derive the session summary. `Stopping`,
+    /// `Error` and `Stopped` are set by the manager, so they must never be
+    /// overwritten by what the lanes happen to be doing.
+    fn sync_lanes(&mut self) {
+        self.status.lanes = self
+            .lanes
+            .iter()
+            .map(|lane| GameIdleLane {
+                item: lane.item.clone(),
+                phase: lane.phase,
+                started_at: lane.started_at,
+                ends_at: lane.ends_at,
+            })
+            .collect();
+        if matches!(
+            self.status.phase,
+            GameIdlePhase::Stopping | GameIdlePhase::Error | GameIdlePhase::Stopped
+        ) {
+            return;
+        }
+        self.status.phase = if self
+            .lanes
+            .iter()
+            .any(|lane| lane.phase == GameIdlePhase::Playing)
+        {
+            GameIdlePhase::Playing
+        } else if !self.lanes.is_empty()
+            && self
+                .lanes
+                .iter()
+                .all(|lane| lane.phase == GameIdlePhase::Resting)
+        {
+            GameIdlePhase::Resting
+        } else {
+            GameIdlePhase::Starting
+        };
+    }
+
+    /// A game held by a live lane must not appear in the queue again: two lanes
+    /// playing one application would collide on both the recorded play time and
+    /// the simulated process name. A resting lane is released, because its game
+    /// is no longer running.
+    fn is_claimed(&self, candidate: &GameIdleItem) -> bool {
+        self.lanes.iter().any(|lane| {
+            lane.phase != GameIdlePhase::Resting
+                && (lane.item.id == candidate.id
+                    || lane
+                        .item
+                        .executable_name
+                        .as_ref()
+                        .is_some_and(|name| Some(name) == candidate.executable_name.as_ref()))
+        })
     }
 
     fn refill_bag(&mut self) {
@@ -152,14 +262,10 @@ impl IdleShared {
             if self.removed_this_cycle.contains(&candidate.id) {
                 continue;
             }
-            let duplicates_active_queue = (self.all.len() > 1
-                && self
-                    .status
-                    .current
-                    .as_ref()
-                    .is_some_and(|current| current.id == candidate.id))
-                || self.upcoming.iter().any(|item| item.id == candidate.id);
-            if duplicates_active_queue {
+            if self.is_claimed(&candidate) {
+                continue;
+            }
+            if self.upcoming.iter().any(|item| item.id == candidate.id) {
                 continue;
             }
             let recently_played = self.recent.iter().any(|item| item.id == candidate.id);
@@ -171,6 +277,104 @@ impl IdleShared {
             self.upcoming.push_back(occurrence);
         }
         self.refresh_status_lists();
+    }
+
+    /// Claim the next queued game for `slot`. The single rich-presence slot is
+    /// given to the first lane that asks while no other lane holds it. Returns
+    /// the game and whether this lane may publish it through RPC.
+    fn take_candidate(&mut self, slot: usize) -> Option<(GameIdleItem, bool)> {
+        if self.upcoming.is_empty() {
+            self.fill_upcoming();
+        }
+        let item = self.upcoming.pop_front()?;
+        let presence = self.status.mode == GameIdleMode::Process
+            && !self.lanes.iter().any(|lane| lane.presence);
+        self.release_lane(slot);
+        self.lanes.push(LaneRecord {
+            slot,
+            item: item.clone(),
+            running: None,
+            presence,
+            phase: GameIdlePhase::Starting,
+            started_at: now_millis(),
+            ends_at: None,
+        });
+        self.sync_lanes();
+        self.refresh_status_lists();
+        Some((item, presence))
+    }
+
+    /// Record ownership before play-time persistence begins, so a persistence
+    /// failure still leaves the simulation reachable by Stop.
+    fn set_lane_running(&mut self, slot: usize, running: RunningSimulation) {
+        if let Some(lane) = self.lanes.iter_mut().find(|lane| lane.slot == slot) {
+            lane.running = Some(running);
+        }
+    }
+
+    /// The lane is now playing. The game joins `recent` so the reel keeps
+    /// showing it as played while the other lanes carry on.
+    fn mark_playing(&mut self, slot: usize, play_minutes: u32) {
+        let Some(lane) = self.lanes.iter_mut().find(|lane| lane.slot == slot) else {
+            return;
+        };
+        lane.phase = GameIdlePhase::Playing;
+        lane.started_at = now_millis();
+        lane.ends_at = Some(lane.started_at + i64::from(play_minutes) * 60_000);
+        let item = lane.item.clone();
+        if !self.recent.iter().any(|played| played.id == item.id) {
+            self.recent.push_back(item);
+            while self.recent.len() > RECENT_LENGTH {
+                self.recent.pop_front();
+            }
+        }
+        self.fill_upcoming();
+        self.sync_lanes();
+    }
+
+    /// Account for the time the lane just played. With a rest gap the finished
+    /// game stays on screen as a resting lane; without one the lane is released
+    /// so its game may be queued again immediately.
+    fn end_play(&mut self, slot: usize, played_seconds: u64, rest_minutes: u32) {
+        self.status.accumulated_played_seconds = self
+            .status
+            .accumulated_played_seconds
+            .saturating_add(played_seconds);
+        if rest_minutes == 0 {
+            self.release_lane(slot);
+            return;
+        }
+        let Some(lane) = self.lanes.iter_mut().find(|lane| lane.slot == slot) else {
+            return;
+        };
+        lane.running = None;
+        lane.presence = false;
+        lane.phase = GameIdlePhase::Resting;
+        lane.started_at = now_millis();
+        lane.ends_at = Some(lane.started_at + i64::from(rest_minutes) * 60_000);
+        self.sync_lanes();
+    }
+
+    /// Drop the lane record, freeing its game for other lanes to queue. Returns
+    /// the record so a caller can tell whether it still owned a simulation.
+    fn release_lane(&mut self, slot: usize) -> Option<LaneRecord> {
+        let index = self.lanes.iter().position(|lane| lane.slot == slot)?;
+        let lane = self.lanes.remove(index);
+        self.sync_lanes();
+        Some(lane)
+    }
+
+    /// Count a failed lane start and report whether the circuit breaker tripped.
+    fn register_failure(&mut self, message: String) -> bool {
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+        self.status.warning = Some(message);
+        self.fill_upcoming();
+        self.sync_lanes();
+        self.consecutive_failures >= MAX_CONSECUTIVE_FAILURES
+    }
+
+    fn register_success(&mut self) {
+        self.consecutive_failures = 0;
     }
 
     fn remove_upcoming_item(&mut self, app_id: &str, occurrence_id: &str) -> bool {
@@ -196,8 +400,8 @@ impl IdleShared {
 
 struct ActiveIdleSession {
     shared: Arc<tokio::sync::Mutex<IdleShared>>,
-    cancel: Option<tokio::sync::watch::Sender<bool>>,
-    join: Option<tauri::async_runtime::JoinHandle<()>>,
+    cancel: Option<Arc<tokio::sync::watch::Sender<bool>>>,
+    joins: Vec<tauri::async_runtime::JoinHandle<()>>,
 }
 
 #[derive(Default)]
@@ -240,19 +444,19 @@ impl GameIdleManager {
             });
         }
 
+        let lanes = config.lanes();
+        let config = Arc::new(config);
         let session_id = uuid::Uuid::new_v4().to_string();
-        let now = now_millis();
         let status = GameIdleStatus {
             session_id,
             mode: config.mode,
             phase: GameIdlePhase::Starting,
             play_minutes: config.play_minutes,
             rest_minutes: config.rest_minutes,
-            current: None,
+            concurrent_games: lanes as u32,
+            lanes: Vec::new(),
             recent: Vec::new(),
             upcoming: Vec::new(),
-            phase_started_at: now,
-            phase_ends_at: None,
             accumulated_played_seconds: 0,
             warning: None,
         };
@@ -263,37 +467,38 @@ impl GameIdleManager {
             removed_this_cycle: HashSet::new(),
             upcoming: VecDeque::new(),
             recent: VecDeque::new(),
-            running: None,
+            lanes: Vec::new(),
+            consecutive_failures: 0,
         };
         shared_value.refill_bag();
         shared_value.fill_upcoming();
-        // Pick and expose the first queue entry before the worker begins its
-        // native launch. The UI can render the complete queue immediately,
-        // reducing perceived startup latency while the first game is prepared.
-        shared_value.status.current = shared_value.upcoming.front().cloned();
-        shared_value.refresh_status_lists();
+        // Publish the candidate pool before the first lane launches its native
+        // process. The UI can render the complete reel immediately, reducing
+        // perceived startup latency while the games are prepared.
         let initial = shared_value.status.clone();
         emit_status(&app, &initial);
         let shared = Arc::new(tokio::sync::Mutex::new(shared_value));
-        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-        let task_shared = Arc::clone(&shared);
-        let task_app = app.clone();
-        let join = tauri::async_runtime::spawn(async move {
-            run_session(
-                config,
-                task_shared,
-                cancel_rx,
-                user_id,
-                history,
-                history_path,
-                task_app,
-            )
-            .await;
-        });
+        // One sender, one receiver per lane: a single `send(true)` at Stop time
+        // wakes every lane from its play or rest sleep.
+        let cancel_tx = Arc::new(tokio::sync::watch::channel(false).0);
+        let mut joins = Vec::with_capacity(lanes);
+        for slot in 0..lanes {
+            joins.push(tauri::async_runtime::spawn(run_lane(
+                slot,
+                Arc::clone(&config),
+                Arc::clone(&shared),
+                Arc::clone(&cancel_tx),
+                cancel_tx.subscribe(),
+                user_id.clone(),
+                Arc::clone(&history),
+                history_path.clone(),
+                app.clone(),
+            )));
+        }
         *active = Some(ActiveIdleSession {
             shared,
             cancel: Some(cancel_tx),
-            join: Some(join),
+            joins,
         });
         Ok(initial)
     }
@@ -329,14 +534,8 @@ impl GameIdleManager {
         if shared.status.session_id != session_id {
             return Err("The game idle session has changed".to_string());
         }
-        if shared.status.phase == GameIdlePhase::Starting
-            && shared
-                .upcoming
-                .front()
-                .is_some_and(|item| item.id == app_id && item.occurrence_id == occurrence_id)
-        {
-            return Err("The game currently being started cannot be removed".to_string());
-        }
+        // A lane's game is no longer in `upcoming`, so it cannot be removed
+        // here; the running simulation stays owned by its worker and Stop.
         if !shared.remove_upcoming_item(app_id, occurrence_id) {
             return Err("Only upcoming games can be removed".to_string());
         }
@@ -349,7 +548,7 @@ impl GameIdleManager {
         history: Arc<SimulationHistory>,
         app: &tauri::AppHandle,
     ) -> Result<Option<GameIdleStatus>, String> {
-        let (shared, join) = {
+        let (shared, joins) = {
             let mut active = self.active.lock().await;
             let Some(session) = active.as_mut() else {
                 return Ok(None);
@@ -357,39 +556,26 @@ impl GameIdleManager {
             {
                 let mut shared = session.shared.lock().await;
                 shared.status.phase = GameIdlePhase::Stopping;
-                shared.status.phase_ends_at = None;
+                shared.sync_lanes();
                 emit_status(app, &shared.status);
             }
             if let Some(cancel) = session.cancel.take() {
                 let _ = cancel.send(true);
             }
-            (Arc::clone(&session.shared), session.join.take())
+            (Arc::clone(&session.shared), session.joins.drain(..).collect::<Vec<_>>())
         };
 
-        if let Some(join) = join {
-            // Do not abort an in-flight spawn_blocking call: Tokio cannot
-            // cancel that OS work, and it could otherwise launch a child after
-            // the manager had already declared the session stopped.
+        // Do not abort an in-flight spawn_blocking call: Tokio cannot cancel
+        // that OS work, and a cancelled lane could otherwise launch a child
+        // after the manager had already declared the session stopped.
+        for join in joins {
             let _ = join.await;
         }
 
-        let cleanup_result = {
-            let mut shared = shared.lock().await;
-            if let Some(running) = shared.running.clone() {
-                match stop_simulation(&running, app).await {
-                    Ok(()) => {
-                        shared.running = None;
-                        Ok(())
-                    }
-                    Err(error) => Err(error),
-                }
-            } else {
-                Ok(())
-            }
-        };
-        if let Err(error) = cleanup_result {
+        if let Err(error) = stop_remaining_lanes(&shared, app).await {
             let mut shared = shared.lock().await;
             shared.status.phase = GameIdlePhase::Error;
+            shared.sync_lanes();
             shared.status.warning = Some(error.clone());
             emit_status(app, &shared.status);
             return Err(error);
@@ -398,18 +584,18 @@ impl GameIdleManager {
         if let Err(error) = history.finish_active(Some(app)).await {
             let mut shared = shared.lock().await;
             shared.status.phase = GameIdlePhase::Error;
-            shared.status.phase_ends_at = None;
+            shared.sync_lanes();
             shared.status.warning = Some(error.clone());
             emit_status(app, &shared.status);
             // Keep the manager entry so the user can retry Stop. Its native
-            // resource is already gone, while the history segment remains
-            // active until the final interval is durably persisted.
+            // resources are already gone, while the history segments remain
+            // active until their final intervals are durably persisted.
             return Err(error);
         }
         let final_status = {
             let mut shared = shared.lock().await;
             shared.status.phase = GameIdlePhase::Stopped;
-            shared.status.phase_ends_at = None;
+            shared.status.lanes = Vec::new();
             emit_status(app, &shared.status);
             shared.status.clone()
         };
@@ -418,57 +604,97 @@ impl GameIdleManager {
     }
 }
 
-async fn run_session(
-    config: GameIdleConfig,
+/// Stop every simulation the session still owns. Runs after all lane workers
+/// have exited, so nothing can start a new game beside this cleanup.
+async fn stop_remaining_lanes(
+    shared: &Arc<tokio::sync::Mutex<IdleShared>>,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+    // A lane whose cleanup failed keeps its record so a retried Stop can finish
+    // the job, but it must not be retried inside this pass forever.
+    let mut blocked = HashSet::new();
+    loop {
+        let pending = {
+            let state = shared.lock().await;
+            state
+                .lanes
+                .iter()
+                .find(|lane| lane.running.is_some() && !blocked.contains(&lane.slot))
+                .cloned()
+        };
+        let Some(lane) = pending else { break };
+        let Some(running) = lane.running else {
+            continue;
+        };
+        match stop_simulation(&running, lane.presence, app).await {
+            Ok(()) => {
+                shared.lock().await.release_lane(lane.slot);
+            }
+            Err(error) => {
+                blocked.insert(lane.slot);
+                errors.push(format!("{}: {error}", lane.item.name));
+            }
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("Failed to stop simulated games: {}", errors.join("; ")))
+    }
+}
+
+/// One lane of the reel. A lane owns exactly one game at a time and repeats
+/// pick, play, stop, rest until the session is cancelled. Each lane gets its own
+/// receiver, so a single Stop wakes every one of them at once.
+async fn run_lane(
+    slot: usize,
+    config: Arc<GameIdleConfig>,
     shared: Arc<tokio::sync::Mutex<IdleShared>>,
+    cancel_tx: Arc<tokio::sync::watch::Sender<bool>>,
     mut cancel: tokio::sync::watch::Receiver<bool>,
     user_id: String,
     history: Arc<SimulationHistory>,
     history_path: PathBuf,
     app: tauri::AppHandle,
 ) {
-    let mut consecutive_failures = 0usize;
     loop {
         if *cancel.borrow() {
             break;
         }
-        let candidate = {
+        let claimed = {
             let mut state = shared.lock().await;
-            state.status.phase = GameIdlePhase::Starting;
-            state.status.phase_started_at = now_millis();
-            state.status.phase_ends_at = None;
-            if state.upcoming.is_empty() {
-                state.fill_upcoming();
+            state.take_candidate(slot)
+        };
+        let Some((candidate, presence)) = claimed else {
+            // Every candidate is held by another lane, which is normal when the
+            // pool is smaller than the lane count. Wait for one to be released
+            // instead of spinning, and do not count it as a failed start.
+            tokio::select! {
+                _ = tokio::time::sleep(LANE_RETRY_DELAY) => {}
+                _ = cancel.changed() => {}
             }
-            // Keep the candidate in the visible future queue until its
-            // activity has actually started. This preserves the completed
-            // game at the center throughout rest/start retries and makes the
-            // reel advance only on a successful handoff.
-            let candidate = state.upcoming.front().cloned();
-            emit_status(&app, &state.status);
-            candidate
+            continue;
         };
-        let Some(candidate) = candidate else {
-            set_error(&shared, &app, "No eligible game is available".to_string()).await;
-            return;
-        };
+        emit_status(&app, &shared.lock().await.status);
 
         let mut running = None;
         let mut last_error = String::new();
+        let mut unrecoverable = false;
         for attempt in 0..2 {
-            match start_simulation(&candidate, &config, &app).await {
+            match start_simulation(&candidate, &config, presence).await {
                 Ok(value) => {
                     running = Some(value);
                     break;
                 }
                 Err(error) => {
                     last_error = error.message;
-                    if let Some(running) = error.running {
+                    if let Some(orphan) = error.running {
                         // The attempted rollback failed. Retain ownership for
-                        // the normal Stop retry instead of launching it again.
-                        shared.lock().await.running = Some(running);
-                        set_error(&shared, &app, last_error).await;
-                        return;
+                        // the normal Stop path instead of launching it again.
+                        shared.lock().await.set_lane_running(slot, orphan);
+                        unrecoverable = true;
+                        break;
                     }
                     if attempt == 0 {
                         tokio::select! {
@@ -480,33 +706,30 @@ async fn run_session(
             }
         }
 
-        // Stopping during the retry delay is not a failed game start. Exit
-        // without removing the candidate, emitting a warning, or incrementing
-        // the consecutive-failure circuit breaker.
-        if *cancel.borrow() && running.is_none() {
+        if unrecoverable {
+            set_error(&shared, &app, last_error).await;
+            let _ = cancel_tx.send(true);
             break;
         }
 
-        let Some(running) = running else {
-            consecutive_failures += 1;
-            {
+        // Stopping during the retry delay is not a failed game start. Release
+        // the lane without emitting a warning or counting a failure.
+        if *cancel.borrow() && running.is_none() {
+            shared.lock().await.release_lane(slot);
+            break;
+        }
+
+        let Some(simulation) = running else {
+            let tripped = {
                 let mut state = shared.lock().await;
-                if state
-                    .upcoming
-                    .front()
-                    .is_some_and(|queued| queued.id == candidate.id)
-                {
-                    state.upcoming.pop_front();
-                }
-                state.status.current = state.recent.back().cloned();
-                state.status.warning = Some(format!(
+                state.release_lane(slot);
+                state.register_failure(format!(
                     "Skipped {} after two failed start attempts: {}",
                     candidate.name, last_error
-                ));
-                state.fill_upcoming();
-                emit_status(&app, &state.status);
-            }
-            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                ))
+            };
+            emit_status(&app, &shared.lock().await.status);
+            if tripped {
                 set_error(
                     &shared,
                     &app,
@@ -514,17 +737,18 @@ async fn run_session(
                         .to_string(),
                 )
                 .await;
-                return;
+                let _ = cancel_tx.send(true);
+                break;
             }
             continue;
         };
-        consecutive_failures = 0;
 
         {
             let mut state = shared.lock().await;
+            state.register_success();
             // Record ownership before beginning history persistence so any
             // cleanup failure still leaves a retryable Stop path.
-            state.running = Some(running.clone());
+            state.set_lane_running(slot, simulation.clone());
         }
 
         if let Err(error) = history
@@ -537,39 +761,24 @@ async fn run_session(
             )
             .await
         {
-            let cleanup_error = stop_simulation(&running, &app).await.err();
+            let cleanup_error = stop_simulation(&simulation, presence, &app).await.err();
             if cleanup_error.is_none() {
-                shared.lock().await.running = None;
+                shared.lock().await.release_lane(slot);
             }
             let detail = cleanup_error
                 .map(|cleanup| format!("{error}. Cleanup also failed: {cleanup}"))
                 .unwrap_or(error);
             set_error(&shared, &app, detail).await;
-            return;
+            let _ = cancel_tx.send(true);
+            break;
         }
 
         let play_started = Instant::now();
         {
             let mut state = shared.lock().await;
-            if state
-                .upcoming
-                .front()
-                .is_some_and(|queued| queued.id == candidate.id)
-            {
-                state.upcoming.pop_front();
-            }
-            state.status.current = Some(candidate.clone());
-            state.recent.push_back(candidate.clone());
-            while state.recent.len() > RECENT_LENGTH {
-                state.recent.pop_front();
-            }
-            state.fill_upcoming();
-            state.status.phase = GameIdlePhase::Playing;
-            state.status.phase_started_at = now_millis();
-            state.status.phase_ends_at =
-                Some(state.status.phase_started_at + i64::from(config.play_minutes) * 60_000);
-            emit_status(&app, &state.status);
+            state.mark_playing(slot, config.play_minutes);
         }
+        emit_status(&app, &shared.lock().await.status);
 
         let play_duration = Duration::from_secs(u64::from(config.play_minutes) * 60);
         let cancelled = tokio::select! {
@@ -577,62 +786,74 @@ async fn run_session(
             _ = cancel.changed() => true,
         };
 
-        let cleanup = stop_simulation(&running, &app).await;
-        if let Err(error) = cleanup {
+        if let Err(error) = stop_simulation(&simulation, presence, &app).await {
             set_error(
                 &shared,
                 &app,
                 format!("Failed to stop {}: {}", candidate.name, error),
             )
             .await;
-            return;
+            let _ = cancel_tx.send(true);
+            break;
         }
         {
             let mut state = shared.lock().await;
-            state.running = None;
-            state.status.accumulated_played_seconds = state
-                .status
-                .accumulated_played_seconds
-                .saturating_add(play_started.elapsed().as_secs());
+            state.end_play(slot, play_started.elapsed().as_secs(), config.rest_minutes);
         }
+        emit_status(&app, &shared.lock().await.status);
         if let Err(error) = history
             .finish_one(&history_path, Some(&app), &candidate.id)
             .await
         {
             set_error(&shared, &app, error).await;
-            return;
+            let _ = cancel_tx.send(true);
+            break;
         }
         if cancelled || *cancel.borrow() {
             break;
         }
 
         if config.rest_minutes > 0 {
-            {
-                let mut state = shared.lock().await;
-                state.status.phase = GameIdlePhase::Resting;
-                state.status.phase_started_at = now_millis();
-                state.status.phase_ends_at =
-                    Some(state.status.phase_started_at + i64::from(config.rest_minutes) * 60_000);
-                emit_status(&app, &state.status);
-            }
             let rest_duration = Duration::from_secs(u64::from(config.rest_minutes) * 60);
-            tokio::select! {
-                _ = tokio::time::sleep(rest_duration) => {},
-                _ = cancel.changed() => { break; }
+            let interrupted = tokio::select! {
+                _ = tokio::time::sleep(rest_duration) => false,
+                _ = cancel.changed() => true,
+            };
+            if interrupted {
+                shared.lock().await.release_lane(slot);
+                break;
             }
+            // The finished game was only parked on screen for the rest gap.
+            // Releasing it now lets any lane pick it up again.
+            shared.lock().await.release_lane(slot);
         }
     }
+}
 
-    let mut state = shared.lock().await;
-    state.status.phase = GameIdlePhase::Stopped;
-    state.status.phase_ends_at = None;
-    emit_status(&app, &state.status);
+/// Roll back a simulated process whose launch succeeded but whose presence
+/// update failed. When even the rollback fails, the returned error keeps
+/// ownership so Stop can retry the cleanup instead of orphaning the process.
+async fn rollback_process(executable_name: String, error: String) -> StartSimulationError {
+    let executable = executable_name.clone();
+    let cleanup = tauri::async_runtime::spawn_blocking(move || {
+        crate::game_simulator::stop_simulated_game(&executable)
+    })
+    .await
+    .map_err(|join_error| join_error.to_string())
+    .and_then(|result| result.map_err(|stop_error| stop_error.to_string()));
+    match cleanup {
+        Ok(()) => StartSimulationError::new(error),
+        Err(cleanup_error) => StartSimulationError {
+            message: format!("{error}. Process cleanup also failed: {cleanup_error}"),
+            running: Some(RunningSimulation::Process { executable_name }),
+        },
+    }
 }
 
 async fn start_simulation(
     game: &GameIdleItem,
     config: &GameIdleConfig,
-    _app: &tauri::AppHandle,
+    presence: bool,
 ) -> Result<RunningSimulation, StartSimulationError> {
     match config.mode {
         GameIdleMode::Process => {
@@ -657,29 +878,21 @@ async fn start_simulation(
             .map_err(|error| format!("Process simulator task failed: {error}"))?
             .map_err(|error| error.to_string())?;
 
-            let activity = serde_json::json!({
-                "app_id": game.id,
-                "state": "In Game",
-                "details": format!("Playing {}", game.name),
-                "largeImageKey": "logo",
-                "largeImageText": game.name,
-                "timestamp": chrono::Utc::now().timestamp(),
-            });
-            if let Err(error) = crate::replace_discord_rpc(activity.to_string()).await {
-                let executable = executable_name.clone();
-                let cleanup = tauri::async_runtime::spawn_blocking(move || {
-                    crate::game_simulator::stop_simulated_game(&executable)
-                })
-                .await
-                .map_err(|join_error| join_error.to_string())
-                .and_then(|result| result.map_err(|stop_error| stop_error.to_string()));
-                return match cleanup {
-                    Ok(()) => Err(error.into()),
-                    Err(cleanup_error) => Err(StartSimulationError {
-                        message: format!("{error}. Process cleanup also failed: {cleanup_error}"),
-                        running: Some(RunningSimulation::Process { executable_name }),
-                    }),
-                };
+            // Discord has one rich-presence slot, so only the lane that claimed
+            // it publishes the activity. The other lanes are still detected
+            // through their simulated processes.
+            if presence {
+                let activity = serde_json::json!({
+                    "app_id": game.id,
+                    "state": "In Game",
+                    "details": format!("Playing {}", game.name),
+                    "largeImageKey": "logo",
+                    "largeImageText": game.name,
+                    "timestamp": chrono::Utc::now().timestamp(),
+                });
+                if let Err(error) = crate::replace_discord_rpc(activity.to_string()).await {
+                    return Err(rollback_process(executable_name, error).await);
+                }
             }
             Ok(RunningSimulation::Process { executable_name })
         }
@@ -696,11 +909,16 @@ async fn start_simulation(
 
 async fn stop_simulation(
     running: &RunningSimulation,
+    clear_presence: bool,
     _app: &tauri::AppHandle,
 ) -> Result<(), String> {
     match running {
         RunningSimulation::Process { executable_name } => {
-            let rpc_error = crate::clear_discord_rpc().await.err();
+            let rpc_error = if clear_presence {
+                crate::clear_discord_rpc().await.err()
+            } else {
+                None
+            };
             let executable_name = executable_name.clone();
             let process_error = tauri::async_runtime::spawn_blocking(move || {
                 crate::game_simulator::stop_simulated_game(&executable_name)
@@ -770,8 +988,8 @@ async fn set_error(
 ) {
     let mut state = shared.lock().await;
     state.status.phase = GameIdlePhase::Error;
-    state.status.phase_ends_at = None;
     state.status.warning = Some(error);
+    state.sync_lanes();
     emit_status(app, &state.status);
 }
 
@@ -801,16 +1019,87 @@ mod tests {
         }
     }
 
+    fn item(index: usize) -> GameIdleItem {
+        GameIdleItem {
+            id: index.to_string(),
+            name: index.to_string(),
+            icon: None,
+            type_name: None,
+            occurrence_id: String::new(),
+            executable_name: Some(format!("{index}.exe")),
+        }
+    }
+
+    fn pool(range: std::ops::Range<usize>) -> Vec<GameIdleItem> {
+        range.map(item).collect()
+    }
+
+    fn shared_with(mode: GameIdleMode, all: Vec<GameIdleItem>) -> IdleShared {
+        IdleShared {
+            status: GameIdleStatus {
+                session_id: "session".into(),
+                mode,
+                phase: GameIdlePhase::Starting,
+                play_minutes: 1,
+                rest_minutes: 0,
+                concurrent_games: 1,
+                lanes: vec![],
+                recent: vec![],
+                upcoming: vec![],
+                accumulated_played_seconds: 0,
+                warning: None,
+            },
+            all,
+            bag: vec![],
+            removed_this_cycle: HashSet::new(),
+            upcoming: VecDeque::new(),
+            recent: VecDeque::new(),
+            lanes: vec![],
+            consecutive_failures: 0,
+        }
+    }
+
     #[test]
     fn duration_validation_rejects_zero_play_time() {
         let config = GameIdleConfig {
             mode: GameIdleMode::Cdp,
             play_minutes: 0,
             rest_minutes: 0,
+            concurrent_games: 1,
             cdp_port: 9223,
             simulation_path: String::new(),
         };
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn concurrent_games_is_bounded_and_cdp_stays_single_lane() {
+        let mut config = GameIdleConfig {
+            mode: GameIdleMode::Process,
+            play_minutes: 1,
+            rest_minutes: 0,
+            concurrent_games: 1,
+            cdp_port: 9223,
+            simulation_path: "C:/simulations".to_string(),
+        };
+        assert!(config.validate().is_ok());
+        assert_eq!(config.lanes(), 1);
+
+        config.concurrent_games = MAX_CONCURRENT_GAMES as u32;
+        assert!(config.validate().is_ok());
+        assert_eq!(config.lanes(), MAX_CONCURRENT_GAMES);
+
+        config.concurrent_games = 0;
+        assert!(config.validate().is_err());
+        config.concurrent_games = MAX_CONCURRENT_GAMES as u32 + 1;
+        assert!(config.validate().is_err());
+
+        // A CDP spoof always clears the previous one, so the request cannot
+        // widen the session to more than one lane.
+        config.mode = GameIdleMode::Cdp;
+        config.concurrent_games = MAX_CONCURRENT_GAMES as u32;
+        assert!(config.validate().is_ok());
+        assert_eq!(config.lanes(), 1);
     }
 
     #[test]
@@ -856,38 +1145,7 @@ mod tests {
 
     #[test]
     fn queue_remains_unique_when_the_pool_is_large_enough() {
-        let all: Vec<_> = (0..20)
-            .map(|index| GameIdleItem {
-                id: index.to_string(),
-                name: index.to_string(),
-                icon: None,
-                type_name: None,
-                occurrence_id: String::new(),
-                executable_name: Some(format!("{index}.exe")),
-            })
-            .collect();
-        let mut shared = IdleShared {
-            status: GameIdleStatus {
-                session_id: "session".into(),
-                mode: GameIdleMode::Process,
-                phase: GameIdlePhase::Starting,
-                play_minutes: 1,
-                rest_minutes: 0,
-                current: None,
-                recent: vec![],
-                upcoming: vec![],
-                phase_started_at: 0,
-                phase_ends_at: None,
-                accumulated_played_seconds: 0,
-                warning: None,
-            },
-            all,
-            bag: vec![],
-            removed_this_cycle: HashSet::new(),
-            upcoming: VecDeque::new(),
-            recent: VecDeque::new(),
-            running: None,
-        };
+        let mut shared = shared_with(GameIdleMode::Process, pool(0..20));
         shared.refill_bag();
         shared.fill_upcoming();
         let ids: HashSet<_> = shared
@@ -901,38 +1159,7 @@ mod tests {
 
     #[test]
     fn removing_from_a_tiny_pool_does_not_immediately_reinsert_the_item() {
-        let all: Vec<_> = (0..5)
-            .map(|index| GameIdleItem {
-                id: index.to_string(),
-                name: index.to_string(),
-                icon: None,
-                type_name: None,
-                occurrence_id: String::new(),
-                executable_name: Some(format!("{index}.exe")),
-            })
-            .collect();
-        let mut shared = IdleShared {
-            status: GameIdleStatus {
-                session_id: "session".into(),
-                mode: GameIdleMode::Process,
-                phase: GameIdlePhase::Starting,
-                play_minutes: 1,
-                rest_minutes: 0,
-                current: None,
-                recent: vec![],
-                upcoming: vec![],
-                phase_started_at: 0,
-                phase_ends_at: None,
-                accumulated_played_seconds: 0,
-                warning: None,
-            },
-            all,
-            bag: vec![],
-            removed_this_cycle: HashSet::new(),
-            upcoming: VecDeque::new(),
-            recent: VecDeque::new(),
-            running: None,
-        };
+        let mut shared = shared_with(GameIdleMode::Process, pool(0..5));
         shared.refill_bag();
         shared.fill_upcoming();
         let removed_item = shared.upcoming.front().unwrap().clone();
@@ -948,38 +1175,10 @@ mod tests {
         // A pool larger than `UPCOMING_LENGTH + RECENT_LENGTH` keeps the queue
         // free of duplicates and, importantly, leaves the bag non-empty after
         // the removal, so the exclusion is not cleared by a mid-pass refill.
-        let all: Vec<_> = (0..(UPCOMING_LENGTH + RECENT_LENGTH + 2))
-            .map(|index| GameIdleItem {
-                id: index.to_string(),
-                name: index.to_string(),
-                icon: None,
-                type_name: None,
-                occurrence_id: String::new(),
-                executable_name: Some(format!("{index}.exe")),
-            })
-            .collect();
-        let mut shared = IdleShared {
-            status: GameIdleStatus {
-                session_id: "session".into(),
-                mode: GameIdleMode::Process,
-                phase: GameIdlePhase::Starting,
-                play_minutes: 1,
-                rest_minutes: 0,
-                current: None,
-                recent: vec![],
-                upcoming: vec![],
-                phase_started_at: 0,
-                phase_ends_at: None,
-                accumulated_played_seconds: 0,
-                warning: None,
-            },
-            all,
-            bag: vec![],
-            removed_this_cycle: HashSet::new(),
-            upcoming: VecDeque::new(),
-            recent: VecDeque::new(),
-            running: None,
-        };
+        let mut shared = shared_with(
+            GameIdleMode::Process,
+            pool(0..(UPCOMING_LENGTH + RECENT_LENGTH + 2)),
+        );
         shared.refill_bag();
         shared.fill_upcoming();
         let removed_item = shared.upcoming.front().unwrap().clone();
@@ -1000,36 +1199,24 @@ mod tests {
     }
 
     #[test]
-    fn a_single_candidate_pool_stays_short_instead_of_repeating_adjacent_items() {
+    fn a_claimed_lane_holds_a_single_candidate_back_until_it_is_released() {
         let candidates = eligible_games(GameIdleMode::Cdp, vec![game("only", "win32")]);
-        let mut shared = IdleShared {
-            status: GameIdleStatus {
-                session_id: "session".into(),
-                mode: GameIdleMode::Cdp,
-                phase: GameIdlePhase::Starting,
-                play_minutes: 1,
-                rest_minutes: 0,
-                current: None,
-                recent: vec![],
-                upcoming: vec![],
-                phase_started_at: 0,
-                phase_ends_at: None,
-                accumulated_played_seconds: 0,
-                warning: None,
-            },
-            all: candidates,
-            bag: vec![],
-            removed_this_cycle: HashSet::new(),
-            upcoming: VecDeque::new(),
-            recent: VecDeque::new(),
-            running: None,
-        };
+        let mut shared = shared_with(GameIdleMode::Cdp, candidates);
         shared.refill_bag();
         shared.fill_upcoming();
 
         assert_eq!(shared.upcoming.len(), 1);
-        let first = shared.upcoming.pop_front().unwrap();
-        shared.status.current = Some(first.clone());
+        let first = shared.take_candidate(0).unwrap().0;
+        shared.mark_playing(0, 1);
+
+        // The queue must not offer the only candidate to a second lane while
+        // the first lane is still running it.
+        assert!(
+            shared.upcoming.is_empty(),
+            "a lane's game must not appear in the queue at the same time"
+        );
+
+        shared.end_play(0, 60, 0);
         shared.bag.clear();
         shared.fill_upcoming();
 
@@ -1049,31 +1236,11 @@ mod tests {
                 .map(|index| game(&index.to_string(), "win32"))
                 .collect(),
         );
-        let mut shared = IdleShared {
-            status: GameIdleStatus {
-                session_id: "session".into(),
-                mode: GameIdleMode::Cdp,
-                phase: GameIdlePhase::Starting,
-                play_minutes: 1,
-                rest_minutes: 0,
-                current: Some(candidates[0].clone()),
-                recent: vec![],
-                upcoming: vec![],
-                phase_started_at: 0,
-                phase_ends_at: None,
-                accumulated_played_seconds: 0,
-                warning: None,
-            },
-            all: candidates.clone(),
-            // Force a mid-fill cycle boundary after one candidate.
-            bag: vec![candidates[1].clone()],
-            removed_this_cycle: HashSet::new(),
-            upcoming: VecDeque::new(),
-            recent: VecDeque::new(),
-            running: None,
-        };
-
-        shared.fill_upcoming();
+        let mut shared = shared_with(GameIdleMode::Cdp, candidates.clone());
+        // Force a mid-fill cycle boundary after one candidate.
+        shared.bag = vec![candidates[1].clone()];
+        let claimed = shared.take_candidate(0).unwrap().0;
+        shared.mark_playing(0, 1);
 
         let ids: HashSet<_> = shared
             .upcoming
@@ -1081,13 +1248,49 @@ mod tests {
             .map(|item| item.id.as_str())
             .collect();
         assert_eq!(ids.len(), shared.upcoming.len());
-        assert!(shared
-            .upcoming
-            .iter()
-            .all(|item| item.id != shared.status.current.as_ref().unwrap().id));
+        assert!(shared.upcoming.iter().all(|item| item.id != claimed.id));
         assert!(shared
             .upcoming
             .iter()
             .all(|item| !item.occurrence_id.is_empty()));
+    }
+
+    #[test]
+    fn only_one_lane_claims_the_presence_and_resting_lanes_free_their_games() {
+        let candidates = eligible_games(
+            GameIdleMode::Process,
+            (0..6)
+                .map(|index| game(&index.to_string(), "win32"))
+                .collect(),
+        );
+        let mut shared = shared_with(GameIdleMode::Process, candidates);
+        shared.refill_bag();
+
+        let first = shared.take_candidate(0).unwrap();
+        let second = shared.take_candidate(1).unwrap();
+        assert!(first.1, "the first lane claims rich presence");
+        assert!(!second.1, "rich presence has a single owner");
+        assert_ne!(first.0.id, second.0.id);
+
+        shared.mark_playing(0, 1);
+        shared.mark_playing(1, 1);
+        assert_eq!(shared.lanes.len(), 2);
+        assert_eq!(shared.status.phase, GameIdlePhase::Playing);
+        assert!(shared.is_claimed(&first.0));
+
+        shared.end_play(0, 60, 1);
+        // A rest gap stops the game, so the record stays on screen but no
+        // longer blocks other lanes from queueing the same candidate.
+        assert!(!shared.is_claimed(&first.0));
+        assert_eq!(shared.status.phase, GameIdlePhase::Playing);
+        assert_eq!(shared.status.lanes.len(), 2);
+
+        shared.end_play(1, 60, 1);
+        assert_eq!(shared.status.phase, GameIdlePhase::Resting);
+
+        shared.release_lane(0);
+        shared.release_lane(1);
+        assert!(shared.lanes.is_empty());
+        assert_eq!(shared.status.phase, GameIdlePhase::Starting);
     }
 }

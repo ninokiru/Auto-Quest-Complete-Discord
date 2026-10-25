@@ -50,6 +50,16 @@ describe('notifications store', () => {
     expect(store.items).toHaveLength(2)
   })
 
+  it('keeps the same quest ending for two accounts apart', () => {
+    const store = useNotificationsStore()
+
+    expect(store.push('quest_completed', { name: 'Watch a video', account: 'Bao' })).not.toBeNull()
+    expect(store.push('quest_completed', { name: 'Watch a video', account: 'Linh' })).not.toBeNull()
+    // The same account finishing the same quest again is still one report.
+    expect(store.push('quest_completed', { name: 'Watch a video', account: 'Bao' })).toBeNull()
+    expect(store.items.map(item => item.params.account)).toEqual(['Linh', 'Bao'])
+  })
+
   it('allows a repeat once the deduplication window has passed', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-10-10T09:00:00Z'))

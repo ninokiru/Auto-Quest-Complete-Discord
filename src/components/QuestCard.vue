@@ -41,6 +41,13 @@ const props = defineProps<{
   showDeveloperDetails?: boolean
   density?: 'compact' | 'comfortable'
   busy?: boolean
+  /**
+   * True when the card shows a quest that belongs to another account. Slots are
+   * matched by quest id alone, and two accounts can each run the same quest, so a
+   * foreign card must not read this account's slot for its progress, unit or
+   * target — its own `user_status` is the only truth it has.
+   */
+  foreign?: boolean
 }>()
 
 const questsStore = useQuestsStore()
@@ -65,7 +72,9 @@ const questTypeLabel = computed(() => {
 // their progress from their own slot: with several quests running, the store's
 // primary-quest getters belong to a different quest.
 const runningSlot = computed(
-  () => questsStore.runningQuests.find(slot => slot.questId === props.quest.id) ?? null
+  () => props.foreign
+    ? null
+    : questsStore.runningQuests.find(slot => slot.questId === props.quest.id) ?? null
 )
 const isActiveQuest = computed(() => runningSlot.value !== null)
 

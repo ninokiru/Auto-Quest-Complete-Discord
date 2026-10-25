@@ -120,25 +120,23 @@ export const useAuthStore = defineStore('auth', () => {
       // and per-account history so the UI cannot show the previous account's
       // simulation usage after signing in.
       user.value = await authenticate((progress) => {
-        // The store still performs one final SuperProperties synchronization
-        // after the backend command. Keep the visible operation running until
-        // that existing step has settled.
+        // The backend's own login already synced SuperProperties and the client
+        // build numbers before it returned the user, so nothing here has to hold
+        // the loading state open past this call.
         if (progress.phase !== 'complete') onProgress?.(progress)
       })
       // A detected account keeps its credential in the backend, exactly like
       // CDP auto-login, so the page has no raw token to remember.
       token.value = rawToken
 
-      // After successful login, wait for SuperProperties fetch to complete
-      // This ensures all data is ready before ending the loading state
-      try {
-        await autoFetchSuperProperties(questsStore.cdpPort)
-
-        bootstrapAfterLogin(questsStore, 'CDP init on login failed:')
-      } catch (e) {
-        // SuperProperties fetch failure should not block login
+      // Kept as a background retry rather than a step the sign-in waits on: the
+      // backend probes the default CDP port, so a user on a custom port can still
+      // have the running client's properties captured here — but that refinement
+      // is not worth another round trip in front of the account list.
+      autoFetchSuperProperties(questsStore.cdpPort).catch(e => {
         console.warn('Failed to fetch SuperProperties:', e)
-      }
+      })
+      bootstrapAfterLogin(questsStore, 'CDP init on login failed:')
 
       onProgress?.(completeAuthProgress())
 
@@ -227,6 +225,26 @@ export const useAuthStore = defineStore('auth', () => {
     } catch (e) {
       error.value = commandErrorMessage(e)
       return null
+    }
+  }
+
+  /** Scan this machine for the accounts its desktop clients remember and add them
+   *  to the switcher. The backend already keeps every account the scan validates,
+   *  and this deliberately does not sign the page in: the list changes, the active
+   *  account and its running quests do not. */
+  async function scanKnownAccounts() {
+    if (!user.value) return false
+    error.value = null
+    loading.value = true
+    try {
+      await detectAccounts()
+      await refreshKnownAccounts()
+      return true
+    } catch (e) {
+      error.value = commandErrorMessage(e)
+      return false
+    } finally {
+      loading.value = false
     }
   }
 
@@ -410,6 +428,7 @@ export const useAuthStore = defineStore('auth', () => {
     loginViaCdp,
     refreshKnownAccounts,
     addKnownAccount,
+    scanKnownAccounts,
     switchToAccount,
     forgetKnownAccount,
     logout,

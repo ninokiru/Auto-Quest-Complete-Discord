@@ -266,8 +266,12 @@ export async function getQuestDecisionsDebug(placement: number, num: number): Pr
   return await invoke('get_quest_decisions_debug', { placement, num })
 }
 
-export async function claimQuestReward(questId: string, platform?: number): Promise<unknown> {
-  return await invoke('claim_quest_reward', { questId, platform })
+export async function claimQuestReward(
+  questId: string,
+  platform?: number,
+  accountId?: string | null
+): Promise<unknown> {
+  return await invoke('claim_quest_reward', { questId, platform, accountId })
 }
 
 /** Raise an operating-system notification. The text arrives already translated:
@@ -281,14 +285,16 @@ export async function startVideoQuest(
   secondsNeeded: number,
   initialProgress: number,
   speedMultiplier: number,
-  heartbeatInterval: number
+  heartbeatInterval: number,
+  accountId?: string | null
 ): Promise<void> {
   return await invoke('start_video_quest', {
     questId,
     secondsNeeded,
     initialProgress,
     speedMultiplier,
-    heartbeatInterval
+    heartbeatInterval,
+    accountId
   })
 }
 
@@ -296,13 +302,15 @@ export async function startStreamQuest(
   questId: string,
   streamKey: string,
   secondsNeeded: number,
-  initialProgress: number
+  initialProgress: number,
+  accountId?: string | null
 ): Promise<void> {
   return await invoke('start_stream_quest', {
     questId,
     streamKey,
     secondsNeeded,
-    initialProgress
+    initialProgress,
+    accountId
   })
 }
 
@@ -330,6 +338,21 @@ export interface AccountSummary {
 
 export async function listAccounts(): Promise<AccountSummary[]> {
   return await invoke('list_accounts')
+}
+
+/** One remembered account and the quests Discord lists for it. The active account
+ *  is never in this list: the page already shows it as its own quest list. */
+export interface AccountQuestGroup {
+  account: AccountSummary
+  quests: Quest[]
+  /** Set when that account's token could not read its list — the group still
+   *  arrives so one expired token cannot blank the whole panel. */
+  error?: string | null
+}
+
+/** Quest lists of every other signed-in account, read with their own tokens. */
+export async function getQuestsForAccounts(): Promise<AccountQuestGroup[]> {
+  return await invoke('get_quests_for_accounts')
 }
 
 /** Sign in an extra account without touching the active one. */
@@ -366,13 +389,15 @@ export async function startGameHeartbeatQuest(
   questId: string,
   applicationId: string,
   secondsNeeded: number,
-  initialProgress: number
+  initialProgress: number,
+  accountId?: string | null
 ): Promise<void> {
   return await invoke('start_game_heartbeat_quest', {
     questId,
     applicationId,
     secondsNeeded,
-    initialProgress
+    initialProgress,
+    accountId
   })
 }
 
@@ -384,7 +409,8 @@ export async function startPlayActivityQuest(
   mode: GameQuestMode,
   cdpPort: number,
   heartbeatInterval: number,
-  progressPollingInterval: number
+  progressPollingInterval: number,
+  accountId?: string | null
 ): Promise<void> {
   return await invoke('start_play_activity_quest', {
     questId,
@@ -394,7 +420,8 @@ export async function startPlayActivityQuest(
     mode,
     cdpPort,
     heartbeatInterval,
-    progressPollingInterval
+    progressPollingInterval,
+    accountId
   })
 }
 
@@ -462,6 +489,7 @@ export interface GameIdleConfig {
   mode: GameIdleMode
   playMinutes: number
   restMinutes: number
+  concurrentGames: number
   cdpPort: number
   simulationPath: string
 }
@@ -474,17 +502,25 @@ export interface GameIdleItem {
   occurrenceId: string
 }
 
+// One running slot of the idle reel. A lane is only reported while it holds a
+// game, so `lanes.length` is the number of games simulated at the same time.
+export interface GameIdleLane {
+  item: GameIdleItem
+  phase: GameIdlePhase
+  startedAt: number
+  endsAt: number | null
+}
+
 export interface GameIdleStatus {
   sessionId: string
   mode: GameIdleMode
   phase: GameIdlePhase
   playMinutes: number
   restMinutes: number
-  current: GameIdleItem | null
+  concurrentGames: number
+  lanes: GameIdleLane[]
   recent: GameIdleItem[]
   upcoming: GameIdleItem[]
-  phaseStartedAt: number
-  phaseEndsAt: number | null
   accumulatedPlayedSeconds: number
   warning: string | null
 }
@@ -571,8 +607,8 @@ export async function fetchDetectableGames(): Promise<DetectableGame[]> {
   return await invoke('fetch_detectable_games')
 }
 
-export async function acceptQuest(questId: string): Promise<void> {
-  return await invoke('accept_quest', { questId })
+export async function acceptQuest(questId: string, accountId?: string | null): Promise<void> {
+  return await invoke('accept_quest', { questId, accountId })
 }
 
 // Event listeners

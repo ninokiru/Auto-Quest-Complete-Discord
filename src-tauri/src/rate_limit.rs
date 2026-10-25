@@ -1,11 +1,12 @@
 //! Per-route release pacing for the Discord REST client.
 //!
 //! Discord's request limits are scoped to a route (and its rate-limit bucket),
-//! never to a caller. This app runs up to five quests in parallel with one token,
-//! so five heartbeats on the same route are seen as one very fast client: one 429
-//! and every slot in the process pays for it. Releasing one request per route per
-//! `ROUTE_GAP` keeps the parallel slots inside the budget a single Discord client
-//! would have.
+//! never to a caller. This app runs up to twenty quests in parallel per account, and
+//! several accounts can run at once, so twenty heartbeats on one route are seen as one
+//! very fast client: one 429 and every slot in the process pays for it. The tables
+//! below are keyed by route alone, not by token, so all accounts share one queue.
+//! Releasing one request per route per `ROUTE_GAP` keeps every account well inside
+//! the budget a single Discord client would have.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard};
@@ -50,8 +51,8 @@ fn buckets() -> &'static Mutex<HashMap<String, String>> {
 }
 
 /// Gate key for a request. Snowflake ids (quests, applications) are collapsed so
-/// five slots polling five different quests share one key instead of stampeding
-/// five keys that Discord counts as one route.
+/// twenty slots polling twenty different quests share one key instead of stampeding
+/// twenty keys that Discord counts as one route.
 pub fn route_key(method: &str, path: &str) -> String {
     let normalized = path
         .split('/')

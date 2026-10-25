@@ -14,7 +14,7 @@ project sits.
 ```text
 User clicks "Start Quest" (QuestCard.vue)
    └─ Home.vue handler
-        └─ Pinia store src/stores/quests.ts      ← queue, 5 parallel slots, progress unit per quest
+        └─ Pinia store src/stores/quests.ts      ← queue, 20 parallel slots, progress unit per quest
              └─ src/api/tauri.ts                 ← typed wrapper over Tauri IPC (invoke)
                   └─ src-tauri/src/lib.rs         ← #[tauri::command] registry
                        ├─ src-tauri/src/discord_api.rs      → Discord REST (quests, profile, rewards)
@@ -108,7 +108,7 @@ GitHub's release API.
 
 | File | Lines | Responsibility |
 | --- | --- | --- |
-| `quests.ts` | 2039 | The quest engine on the frontend: list state, queue, `MAX_PARALLEL_QUESTS = 5`, per-quest `progressUnit` (`'time' \| 'checkpoints'`), start/stop/cancel paths, batch flows, skip rules for unstartable quests |
+| `quests.ts` | 2039 | The quest engine on the frontend: list state, queue, `MAX_PARALLEL_QUESTS = 20`, per-quest `progressUnit` (`'time' \| 'checkpoints'`), start/stop/cancel paths, batch flows, skip rules for unstartable quests |
 | `auth.ts` | 284 | Session, user, login method, CDP port preference |
 | `gameIdle.ts` | 258 | Idle-game rotation state and its navigation lock |
 | `version.ts` | 209 | Update check against the latest GitHub release, race-safe fetch |

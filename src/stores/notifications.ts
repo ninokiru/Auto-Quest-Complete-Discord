@@ -15,6 +15,9 @@ export type NotificationKind =
 
 export interface NotificationParams {
   name?: string
+  /** Which Discord account the report is about. Only a quest that ran for another
+   *  account carries it, because the page itself already speaks for the one it is on. */
+  account?: string
   error?: string
   version?: string
   current?: string
@@ -68,6 +71,8 @@ function sanitizeParams(value: unknown): NotificationParams {
   const params: NotificationParams = {}
   const name = clampText(raw.name, MAX_NAME)
   if (name !== undefined) params.name = name
+  const account = clampText(raw.account, MAX_NAME)
+  if (account !== undefined) params.account = account
   const error = clampText(raw.error, MAX_ERROR)
   if (error !== undefined) params.error = error
   const version = clampText(raw.version, MAX_VERSION)
@@ -82,8 +87,18 @@ function sanitizeParams(value: unknown): NotificationParams {
   return params
 }
 
+/** The account is part of the identity: two accounts can run the same quest id and
+ *  finish it a second apart, and both endings deserve to be reported. */
 function fingerprint(kind: NotificationKind, params: NotificationParams): string {
-  return [kind, params.name ?? '', params.version ?? '', params.current ?? '', params.count ?? '', params.error ?? ''].join('|')
+  return [
+    kind,
+    params.name ?? '',
+    params.account ?? '',
+    params.version ?? '',
+    params.current ?? '',
+    params.count ?? '',
+    params.error ?? '',
+  ].join('|')
 }
 
 function toNotification(value: unknown, index: number): AppNotification | null {

@@ -1,14 +1,18 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
-import type { Quest, DetectableGame, DesktopClientArg, ExcludedQuest, GameQuestMode, PlatformCapabilities, QuestTaskStatus } from '@/api/tauri'
+import type { Quest, DetectableGame, DesktopClientArg, ExcludedQuest, GameQuestMode, PlatformCapabilities, QuestTaskStatus, AccountQuestGroup } from '@/api/tauri'
 import {
   firstProgressValue,
   firstStartableTask,
+  foreignQuestBlocker,
   getQuestKind,
   getQuestTasks,
   isManualActivityQuest,
   isManualStreamQuest,
   isPlayActivityQuest,
+  isPlayActivityTask,
+  isVideoTask,
+  isVideoTask,
   playActivityProgressPercentage,
   questApplicationId,
 } from '@/utils/questTasks'
@@ -138,6 +142,8 @@ import {
   startGameSimulationUsage,
   stopGameSimulationUsage,
   getQuestTaskStatuses,
+  getQuestsForAccounts,
+  claimQuestReward,
 } from '@/api/tauri'
 import { appLocalDataDir, join } from '@tauri-apps/api/path'
 import { emit } from '@tauri-apps/api/event'
@@ -146,6 +152,63 @@ import { emit } from '@tauri-apps/api/event'
 // localStorage keys
 const STORAGE_SPEED_KEY = 'questHelper_speedMultiplier'
 const STORAGE_SIMULATION_PATH_KEY = 'questHelper_simulationPath'
+const STORAGE_DETECTABLE_GAMES_KEY = 'questHelper_detectableGames'
+const STORAGE_DETECTABLE_GAMES_AT_KEY = 'questHelper_detectableGamesAt'
+const STORAGE_RECENT_GAMES_KEY = 'questHelper_recentGameIds'
+
+/** How long a stored game list may serve before the next fetch replaces it. */
+const DETECTABLE_GAMES_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000
+
+const RECENT_GAMES_LIMIT = 12
+
+/** Shape check for a value that came off disk: a truncated or hand-edited entry
+ *  must not reach the picker or an executable lookup. */
+function isDetectableGameList(value: unknown): value is DetectableGame[] {
+  if (!Array.isArray(value)) return false
+  return value.every(item => {
+    if (typeof item !== 'object' || item === null) return false
+    const game = item as Partial<DetectableGame>
+    return (
+      typeof game.id === 'string' &&
+      typeof game.name === 'string' &&
+      Array.isArray(game.executables) &&
+      game.executables.every(
+        exe => typeof exe?.name === 'string' && typeof exe?.os === 'string'
+      )
+    )
+  })
+}
+
+function readDetectableGamesCache(): DetectableGame[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_DETECTABLE_GAMES_KEY)
+    if (!raw) return []
+    const savedAt = Number(localStorage.getItem(STORAGE_DETECTABLE_GAMES_AT_KEY))
+    if (!Number.isFinite(savedAt) || Date.now() - savedAt > DETECTABLE_GAMES_MAX_AGE_MS) return []
+    const parsed: unknown = JSON.parse(raw)
+    return isDetectableGameList(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function writeDetectableGamesCache(games: DetectableGame[]) {
+  try {
+    localStorage.setItem(STORAGE_DETECTABLE_GAMES_KEY, JSON.stringify(games))
+    localStorage.setItem(STORAGE_DETECTABLE_GAMES_AT_KEY, String(Date.now()))
+  } catch {
+    // A full or unwritable storage only costs the next launch its cache.
+  }
+}
+
+function readRecentGameIds(): string[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(STORAGE_RECENT_GAMES_KEY) ?? '[]')
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []
+  } catch {
+    return []
+  }
+}
 
 export const useQuestsStore = defineStore('quests', () => {
   const quests = ref<Quest[]>([])
@@ -170,7 +233,7 @@ export const useQuestsStore = defineStore('quests', () => {
 
   /** Upper bound on concurrently running quests. The backend enforces the same
    *  cap; this only keeps the UI from issuing starts it would reject. */
-  const MAX_PARALLEL_QUESTS = 5
+  const MAX_PARALLEL_QUESTS = 20
   const runningQuests = ref<RunningQuest[]>([])
 
   function questSlot(questId: string | null): RunningQuest | null {
@@ -713,6 +776,11 @@ export const useQuestsStore = defineStore('quests', () => {
     claimedCompletions.delete(questId)
   }
 
+  /** Whether a quest of another account is in flight. Quest events name no account,
+   *  so a bare progress number is only trusted while none is, and the registry read
+   *  below refreshes this every time it runs. */
+  let foreignQuestWorkRunning = false
+
   /**
    * Read the backend's per-quest outcomes. Quest events carry no quest id and
    * can be missed entirely (a completion that lands while a stop is in flight),
@@ -724,23 +792,27 @@ export const useQuestsStore = defineStore('quests', () => {
    * happens to run a quest of the same id. Those are reported in `accountTasks`
    * and left alone, because their client, activity and history segment are not
    * this account's to tear down.
+   *
+   * `force` reads the registry even when this page tracks nothing. The first quest
+   * of another account is exactly that case: no local slot and no known record,
+   * and the read is what marks another account as busy for event attribution.
    */
-  function pollQuestTaskStatuses(): Promise<void> {
+  function pollQuestTaskStatuses(force = false): Promise<void> {
     // The idle tick and the run poll read the same registry. A read that spans a
     // tick would run both against the same previous list, so a foreign ending
     // would be announced twice; the shared in-flight read keeps one pass per set
     // of results.
     if (statusReadInFlight) return statusReadInFlight
-    const inFlight = readQuestTaskStatuses().finally(() => {
+    const inFlight = readQuestTaskStatuses(force).finally(() => {
       if (statusReadInFlight === inFlight) statusReadInFlight = null
     })
     statusReadInFlight = inFlight
     return inFlight
   }
 
-  async function readQuestTaskStatuses() {
+  async function readQuestTaskStatuses(force: boolean) {
     const tracked = runningQuests.value.filter(slot => slot.hasBackendTask)
-    if (tracked.length === 0 && accountTasks.value.length === 0) return
+    if (!force && tracked.length === 0 && accountTasks.value.length === 0) return
     let statuses: QuestTaskStatus[]
     try {
       statuses = await getQuestTaskStatuses()
@@ -753,6 +825,7 @@ export const useQuestsStore = defineStore('quests', () => {
       accountTasks.value.map(task => accountTaskKey(task.accountId, task.questId)),
     )
     const running: AccountQuestTask[] = []
+    let otherAccountWorkRunning = false
     for (const status of statuses) {
       // Only a record the backend says this account owns can end a local slot.
       // Another account can run the same quest id at the same time, and the two
@@ -769,19 +842,28 @@ export const useQuestsStore = defineStore('quests', () => {
       const key = accountTaskKey(status.accountId, status.questId)
       if (status.state === 'running') {
         running.push({ accountId: status.accountId, questId: status.questId, state: status.state })
+        if (!status.own) otherAccountWorkRunning = true
         continue
       }
       // Only a task this page saw running reports an ending: the backend keeps a
       // finished record until Stop, so an old one must not re-announce itself.
       if (!reportedRunning.has(key)) continue
-      const questName = questDisplayName(status.questId)
-      announceQuestEnd(questName, status.error ?? undefined)
+      const accountName = accountDisplayName(status.accountId)
+      const questName = questDisplayName(status.questId, status.accountId)
+      announceQuestEnd(questName, status.error ?? undefined, accountName || undefined)
       useNotificationsStore().push(
         status.state === 'failed' ? 'quest_failed' : 'quest_completed',
-        status.state === 'failed' ? { name: questName, error: status.error ?? undefined } : { name: questName },
+        status.state === 'failed'
+          ? {
+              name: questName,
+              error: status.error ?? undefined,
+              account: accountName || undefined,
+            }
+          : { name: questName, account: accountName || undefined },
       )
     }
     accountTasks.value = running
+    foreignQuestWorkRunning = otherAccountWorkRunning
   }
 
   /**
@@ -807,9 +889,12 @@ export const useQuestsStore = defineStore('quests', () => {
     questsFetchGeneration++
     orbsFetchGeneration++
     queueGeneration++
+    foreignQuestsGeneration++
     questsFetchInFlight = null
     quests.value = []
     excludedQuests.value = []
+    foreignQuestGroups.value = []
+    foreignQuestsError.value = null
     questEnrollmentBlockedUntil.value = null
     lastQuestsFetchTime.value = 0
     loading.value = false
@@ -829,8 +914,8 @@ export const useQuestsStore = defineStore('quests', () => {
     queuePauseReason.value = null
     lastPlayRequest.value = null
     stopping.value = false
-    detectableGames.value = []
-    fetchingGames.value = false
+    // The game catalog belongs to Discord, not to the account, so it survives a
+    // switch or sign-out — that is what keeps the next picker instant.
     cdpAvailable.value = false
     stopProgressSimulation()
     cleanupListeners()
@@ -844,6 +929,150 @@ export const useQuestsStore = defineStore('quests', () => {
     accountTasks.value = accountTasks.value.filter(
       item => accountTaskKey(item.accountId, item.questId) !== accountTaskKey(task.accountId, task.questId),
     )
+  }
+
+  /** Quest lists of every other signed-in account, each group tagged with the
+   *  account it belongs to. The account the page is on is never in here, because
+   *  the page already lists it as its own quests. */
+  const foreignQuestGroups = ref<AccountQuestGroup[]>([])
+  const foreignQuestsLoading = ref(false)
+  const foreignQuestsError = ref<string | null>(null)
+
+  /** The group read that is currently awaiting, so two timers cannot both fetch. */
+  let foreignQuestsReadInFlight: Promise<void> | null = null
+  let foreignQuestsGeneration = 0
+
+  /** Display names seen in a group read. A quest ending is reported after the read
+   *  that listed it, and a later failed read would otherwise leave the ending with
+   *  no account to name, so the names outlive the list they came with. */
+  const foreignAccountNames = new Map<string, string>()
+
+  function accountDisplayName(accountId: string | null | undefined): string {
+    return accountId ? foreignAccountNames.get(accountId) ?? '' : ''
+  }
+
+  async function readForeignQuests(): Promise<void> {
+    const generationAtStart = ++foreignQuestsGeneration
+    foreignQuestsLoading.value = true
+    try {
+      const groups = await getQuestsForAccounts()
+      if (generationAtStart !== foreignQuestsGeneration) return
+      foreignQuestGroups.value = groups
+      for (const group of groups) {
+        foreignAccountNames.set(
+          group.account.user.id,
+          group.account.user.global_name || group.account.user.username,
+        )
+      }
+      foreignQuestsError.value = null
+    } catch (e) {
+      if (generationAtStart !== foreignQuestsGeneration) return
+      foreignQuestGroups.value = []
+      foreignQuestsError.value = errorMessage(e)
+    } finally {
+      if (generationAtStart === foreignQuestsGeneration) foreignQuestsLoading.value = false
+    }
+  }
+
+  /**
+   * Ask every other account for its own quests. Each group is read with that
+   * account's token, so an account whose token expired comes back as a group
+   * carrying an error rather than vanishing from the panel.
+   */
+  function refreshForeignQuests(): Promise<void> {
+    if (foreignQuestsReadInFlight) return foreignQuestsReadInFlight
+    const inFlight = readForeignQuests().finally(() => {
+      if (foreignQuestsReadInFlight === inFlight) foreignQuestsReadInFlight = null
+    })
+    foreignQuestsReadInFlight = inFlight
+    return inFlight
+  }
+
+  /** Whether another account already runs this quest. The backend registry is the
+   *  only truth: a foreign run has no local slot to consult. */
+  function isForeignQuestRunning(accountId: string, questId: string): boolean {
+    const key = accountTaskKey(accountId, questId)
+    return accountTasks.value.some(task => accountTaskKey(task.accountId, task.questId) === key)
+  }
+
+  /**
+   * Start one quest of another account without moving the page onto it. Every
+   * branch posts through the direct API with that account's own client, which is
+   * why a checkpoint Activity or a real Stream is refused: those need the desktop
+   * window or a broadcast, and the window belongs to one account.
+   *
+   * No local slot is opened. The progress panel stays the active account's, so a
+   * foreign run shows only its own percentage, read from its own quest payload.
+   */
+  async function startForeignQuest(accountId: string, quest: Quest): Promise<void> {
+    const blocker = foreignQuestBlocker(quest)
+    if (blocker) {
+      throw new Error(`This quest cannot run for another account (${blocker})`)
+    }
+    const task = firstStartableTask(quest)
+    const secondsNeeded = task?.target ?? 0
+    if (!task || secondsNeeded <= 0) {
+      throw new Error(`Quest ${quest.id} has no timed task to run`)
+    }
+    const initialProgress = firstProgressValue(quest, task.key)
+    const progressPct = (initialProgress / secondsNeeded) * 100
+
+    try {
+      if (isVideoTask(task)) {
+        await startVideoQuest(
+          quest.id,
+          secondsNeeded,
+          progressPct,
+          speedMultiplier.value,
+          heartbeatInterval.value,
+          accountId
+        )
+      } else {
+        const appId = questApplicationId(quest)
+        if (!appId) throw new Error(`Quest ${quest.id} is missing an application ID`)
+        if (isPlayActivityTask(task)) {
+          // A cloud-game Activity counts seconds, and the direct-API transport is
+          // the only one that is not bound to the desktop client.
+          await startPlayActivityQuest(
+            quest.id,
+            appId,
+            secondsNeeded,
+            initialProgress,
+            'heartbeat',
+            cdpPort.value,
+            heartbeatInterval.value,
+            gamePollingInterval.value,
+            accountId
+          )
+        } else {
+          await startGameHeartbeatQuest(quest.id, appId, secondsNeeded, progressPct, accountId)
+        }
+      }
+    } finally {
+      // The registry read is what tells the page that another account now has work
+      // in flight, and unattributed quest events stop being trusted from then on.
+      // Reading it here closes the window between starting and the next tick.
+      await pollQuestTaskStatuses(true)
+    }
+  }
+
+  /** Enroll one quest of another account, so its progress can be posted at all. */
+  async function acceptForeignQuest(accountId: string, questId: string): Promise<void> {
+    await acceptQuest(questId, accountId)
+  }
+
+  /** Take one finished quest's reward on another account. */
+  async function claimForeignQuest(accountId: string, questId: string): Promise<void> {
+    await claimQuestReward(questId, undefined, accountId)
+  }
+
+  /** Stop one quest another account is running, then re-read the registry so the
+   *  row can flip back to Start without waiting for the next tick. */
+  async function stopForeignQuest(accountId: string, questId: string): Promise<void> {
+    await stopAccountQuest({ accountId, questId, state: 'running' })
+    // Forced: this row may be the only record the page knows, and leaving it behind
+    // would keep the card showing Stop for a quest that already ended.
+    await pollQuestTaskStatuses(true)
   }
 
   /**
@@ -860,9 +1089,16 @@ export const useQuestsStore = defineStore('quests', () => {
   }
 
   /** A running slot only carries the quest id, so a notification reads the name
-   *  from whichever list still holds the quest at the moment it ends. */
-  function questDisplayName(questId: string): string {
+   *  from whichever list still holds the quest at the moment it ends: the queue,
+   *  this account's own list, or the group of the account that was asked to run it. */
+  function questDisplayName(questId: string, accountId?: string | null): string {
+    const groupQuest = accountId
+      ? foreignQuestGroups.value
+          .find(group => group.account.user.id === accountId)
+          ?.quests.find(item => item.id === questId)
+      : undefined
     const quest =
+      groupQuest ??
       questQueue.value.find(item => item.id === questId) ??
       quests.value.find(item => item.id === questId)
     return quest?.config?.messages?.quest_name ?? questId
@@ -1083,6 +1319,7 @@ export const useQuestsStore = defineStore('quests', () => {
    *  silently freeze the list at whatever was fetched at login. */
   const IDLE_REFRESH_MS = 10000
   let idleRefreshTimer: ReturnType<typeof setInterval> | null = null
+  let idleVisibilityHandler: (() => void) | null = null
 
   function startIdleRefresh() {
     if (idleRefreshTimer) return
@@ -1090,6 +1327,10 @@ export const useQuestsStore = defineStore('quests', () => {
       // A running quest's poll refetches the list on its own cadence; yield to it
       // instead of issuing the same request twice as often.
       if (pollingTimer || stopping.value) return
+      // Nothing is running, so a minimized window gains nothing from the round
+      // trips: it skips them and `visibilitychange` catches the list up as soon
+      // as the user is looking again.
+      if (document.hidden) return
       void fetchQuests(true, true)
       // A quest another account is running has no local slot, so nothing else
       // reads the backend registry once this page's own quests have ended.
@@ -1099,12 +1340,21 @@ export const useQuestsStore = defineStore('quests', () => {
         void fetchOrbsBalance(true).catch(() => {})
       }
     }, IDLE_REFRESH_MS)
+    idleVisibilityHandler = () => {
+      if (document.hidden || pollingTimer || stopping.value) return
+      void fetchQuests(true, true).catch(() => undefined)
+    }
+    document.addEventListener('visibilitychange', idleVisibilityHandler)
   }
 
   function stopIdleRefresh() {
     if (!idleRefreshTimer) return
     clearInterval(idleRefreshTimer)
     idleRefreshTimer = null
+    if (idleVisibilityHandler) {
+      document.removeEventListener('visibilitychange', idleVisibilityHandler)
+      idleVisibilityHandler = null
+    }
   }
 
   /**
@@ -1696,9 +1946,19 @@ export const useQuestsStore = defineStore('quests', () => {
    * Quest events carry no quest id, so with more than one running quest every
    * event is ambiguous and the polling loop attributes progress, completion and
    * errors per quest id instead.
+   *
+   * The same reasoning applies one level up: a quest of another account emits the
+   * very same events, so while that account has work in flight an event says
+   * nothing about which account it came from either.
    */
   function soleRunningQuest(): RunningQuest | null {
     return runningQuests.value.length === 1 ? runningQuests.value[0] ?? null : null
+  }
+
+  /** Whether a quest event may still be read as this page's own work: no other
+   *  account has a task in flight, so it cannot have emitted the event. */
+  function questEventsAreOwn(): boolean {
+    return !foreignQuestWorkRunning
   }
 
   function setupListeners() {
@@ -1715,8 +1975,10 @@ export const useQuestsStore = defineStore('quests', () => {
       console.log('Received quest-progress event:', progress)
       // The event payload is a bare number with no quest identifier, so the
       // only way to reject a leaked handler from a previous setup is the epoch,
-      // and the only safe moment to apply it is while one quest runs.
+      // and the only safe moment to apply it is while one quest runs and no other
+      // account has work that could have emitted this number instead.
       if (epoch !== listenerGeneration) return
+      if (!questEventsAreOwn()) return
       const slot = soleRunningQuest()
       if (!slot) return
       slot.serverProgress = clampProgressPercent(progress)
@@ -1735,9 +1997,16 @@ export const useQuestsStore = defineStore('quests', () => {
     onQuestComplete(async () => {
       console.log('Received quest-complete event')
       if (stopping.value) return
-      const slot = soleRunningQuest()
-      if (!slot) return
-      await handleQuestEnd(slot.questId)
+      // Another account's quest can be the one that finished, and this event names
+      // neither quest nor account, so the ending is only read as this page's own
+      // work while no other account has work in flight. Otherwise the registry
+      // decides, because it records ownership per task.
+      const slot = questEventsAreOwn() ? soleRunningQuest() : null
+      if (slot) {
+        await handleQuestEnd(slot.questId)
+        return
+      }
+      await pollQuestTaskStatuses()
     }).then((unlisten) => {
       if (epoch !== listenerGeneration) {
         unlisten()
@@ -1749,12 +2018,14 @@ export const useQuestsStore = defineStore('quests', () => {
 
     onQuestError(async (err) => {
       console.log('Received quest-error event:', err)
-      // Without a quest id in the payload an error can only be attributed while
-      // a single quest runs; `pollQuestTaskStatuses` reports the failing id when
-      // several run.
-      const slot = soleRunningQuest()
-      if (!slot) return
-      await handleQuestEnd(slot.questId, err)
+      // Same attribution rule as completion: with another account working, only the
+      // registry can say whose quest failed, and it carries the same message.
+      const slot = questEventsAreOwn() ? soleRunningQuest() : null
+      if (slot) {
+        await handleQuestEnd(slot.questId, err)
+        return
+      }
+      await pollQuestTaskStatuses()
     }).then((unlisten) => {
       if (epoch !== listenerGeneration) {
         unlisten()
@@ -1985,35 +2256,66 @@ export const useQuestsStore = defineStore('quests', () => {
   // See `setupListeners`.
 
   // --- Detectable Games Caching ---
-  const detectableGames = ref<DetectableGame[]>([])
-  const fetchingGames = ref(false)
+  // Discord's detectable list is a public catalog, not account data, so a copy
+  // lives in localStorage: the picker and every play-quest start are served from
+  // disk instead of waiting on two API round trips after each launch or login.
+  const detectableGames = ref<DetectableGame[]>(readDetectableGamesCache())
+  const recentGameIds = ref<string[]>(readRecentGameIds())
 
-  async function getDetectableGames(force = false): Promise<DetectableGame[]> {
-    if (!force && detectableGames.value.length > 0) {
-      console.log('Returning cached detectable games')
-      return detectableGames.value
-    }
+  /** Games this machine has been used with, newest first, as long as the current
+   *  catalog still lists them. */
+  const recentGames = computed(() =>
+    recentGameIds.value
+      .map(id => detectableGames.value.find(game => game.id === id))
+      .filter((game): game is DetectableGame => game !== undefined)
+  )
 
-    if (fetchingGames.value) {
-      // If already fetching, wait for it (simple poll)
-      while (fetchingGames.value) {
-        await new Promise(r => setTimeout(r, 100))
-      }
-      return detectableGames.value
-    }
-
-    fetchingGames.value = true
+  function rememberRecentGame(gameId: string) {
+    if (!gameId) return
+    const next = [gameId, ...recentGameIds.value.filter(id => id !== gameId)]
+      .slice(0, RECENT_GAMES_LIMIT)
+    recentGameIds.value = next
     try {
-      console.log('Fetching detectable games from API...')
-      detectableGames.value = await fetchDetectableGames()
-      console.log(`Fetched ${detectableGames.value.length} detectable games successfully.`)
-      return detectableGames.value
-    } catch (e) {
-      console.error('Failed to fetch detectable games:', e)
-      throw e
-    } finally {
-      fetchingGames.value = false
+      localStorage.setItem(STORAGE_RECENT_GAMES_KEY, JSON.stringify(next))
+    } catch {
+      // Recents are a convenience; a rejected write leaves the list in memory.
     }
+  }
+
+  /** One shared request for concurrent callers: a second picker opening while a
+   *  fetch is still running awaits the same promise instead of issuing a
+   *  duplicate call, and a hung call cannot park a waiter in a poll loop. */
+  let gamesFetchInFlight: Promise<DetectableGame[]> | null = null
+
+  function fetchDetectableGamesOnce(): Promise<DetectableGame[]> {
+    const request = (async () => {
+      try {
+        const games = await fetchDetectableGames()
+        // An empty response is Discord being unreachable or rate-limiting, not a
+        // catalog that shrank to nothing: keep what is already on screen.
+        if (games.length > 0) {
+          detectableGames.value = games
+          writeDetectableGamesCache(games)
+        }
+        return detectableGames.value
+      } catch (e) {
+        console.error('Failed to fetch detectable games:', e)
+        throw e
+      } finally {
+        if (gamesFetchInFlight === request) gamesFetchInFlight = null
+      }
+    })()
+    return request
+  }
+
+  function getDetectableGames(force = false): Promise<DetectableGame[]> {
+    if (!force && detectableGames.value.length > 0) {
+      return Promise.resolve(detectableGames.value)
+    }
+    if (gamesFetchInFlight) return gamesFetchInFlight
+
+    gamesFetchInFlight = fetchDetectableGamesOnce()
+    return gamesFetchInFlight
   }
 
   function resetForLogout() {
@@ -2042,8 +2344,8 @@ export const useQuestsStore = defineStore('quests', () => {
     questQueue.value = []
     isQueueRunning.value = false
     stopping.value = false
-    detectableGames.value = []
-    fetchingGames.value = false
+    // The game catalog belongs to Discord, not to the account, so it survives a
+    // switch or sign-out — that is what keeps the next picker instant.
     cdpAvailable.value = false
     // Recoverable-error state is per-session: a dialog left open (or a queued
     // retry) must not reappear against the next account's quests.
@@ -2173,6 +2475,15 @@ export const useQuestsStore = defineStore('quests', () => {
     accountTasks,
     resetForAccountSwitch,
     stopAccountQuest,
+    foreignQuestGroups,
+    foreignQuestsLoading,
+    foreignQuestsError,
+    refreshForeignQuests,
+    isForeignQuestRunning,
+    startForeignQuest,
+    acceptForeignQuest,
+    claimForeignQuest,
+    stopForeignQuest,
     maxParallelQuests: MAX_PARALLEL_QUESTS,
     speedMultiplier,
     heartbeatInterval,
@@ -2216,6 +2527,8 @@ export const useQuestsStore = defineStore('quests', () => {
     },
     // Game Process Caching
     detectableGames,
+    recentGames,
+    rememberRecentGame,
     getDetectableGames,
     resetForLogout,
     initCdpMode,

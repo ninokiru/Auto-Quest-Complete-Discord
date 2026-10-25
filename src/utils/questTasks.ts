@@ -161,6 +161,23 @@ export function isBatchCompletableQuest(quest: Quest): boolean {
   return firstStartableTask(quest) !== null && !isManualQuest(quest)
 }
 
+/** Why a quest cannot be started for an account the page is not on. */
+export type ForeignQuestBlocker = 'manual' | 'no-task'
+
+/**
+ * Whether this page can start a quest that belongs to another account. Only the
+ * direct-API paths can, because they post with that account's own token: a
+ * checkpoint Activity needs the attached desktop window and a real Stream needs
+ * an actual broadcast, and both of those can only be the account the one client
+ * on this machine is signed into.
+ */
+export function foreignQuestBlocker(quest: Quest): ForeignQuestBlocker | null {
+  const task = firstStartableTask(quest)
+  if (!task) return 'no-task'
+  if (isManualQuest(quest)) return 'manual'
+  return null
+}
+
 /**
  * Percentage for a slot whose progress and target are written in the SAME unit:
  * elapsed seconds for a `PLAY_ACTIVITY` cloud game, checkpoint counts for an

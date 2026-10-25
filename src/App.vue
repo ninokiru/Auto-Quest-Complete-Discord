@@ -1,9 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, onErrorCaptured, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, onErrorCaptured, ref, watch, defineAsyncComponent } from 'vue'
 import Home from './views/Home.vue'
-import GameSimulator from './views/GameSimulator.vue'
-import Settings from './views/Settings.vue'
-import Debug from './views/Debug.vue'
 import TitleBar from './components/TitleBar.vue'
 import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/stores/auth'
@@ -34,8 +31,32 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
+// Only Home is eager: it is what the window paints on launch. The other tabs are
+// heavy (the simulator carries the game catalogue UI, Settings seven panels, Debug
+// the whole runtime audit) and splitting them keeps the first chunk small enough
+// that the shell appears immediately after login.
+const GameSimulator = defineAsyncComponent(() => import('./views/GameSimulator.vue'))
+const Settings = defineAsyncComponent(() => import('./views/Settings.vue'))
+const Debug = defineAsyncComponent(() => import('./views/Debug.vue'))
+
 const { t, locale } = useI18n()
 const currentTab = ref<AppTab>('home')
+// The window normally reopens on the tab it was last used on. Only Game and
+// Settings are restored: Home is both the dashboard and the login screen, and a
+// saved tab is applied once a session exists so signing out still lands there.
+const LAST_TAB_STORAGE_KEY = 'questHelper_lastTab'
+const savedTab = localStorage.getItem(LAST_TAB_STORAGE_KEY)
+const tabToRestore: AppTab | null = savedTab === 'game' || savedTab === 'settings' ? savedTab : null
+let tabChosenByUser = false
+
+function selectTab(tab: AppTab) {
+  tabChosenByUser = true
+  currentTab.value = tab
+}
+
+watch(currentTab, (tab) => {
+  localStorage.setItem(LAST_TAB_STORAGE_KEY, tab)
+})
 const authStore = useAuthStore()
 const gameIdleStore = useGameIdleStore()
 const authTransitioning = ref(false)
@@ -159,14 +180,17 @@ function setLanguage(lang: string) {
 
 // The store knows which quest ended but cannot translate, so the wording is
 // built here, in the language the page is currently showing.
-function announceQuest(questName: string, failedWith?: string) {
+function announceQuest(questName: string, failedWith?: string, accountName?: string) {
   const title = failedWith === undefined
     ? t('quest.notify_done_title')
     : t('quest.notify_failed_title')
   const body = failedWith === undefined
     ? t('quest.notify_done_body', { name: questName })
     : t('quest.notify_failed_body', { name: questName, error: failedWith })
-  notifyQuestFinished(title, body).catch(error => {
+  // A quest of another account has to say so: the same quest id can be running on
+  // every account at once, and the name cannot tell them apart.
+  const forAccount = accountName ? t('notify.account_suffix', { account: accountName }) : ''
+  notifyQuestFinished(title, `${body}${forAccount}`).catch(error => {
     console.error('Could not raise the quest notification:', error)
   })
 }
@@ -217,7 +241,7 @@ onUnmounted(() => {
 function handleAppNavigate(e: Event) {
   const tab = (e as CustomEvent<string>).detail
   if (tab === 'home' || tab === 'game' || tab === 'settings' || tab === 'debug') {
-    currentTab.value = tab
+    selectTab(tab)
   }
 }
 
@@ -240,8 +264,12 @@ function openSettingsSection(section: 'discord_integration' | 'quest_behavior' |
 watch(
   () => Boolean(authStore.user),
   (authenticated) => {
-    if (authenticated) questsStore.startIdleRefresh()
-    else questsStore.stopIdleRefresh()
+    if (authenticated) {
+      questsStore.startIdleRefresh()
+      if (tabToRestore && !tabChosenByUser) currentTab.value = tabToRestore
+    } else {
+      questsStore.stopIdleRefresh()
+    }
   },
   { immediate: true }
 )
@@ -349,7 +377,7 @@ watch(
               <AppNavigation
                 :current="currentTab"
                 :debug-enabled="debugModeEnabled"
-                @navigate="currentTab = $event"
+                @navigate="selectTab"
               />
 
               <QuestModeIndicator
@@ -371,7 +399,7 @@ watch(
                     <AppNavigation
                       :current="currentTab"
                       :debug-enabled="debugModeEnabled"
-                      @navigate="currentTab = $event"
+                      @navigate="selectTab"
                     />
 
                     <span class="mx-1 hidden h-5 w-px bg-border sm:block" aria-hidden="true" />

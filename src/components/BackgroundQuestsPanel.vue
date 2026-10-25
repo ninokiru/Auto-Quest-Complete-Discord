@@ -34,9 +34,23 @@ interface BackgroundGroup {
 // Grouped by first-seen account so one account's quests read as one block instead
 // of repeating its avatar. The store replaces the whole list on every tick, so the
 // group order is the registry's.
+const backgroundTasks = computed(() => questsStore.accountTasks.filter(task => !listedInGroups(task)))
+
+/** A quest the other accounts' panel already lists has its Stop button there, so
+ *  this panel keeps only what that one cannot show: a forgotten account, an
+ *  account whose list read failed, or a quest that left its list. */
+function listedInGroups(task: AccountQuestTask): boolean {
+  if (!task.accountId) return false
+  return questsStore.foreignQuestGroups.some(
+    group =>
+      group.account.user.id === task.accountId &&
+      group.quests.some(quest => quest.id === task.questId),
+  )
+}
+
 const groups = computed<BackgroundGroup[]>(() => {
   const byAccount = new Map<string, BackgroundGroup>()
-  for (const task of questsStore.accountTasks) {
+  for (const task of backgroundTasks.value) {
     const key = task.accountId ?? ''
     let group = byAccount.get(key)
     if (!group) {
@@ -103,7 +117,7 @@ async function handleStop(row: BackgroundRow): Promise<void> {
 </script>
 
 <template>
-  <Card v-if="questsStore.accountTasks.length > 0" class="overflow-hidden border-border/60">
+  <Card v-if="backgroundTasks.length > 0" class="overflow-hidden border-border/60">
     <CardHeader class="flex flex-row items-start gap-2.5 p-4 pb-2">
       <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10">
         <MonitorPlay class="h-4 w-4 text-primary" />
@@ -112,7 +126,7 @@ async function handleStop(row: BackgroundRow): Promise<void> {
         <CardTitle class="flex items-center gap-1.5 text-sm">
           {{ t('quest.background_title') }}
           <span class="rounded-full bg-primary/15 px-1.5 text-[10px] font-semibold leading-4 text-primary">
-            {{ questsStore.accountTasks.length }}
+            {{ backgroundTasks.length }}
           </span>
         </CardTitle>
         <p class="text-xs leading-relaxed text-pretty text-muted-foreground">

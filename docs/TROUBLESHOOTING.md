@@ -48,7 +48,7 @@ Four different failures, four different fixes. "CDP is broken" is almost never t
 | An Activity quest cannot find its window | The Activity was never launched, or the frame belongs to another client | Launch the Activity in Discord first; if it is already open, restart the client |
 | Every accept fails, or a red banner names a deadline | Discord enrollment cooldown on the account | Wait for the deadline shown. Running quests are unaffected |
 | Quests stopped when the machine slept | Keep-awake covers Windows and macOS only | Enable idle inhibition in your Linux compositor |
-| Five parallel quests feel slow | Deliberate 600 ms per-route pacing that prevents one `429` from stopping everything | Lower parallelism or the submission interval if you prefer fewer, slower requests |
+| Twenty parallel quests feel slow | Deliberate 600 ms per-route pacing, shared by every account, that prevents one `429` from stopping everything | Lower parallelism or the submission interval if you prefer fewer, slower requests |
 
 ## CDP endpoint probe states
 

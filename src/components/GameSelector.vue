@@ -33,7 +33,7 @@ function compatibleExeCount(game: DetectableGame): number | null {
   ).length
 }
 
-defineEmits<{
+const emit = defineEmits<{
   select: [game: DetectableGame]
 }>()
 
@@ -50,12 +50,16 @@ const filteredGames = computed(() => {
   if (!searchQuery.value) {
     return games.value.slice(0, DISPLAY_LIMIT)
   }
-  
+
   const query = searchQuery.value.toLowerCase()
   return games.value
     .filter(g => g.name.toLowerCase().includes(query))
     .slice(0, DISPLAY_LIMIT)
 })
+
+function pick(game: DetectableGame) {
+  emit('select', game)
+}
 
 async function loadGames(force = false) {
   loading.value = true
@@ -125,13 +129,44 @@ onMounted(async () => {
       </div>
 
       <div v-else class="space-y-2 h-full overflow-y-auto pr-2">
+        <!-- Games this app has been used with, above the alphabetical head of the
+             list so a repeat session does not have to search for the same game. -->
+        <div v-if="!searchQuery && store.recentGames.length > 0" class="space-y-1.5 pb-1">
+          <p class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+            {{ t('game_sim.recent') }}
+          </p>
+          <div class="flex flex-wrap gap-1.5">
+            <Button
+              v-for="game in store.recentGames"
+              :key="game.id"
+              variant="outline"
+              size="sm"
+              class="h-7 max-w-[14rem] gap-1.5 px-2 text-xs"
+              :disabled="disabled"
+              :title="game.name"
+              @click="pick(game)"
+            >
+              <img
+                v-if="game.icon"
+                :src="`https://cdn.discordapp.com/app-icons/${game.id}/${game.icon}.png?size=32`"
+                alt=""
+                loading="lazy"
+                class="h-4 w-4 shrink-0 rounded"
+                @error="(e) => (e.target as HTMLImageElement).style.display = 'none'"
+              />
+              <Gamepad2 v-else class="h-4 w-4 shrink-0 text-muted-foreground/60" />
+              <span class="min-w-0 truncate">{{ game.name }}</span>
+            </Button>
+          </div>
+        </div>
+
         <Button
           v-for="game in filteredGames" 
           :key="game.id"
           variant="secondary"
           class="w-full justify-start h-auto py-3 px-4 items-center gap-3 shrink-0"
           :disabled="disabled"
-          @click="$emit('select', game)"
+          @click="pick(game)"
         >
           <!-- Icon -->
           <div class="relative w-10 h-10 rounded-md overflow-hidden bg-muted/50 shrink-0">

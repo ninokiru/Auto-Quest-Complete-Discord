@@ -80,17 +80,24 @@ function titleOf(item: AppNotification): string {
   }
 }
 
+/** A quest that ran for another account says whose it was: the page never left its
+ *  own account, so the quest name alone cannot tell two accounts apart. */
+function accountSuffix(item: AppNotification): string {
+  const account = item.params.account
+  return account ? t('notify.account_suffix', { account }) : ''
+}
+
 function bodyOf(item: AppNotification): string {
   switch (item.kind) {
     case 'update_available':
       return t('notify.items.update_available.body', { current: item.params.current ?? '' })
     case 'quest_completed':
-      return t('notify.items.quest_completed.body', { name: item.params.name ?? '' })
+      return t('notify.items.quest_completed.body', { name: item.params.name ?? '' }) + accountSuffix(item)
     case 'quest_failed':
       return t('notify.items.quest_failed.body', {
         name: item.params.name ?? '',
         error: item.params.error ?? '',
-      })
+      }) + accountSuffix(item)
     case 'new_quests':
       return t('notify.items.new_quests.body', { count: item.params.count ?? 0 })
     case 'error':

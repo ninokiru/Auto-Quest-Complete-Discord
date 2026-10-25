@@ -38,13 +38,16 @@ const emit = defineEmits<{
       <div class="relative min-w-0 flex-1">
         <Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
         <Input
+          id="quest-search"
           :model-value="query"
           type="text"
           :placeholder="t('home.search_placeholder')"
           :aria-label="t('home.search_placeholder')"
-          class="pl-9"
+          class="pl-9 pr-9"
           @update:model-value="emit('update:query', String($event))"
         />
+        <!-- The Home view binds "/" to this field; the hint is what teaches it. -->
+        <kbd class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border border-border/70 bg-muted/60 px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground" aria-hidden="true">/</kbd>
       </div>
 
         <Button

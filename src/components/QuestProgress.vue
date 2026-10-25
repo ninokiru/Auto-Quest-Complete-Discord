@@ -295,7 +295,7 @@ function slotBarStyle(slot: RunningQuest): Record<string, string> {
           <div class="flex items-center justify-between gap-3">
             <p class="truncate text-sm font-semibold">{{ floatingTitle }}</p>
             <div class="flex shrink-0 items-center gap-2">
-              <span v-if="questsStore.runningQuests.length > 1" class="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary">
+              <span v-if="questsStore.runningQuests.length > 0" class="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary">
                 {{ t('quest.running_count', { count: questsStore.runningQuests.length, max: questsStore.maxParallelQuests }) }}
               </span>
               <span v-if="queuedBehindCount > 0" class="rounded-full bg-secondary px-2 py-0.5 text-[11px] font-medium text-secondary-foreground">

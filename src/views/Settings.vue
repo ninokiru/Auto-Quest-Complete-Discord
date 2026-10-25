@@ -43,7 +43,7 @@ onMounted(() => {
       <SettingsNav :selected="selectedSection" @update:selected="setSection" />
 
       <div class="min-w-0">
-        <Transition name="settings-panel" mode="out-in">
+        <div class="settings-section-swap" :key="selectedSection">
           <AccountSettings
             v-if="selectedSection === 'account'"
             key="account"
@@ -60,32 +60,37 @@ onMounted(() => {
             @debug-unlocked="emit('debug-unlocked')"
             @debug-disabled="emit('debug-disabled')"
           />
-        </Transition>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* A section swap used to change the whole column instantly; the short slide
-   keeps the nav and the panel reading as one motion. */
-.settings-panel-enter-active,
-.settings-panel-leave-active {
-  transition: opacity 0.14s ease, transform 0.14s ease;
+/* The section swap used to be a keyed <Transition mode="out-in">. Vue measures
+   the outgoing node through its root element, and DiscordIntegrationSettings is
+   fragment-rooted (AlertDialog + card), so leaving that section never reported a
+   finished transition and the content column stayed empty for every section
+   after it. A CSS animation on the re-keyed wrapper cannot stall: the panel is
+   painted as soon as it exists. */
+.settings-section-swap {
+  animation: settings-section-in 160ms ease-out both;
 }
-.settings-panel-enter-from,
-.settings-panel-leave-to {
-  opacity: 0;
-  transform: translateY(4px);
-}
-@media (prefers-reduced-motion: reduce) {
-  .settings-panel-enter-active,
-  .settings-panel-leave-active {
-    transition: none;
+
+@keyframes settings-section-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
   }
-  .settings-panel-enter-from,
-  .settings-panel-leave-to {
+  to {
+    opacity: 1;
     transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-section-swap {
+    animation: none;
   }
 }
 </style>

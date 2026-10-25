@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { useQuestsStore } from '@/stores/quests'
 import type { AccountSummary, DiscordUser } from '@/api/tauri'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Check, ChevronDown, Loader2, LogOut, UserPlus, X } from 'lucide-vue-next'
+import { Check, ChevronDown, Loader2, LogOut, Search, UserPlus, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const authStore = useAuthStore()
+const questsStore = useQuestsStore()
 const emit = defineEmits<{ logout: [] }>()
 
 const user = computed(() => authStore.user)
@@ -18,12 +20,19 @@ const switching = ref(false)
 const removingId = ref<string | null>(null)
 const adding = ref(false)
 const addingAccount = ref(false)
+const scanning = ref(false)
 const newToken = ref('')
 const menuError = ref<string | null>(null)
 const containerRef = ref<HTMLElement | null>(null)
 
 const accounts = computed(() => authStore.knownAccounts)
 const busy = computed(() => switching.value || authStore.loading)
+
+// The scan reads the desktop clients' local profiles, which the backend only
+// reports as `full` where that is possible. The login screen hides its
+// auto-detect button under the same rule, so the switcher must not offer a scan
+// that can only fail.
+const canScan = computed(() => questsStore.platformCapabilities?.tokenAutoDetection === 'full')
 
 function avatarUrlFor(target: DiscordUser): string | null {
   if (!target.avatar) return null
@@ -72,6 +81,15 @@ async function handleForget(summary: AccountSummary) {
   const removed = await authStore.forgetKnownAccount(summary.user.id)
   removingId.value = null
   if (!removed) menuError.value = authStore.error
+}
+
+async function handleScan() {
+  if (scanning.value || busy.value) return
+  scanning.value = true
+  menuError.value = null
+  const found = await authStore.scanKnownAccounts()
+  scanning.value = false
+  if (!found) menuError.value = authStore.error
 }
 
 async function handleAdd() {
@@ -247,6 +265,21 @@ onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside))
               </div>
             </form>
           </div>
+
+          <!-- Sits after the v-if/v-else add-form pair: inserting it between them
+             would retarget the v-else and open the token input on its own. -->
+          <button
+            v-if="!adding && canScan"
+            class="mt-1 flex w-full items-center gap-2.5 rounded-md p-2 text-left text-xs font-medium text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+            :disabled="scanning || busy"
+            @click="handleScan"
+          >
+            <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-dashed border-border">
+              <Loader2 v-if="scanning" class="h-3.5 w-3.5 animate-spin" />
+              <Search v-else class="h-3.5 w-3.5" />
+            </span>
+            {{ scanning ? t('account.scanning') : t('account.scan') }}
+          </button>
         </div>
 
         <p

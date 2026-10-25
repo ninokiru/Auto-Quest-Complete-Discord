@@ -18,10 +18,14 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuthStore } from '@/stores/auth'
-import { useGameIdleStore, formatSimulationDuration } from '@/stores/gameIdle'
+import {
+  MAX_CONCURRENT_GAMES,
+  formatSimulationDuration,
+  useGameIdleStore,
+} from '@/stores/gameIdle'
 import { useQuestsStore } from '@/stores/quests'
 import { getSimulationExecutables } from '@/utils/executables'
-import type { GameIdleItem } from '@/api/tauri'
+import type { GameIdleItem, GameIdleLane, GameIdlePhase } from '@/api/tauri'
 
 const { t } = useI18n()
 const auth = useAuthStore()
@@ -41,13 +45,6 @@ const canEditQueue = computed(() => {
   const phase = idle.status?.phase
   return active.value && phase !== 'stopping' && phase !== 'error'
 })
-function canEditItem(item: GameIdleItem) {
-  const current = idle.status
-  if (!canEditQueue.value || !current) return false
-  // During a handoff the first upcoming item is the one being launched. It
-  // must remain in place until startup succeeds or fails.
-  return current.phase !== 'starting' || current.upcoming[0]?.occurrenceId !== item.occurrenceId
-}
 const games = computed(() => quests.detectableGames)
 const uniqueGameCount = computed(() => new Set(games.value.map(game => game.id)).size)
 const processCandidateCount = computed(() => {
@@ -68,49 +65,68 @@ const maxVisibleDistance = computed(() => {
   return 2
 })
 
+const lanes = computed(() => idle.status?.lanes ?? [])
+const isMultiLane = computed(() => lanes.value.length > 1)
+// The featured lane is the one that started most recently, which is the game
+// the reel centers on and the name the readout leads with.
+const featuredLane = computed(() =>
+  lanes.value.reduce<GameIdleLane | null>(
+    (newest, lane) => (!newest || lane.startedAt > newest.startedAt ? lane : newest),
+    null
+  )
+)
+
 const carouselItems = computed(() => {
   const status = idle.status
   if (!status) return []
+  // A lane's game is already reported through `recent`, and the backend never
+  // queues it in `upcoming` at the same time, so the two lists can be laid out
+  // back to back without the old current-item handoff.
   const recent = status.recent.slice(-5)
-  const currentId = status.current?.id
-  const items: Array<{ item: GameIdleItem; offset: number; upcoming: boolean }> = []
-  if (recent.length > 0) {
-    recent.forEach((item, index) => {
-      items.push({ item, offset: index - recent.length + 1, upcoming: false })
-    })
-  } else if (status.current) {
-    items.push({ item: status.current, offset: 0, upcoming: false })
-  }
+  const items: Array<{ item: GameIdleItem; offset: number; upcoming: boolean }> = recent.map(
+    (item, index) => ({ item, offset: index - recent.length + 1, upcoming: false })
+  )
   status.upcoming.forEach((item, index) => {
-    if (currentIsQueued.value && index === 0) return
-    if (item.id !== currentId || index > 0) {
-      items.push({ item, offset: currentIsQueued.value ? index : index + 1, upcoming: true })
-    }
+    items.push({ item, offset: index + 1, upcoming: true })
   })
   return items.filter(entry => Math.abs(entry.offset) <= maxVisibleDistance.value)
 })
 
+function laneRemainingSeconds(lane: GameIdleLane) {
+  if (lane.endsAt === null) return 0
+  return Math.max(0, Math.ceil((lane.endsAt - now.value) / 1000))
+}
+
+function lanePhaseKey(phase: GameIdlePhase) {
+  if (phase === 'resting') return 'game_idle.resting'
+  if (phase === 'starting') return 'game_idle.starting'
+  return 'game_idle.lane_playing'
+}
+
+// One lane means the phase countdown the panel has always shown; several lanes
+// mean the moment the next of them hands its game over.
 const phaseRemainingSeconds = computed(() => {
-  const endsAt = idle.status?.phaseEndsAt
-  if (!endsAt) return 0
-  return Math.max(0, Math.ceil((endsAt - now.value) / 1000))
+  const ends = lanes.value
+    .map(lane => lane.endsAt)
+    .filter((value): value is number => value !== null)
+  if (ends.length === 0) return 0
+  return Math.max(0, Math.ceil((Math.min(...ends) - now.value) / 1000))
 })
 
+// Every lane contributes its own playing time, so this is the total simulated
+// time across games rather than the elapsed time of the session clock.
 const sessionSeconds = computed(() => {
   const status = idle.status
   if (!status) return 0
-  if (status.phase !== 'playing') return status.accumulatedPlayedSeconds
-  const elapsed = Math.max(0, Math.floor((now.value - status.phaseStartedAt) / 1000))
-  return status.accumulatedPlayedSeconds + elapsed
+  const live = status.lanes
+    .filter(lane => lane.phase === 'playing')
+    .reduce((total, lane) => total + Math.max(0, Math.floor((now.value - lane.startedAt) / 1000)), 0)
+  return status.accumulatedPlayedSeconds + live
 })
 
 const sessionDuration = computed(() => formatSimulationDuration(sessionSeconds.value))
 const configError = computed(() => idle.validateConfig())
-const currentIsQueued = computed(() => Boolean(
-  idle.status?.current &&
-  idle.status.upcoming[0]?.occurrenceId === idle.status.current.occurrenceId
-))
-const nextGameName = computed(() => idle.status?.upcoming[currentIsQueued.value ? 1 : 0]?.name || t('game_idle.preparing'))
+const nextGameName = computed(() => idle.status?.upcoming[0]?.name || t('game_idle.preparing'))
 
 function formatCountdown(seconds: number) {
   const hours = Math.floor(seconds / 3600)
@@ -242,6 +258,21 @@ onBeforeUnmount(() => {
           />
         </div>
         <div class="space-y-1.5">
+          <Label for="idle-concurrent-games" class="text-xs">{{ t('game_idle.concurrent_games') }}</Label>
+          <Input
+            id="idle-concurrent-games"
+            v-model.number="idle.concurrentGames"
+            type="number"
+            inputmode="numeric"
+            min="1"
+            :max="MAX_CONCURRENT_GAMES"
+            step="1"
+            class="w-28 tabular-nums"
+            :disabled="active || idle.mode === 'cdp'"
+            :aria-invalid="configError === 'concurrent_games'"
+          />
+        </div>
+        <div class="space-y-1.5">
           <Label class="text-xs">{{ t('game_idle.simulation_mode') }}</Label>
           <div class="flex h-10 rounded-md border bg-background p-1">
             <button
@@ -287,15 +318,17 @@ onBeforeUnmount(() => {
     <div v-if="!immersive" class="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted-foreground">
       <span>{{ t('game_idle.candidate_count', { count: candidateCount }) }}</span>
       <span v-if="!auth.user" class="text-amber-700 dark:text-amber-300">{{ t('game_idle.sign_in_required') }}</span>
-      <span v-else-if="configError" class="text-error">{{ t(`game_idle.${configError}_error`) }}</span>
+      <span v-else-if="configError" class="text-error">{{ t(`game_idle.${configError}_error`, { max: MAX_CONCURRENT_GAMES }) }}</span>
       <span v-else-if="idle.mode === 'cdp' && !quests.cdpAvailable" class="text-amber-700 dark:text-amber-300">{{ t('game_idle.cdp_unavailable') }}</span>
+      <span v-else-if="idle.mode === 'cdp' && idle.concurrentGames > 1">{{ t('game_idle.concurrent_games_cdp_hint') }}</span>
+      <span v-else-if="idle.mode === 'process' && idle.concurrentGames > candidateCount">{{ t('game_idle.concurrent_games_pool_hint', { count: candidateCount }) }}</span>
     </div>
 
     <div v-if="idle.error || idle.status?.warning" class="idle-warning" role="status">
       {{ idle.error || idle.status?.warning }}
     </div>
 
-    <div v-if="idle.status?.current || idle.status?.upcoming.length" class="idle-machine">
+    <div v-if="idle.status?.lanes.length || idle.status?.upcoming.length" class="idle-machine">
       <div ref="stage" class="idle-stage" :aria-label="t('game_idle.queue_label')">
         <div class="idle-pointer" aria-hidden="true">
           <span>{{ idle.status.phase === 'resting' ? t('game_idle.resting') : idle.status.phase === 'starting' ? t('game_idle.starting') : t('game_idle.current') }}</span>
@@ -313,9 +346,9 @@ onBeforeUnmount(() => {
               '--idle-offset': entry.offset,
               '--idle-distance': Math.abs(entry.offset),
             }"
-            :aria-label="entry.upcoming && canEditItem(entry.item) ? t('game_idle.upcoming_item', { name: entry.item.name }) : entry.item.name"
-            @contextmenu.prevent.stop="entry.upcoming && canEditItem(entry.item) && openContextMenu($event, entry.item)"
-            @keydown="entry.upcoming && canEditItem(entry.item) && handleFutureKeydown($event, entry.item)"
+            :aria-label="entry.upcoming && canEditQueue ? t('game_idle.upcoming_item', { name: entry.item.name }) : entry.item.name"
+            @contextmenu.prevent.stop="entry.upcoming && canEditQueue && openContextMenu($event, entry.item)"
+            @keydown="entry.upcoming && canEditQueue && handleFutureKeydown($event, entry.item)"
           >
             <span class="idle-icon-frame">
               <img
@@ -333,15 +366,26 @@ onBeforeUnmount(() => {
         </TransitionGroup>
       </div>
 
+      <div v-if="isMultiLane" class="idle-lanes" role="list" :aria-label="t('game_idle.active_lanes', { count: lanes.length })">
+        <div class="idle-lanes-title">{{ t('game_idle.active_lanes', { count: lanes.length }) }}</div>
+        <div v-for="lane in lanes" :key="lane.item.occurrenceId" class="idle-lane" role="listitem">
+          <span class="idle-lane-name">{{ lane.item.name }}</span>
+          <span class="idle-lane-phase">{{ t(lanePhaseKey(lane.phase)) }}</span>
+          <strong v-if="lane.endsAt !== null" class="idle-lane-time">
+            {{ formatCountdown(laneRemainingSeconds(lane)) }}
+          </strong>
+        </div>
+      </div>
+
       <div class="idle-readout">
         <div class="idle-primary-readout">
           <span class="idle-readout-label">{{ idle.status.phase === 'resting' ? t('game_idle.resting_after') : idle.status.phase === 'starting' ? t('game_idle.starting') : t('game_idle.now_playing') }}</span>
-          <strong>{{ idle.status.current?.name || idle.status.upcoming[0]?.name || t('game_idle.preparing') }}</strong>
+          <strong>{{ featuredLane?.item.name || idle.status.upcoming[0]?.name || t('game_idle.preparing') }}</strong>
           <span class="idle-next">{{ t('game_idle.next') }} · {{ nextGameName }}</span>
         </div>
         <div class="idle-metric">
           <TimerReset class="h-4 w-4" />
-          <span>{{ idle.status.phase === 'resting' ? t('game_idle.rest_remaining') : t('game_idle.play_remaining') }}</span>
+          <span>{{ isMultiLane ? t('game_idle.next_change') : idle.status.phase === 'resting' ? t('game_idle.rest_remaining') : t('game_idle.play_remaining') }}</span>
           <strong>{{ formatCountdown(phaseRemainingSeconds) }}</strong>
           <small>{{ t('game_idle.configured_for', { count: idle.status.playMinutes }) }}</small>
         </div>
@@ -349,7 +393,7 @@ onBeforeUnmount(() => {
           <Clock3 class="h-4 w-4" />
           <span>{{ t('game_idle.session_total') }}</span>
           <strong>{{ t('game_idle.duration', { hours: sessionDuration.hours, minutes: sessionDuration.minutes }) }}</strong>
-          <small>{{ t('game_idle.active_time_only') }}</small>
+          <small>{{ isMultiLane ? t('game_idle.total_across_games') : t('game_idle.active_time_only') }}</small>
         </div>
       </div>
 
@@ -523,6 +567,13 @@ onBeforeUnmount(() => {
 .idle-reel-enter-active, .idle-reel-leave-active { transition: opacity 260ms ease, transform 440ms cubic-bezier(.22,1,.36,1), filter 440ms cubic-bezier(.22,1,.36,1); }
 .idle-reel-enter-from { opacity: 0; transform: translate3d(calc(-50% + (var(--idle-offset) + 1) * var(--item-gap)), -43%, 0) scale(.65); }
 .idle-reel-leave-to { opacity: 0; filter: blur(4px); transform: translate3d(calc(-50% + var(--idle-offset) * var(--item-gap)), -43%, 0) scale(.3); }
+
+.idle-lanes { display: grid; gap: .5rem; max-height: 18rem; overflow-y: auto; overscroll-behavior: contain; border-top: 1px solid hsl(var(--border) / .55); background: hsl(var(--card) / .45); padding: .9rem 1.2rem 1rem; }
+.idle-lanes-title { color: hsl(var(--muted-foreground)); font-size: .68rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.idle-lane { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: baseline; gap: .75rem; font-size: .8rem; }
+.idle-lane-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.idle-lane-phase { color: hsl(var(--muted-foreground)); font-size: .68rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.idle-lane-time { min-width: 4.2rem; text-align: right; color: hsl(var(--primary)); font-variant-numeric: tabular-nums; }
 
 .idle-readout { display: grid; grid-template-columns: minmax(0, 1.5fr) repeat(2, minmax(10rem, .75fr)); border-top: 1px solid hsl(var(--border) / .55); background: hsl(var(--card) / .65); }
 .idle-primary-readout, .idle-metric { min-width: 0; padding: 1rem 1.2rem 1.15rem; }

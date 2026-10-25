@@ -80,16 +80,21 @@ describe('parallel quest slots', () => {
     expect(store.runningQuests[1].targetDuration).toBe(120)
   })
 
-  it('refuses a sixth concurrent quest', async () => {
+  it('refuses a quest past the parallel cap', async () => {
     const store = useQuestsStore()
-    for (let index = 0; index < 5; index++) {
+    const cap = store.maxParallelQuests
+    for (let index = 0; index < cap; index++) {
       await store.startVideo(`quest-${index}`, 60, 0)
     }
-    expect(runningIds(store)).toHaveLength(5)
+    expect(runningIds(store)).toHaveLength(cap)
 
-    await expect(store.startVideo('quest-5', 60, 0)).rejects.toThrow('At most 5 quests')
-    expect(runningIds(store)).toHaveLength(5)
-    expect(store.error).toContain('At most 5 quests')
+    // Read the cap from the store so this test still pins the boundary when the
+    // limit moves with the backend constant.
+    await expect(store.startVideo(`quest-${cap}`, 60, 0)).rejects.toThrow(
+      `At most ${cap} quests`
+    )
+    expect(runningIds(store)).toHaveLength(cap)
+    expect(store.error).toContain(`At most ${cap} quests`)
   })
 
   it('refuses to start a quest that already occupies a slot', async () => {

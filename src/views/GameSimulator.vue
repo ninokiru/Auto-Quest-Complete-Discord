@@ -272,6 +272,18 @@ const selectedAlreadyRunning = computed(() => {
   return runningGames.value.some(game => game.execName === exeName)
 })
 
+// The Run button refuses for several different reasons. Without a reason on
+// screen a locked button reads as a broken one, so name the current owner of
+// the simulation instead of leaving the user to guess. CDP is not listed here:
+// it already swaps the button for a Stop control and shows its own banner.
+const runBlockReason = computed(() => {
+  if (selectedAlreadyRunning.value) return t('game_sim.already_running')
+  if (store.runningQuests.length > 0) return t('game_sim.blocked_by_quest')
+  if (idleStore.isActive || idleStore.loading) return t('game_sim.blocked_by_idle')
+  if (!effectiveExecutable.value) return t('game_sim.blocked_no_exe')
+  return null
+})
+
 const selectedHistoryDuration = computed(() => {
   const seconds = selectedGame.value ? idleStore.history[selectedGame.value.id]?.totalSeconds ?? 0 : 0
   return formatSimulationDuration(seconds)
@@ -280,6 +292,7 @@ const selectedHistoryDuration = computed(() => {
 function selectGame(game: DetectableGame) {
   if (selectionLocked.value || simulatorBusy.value) return
   selectedGame.value = game
+  store.rememberRecentGame(game.id)
   const compatible = store.platformCapabilities
     ? getSimulationExecutables(game.executables, hostOs.value, executablePriority.value)
     : []
@@ -787,8 +800,8 @@ async function stopRunningGame(game: RunningSimulatedGame): Promise<void> {
         </CardContent>
 
         <CardFooter v-if="canProceed" class="flex flex-col gap-2">
-          <p v-if="selectedAlreadyRunning" class="text-xs text-muted-foreground">
-            {{ t('game_sim.already_running') }}
+          <p v-if="runBlockReason" class="text-xs text-muted-foreground">
+            {{ runBlockReason }}
           </p>
           <div class="grid grid-cols-2 gap-2 w-full">
             <Button

@@ -513,9 +513,10 @@ impl DiscordApiClient {
     ) -> Result<reqwest::Response> {
         const MAX_RETRIES: u32 = 2;
 
-        // Discord counts requests per route, not per task, so five parallel slots
+        // Discord counts requests per route, not per task, so twenty parallel slots
         // are one fast client to it. Releasing them one route at a time keeps a
-        // single 429 from stopping the whole set.
+        // single 429 from stopping the whole set. The gate is process-wide, so
+        // another account's requests queue behind the same per-route budget.
         let gate = crate::rate_limit::Gate::from_builder(&builder);
         if let Some(gate) = gate.as_ref() {
             gate.wait().await;

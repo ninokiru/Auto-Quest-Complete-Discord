@@ -92,6 +92,9 @@ function runningIds(store: ReturnType<typeof useQuestsStore>): string[] {
 }
 
 describe('quest tasks across an account switch', () => {
+  let docHidden = false
+  const docListeners = new Set<() => void>()
+
   beforeEach(() => {
     // Fake timers first: they replace requestAnimationFrame, so a stub installed
     // before them would be shadowed and the store would cancel the fake's frame.
@@ -99,6 +102,17 @@ describe('quest tasks across an account switch', () => {
     vi.stubGlobal('localStorage', storage())
     vi.stubGlobal('requestAnimationFrame', mocks.requestAnimationFrame)
     vi.stubGlobal('cancelAnimationFrame', mocks.cancelAnimationFrame)
+    // These stores run without a DOM here, but the idle refresh reads
+    // `document.hidden` and binds a `visibilitychange` listener, so both are stubbed.
+    docHidden = false
+    docListeners.clear()
+    vi.stubGlobal('document', {
+      get hidden() {
+        return docHidden
+      },
+      addEventListener: (_type: string, handler: () => void) => docListeners.add(handler),
+      removeEventListener: (_type: string, handler: () => void) => docListeners.delete(handler),
+    })
     setActivePinia(createPinia())
     vi.clearAllMocks()
     mocks.getPlatformCapabilities.mockResolvedValue({
@@ -192,7 +206,9 @@ describe('quest tasks across an account switch', () => {
     expect(store.softError).toBeNull()
     expect(store.queuePauseReason).toBeNull()
     expect(store.lastPlayRequest).toBeNull()
-    expect(store.detectableGames).toEqual([])
+    // Discord's detectable-game catalog is not account data: it survives the
+    // switch so the next picker and play-quest start skip the API round trip.
+    expect(store.detectableGames).toEqual([{ id: 'app', name: 'Game', executables: [] }])
     expect(store.cdpAvailable).toBe(false)
     expect(store.error).toBeNull()
     // The carried tasks survive the reset: they are the other account's work.
@@ -246,6 +262,23 @@ describe('quest tasks across an account switch', () => {
     expect(mocks.getQuestTaskStatuses).toHaveBeenCalledTimes(1)
     // An empty registry is authoritative: a row with no task behind it is dropped.
     expect(store.accountTasks).toEqual([])
+  })
+
+  it('pauses idle refreshes for a hidden window and catches up on reveal', async () => {
+    const store = useQuestsStore()
+    docHidden = true
+    store.startIdleRefresh()
+
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(mocks.getQuestsFull).not.toHaveBeenCalled()
+
+    docHidden = false
+    docListeners.forEach(handler => handler())
+    expect(mocks.getQuestsFull).toHaveBeenCalledTimes(1)
+
+    store.stopIdleRefresh()
+    // The listener belongs to the refresh, so stopping must not leave one bound.
+    expect(docListeners.size).toBe(0)
   })
 
   it('lists a running quest owned by another account without touching this one', async () => {
@@ -303,8 +336,9 @@ describe('quest tasks across an account switch', () => {
     expect(store.error).toBeNull()
     expect(mocks.stopQuest).not.toHaveBeenCalled()
     // The other account's copy is listed while it runs, and its ending is
-    // announced rather than tearing this page's quest down.
-    expect(mocks.announceQuestEnd).toHaveBeenCalledWith('shared', 'ended abroad')
+    // announced rather than tearing this page's quest down. No group was read
+    // here, so there is no display name to add.
+    expect(mocks.announceQuestEnd).toHaveBeenCalledWith('shared', 'ended abroad', undefined)
     expect(carried(store)).toEqual([])
   })
 
@@ -319,7 +353,7 @@ describe('quest tasks across an account switch', () => {
 
     await vi.advanceTimersByTimeAsync(120_000)
 
-    expect(mocks.announceQuestEnd).toHaveBeenCalledWith('theirs', undefined)
+    expect(mocks.announceQuestEnd).toHaveBeenCalledWith('theirs', undefined, undefined)
     expect(carried(store)).toEqual([])
     expect(runningIds(store)).toEqual(['mine'])
   })
