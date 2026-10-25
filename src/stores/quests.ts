@@ -12,7 +12,6 @@ import {
   isPlayActivityQuest,
   isPlayActivityTask,
   isVideoTask,
-  isVideoTask,
   playActivityProgressPercentage,
   questApplicationId,
 } from '@/utils/questTasks'
@@ -2288,7 +2287,11 @@ export const useQuestsStore = defineStore('quests', () => {
   let gamesFetchInFlight: Promise<DetectableGame[]> | null = null
 
   function fetchDetectableGamesOnce(): Promise<DetectableGame[]> {
-    const request = (async () => {
+    // Assigned outside the async body so its `finally` can compare against the
+    // promise it belongs to; a `const` read inside its own initializer is what
+    // vue-tsc reports as used before assigned.
+    let request: Promise<DetectableGame[]>
+    request = (async () => {
       try {
         const games = await fetchDetectableGames()
         // An empty response is Discord being unreachable or rate-limiting, not a
