@@ -1240,7 +1240,9 @@ mod quest_array_tests {
 /// because they are network-bound, not local work. Nothing here hands a token to
 /// the page: a group carries the same summary the account menu shows.
 #[tauri::command]
-async fn get_quests_for_accounts(state: State<'_, AppState>) -> Vec<AccountQuestList> {
+async fn get_quests_for_accounts(
+    state: State<'_, AppState>,
+) -> Result<Vec<AccountQuestList>, String> {
     let active = active_account_id(&state);
     let summaries = summarize_accounts(&state, |_| true);
     let sessions: Vec<AccountSession> = state
@@ -1277,7 +1279,7 @@ async fn get_quests_for_accounts(state: State<'_, AppState>) -> Vec<AccountQuest
             error,
         });
     }
-    groups
+    Ok(groups)
 }
 
 /// Builds the page-facing view of the remembered accounts a filter selects. The
