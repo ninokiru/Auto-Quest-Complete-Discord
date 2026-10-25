@@ -1265,12 +1265,10 @@ mod tests {
 
     #[test]
     fn only_one_lane_claims_the_presence_and_resting_lanes_free_their_games() {
-        let candidates = eligible_games(
-            GameIdleMode::Process,
-            (0..6)
-                .map(|index| game(&index.to_string(), "win32"))
-                .collect(),
-        );
+        // Build the pool directly: routing win32-only games through
+        // `eligible_games` empties it on a Linux runner, where Process mode
+        // needs a native executable.
+        let candidates = pool(0..6);
         let mut shared = shared_with(GameIdleMode::Process, candidates);
         shared.refill_bag();
 
