@@ -796,6 +796,15 @@ export const useQuestsStore = defineStore('quests', () => {
   function releaseQuestSlot(questId: string) {
     closeQuestSlot(questId)
     claimedCompletions.delete(questId)
+    // A freed slot is what a deferred queue item waits on: while a game quest
+    // held one, `processQueue` passed over the game quests behind it instead of
+    // failing them. Every end path comes through here — completion, failure and a
+    // hand Stop — so the refill is scheduled once rather than at each caller.
+    if (isQueueRunning.value && questQueue.value.length > 0) {
+      setTimeout(() => {
+        if (isQueueRunning.value) void processQueue()
+      }, 2000)
+    }
   }
 
   /** Whether a quest of another account is in flight. Quest events name no account,
@@ -1158,9 +1167,6 @@ export const useQuestsStore = defineStore('quests', () => {
     syncPolling()
     if (runningQuests.value.length === 0) cleanupListeners()
     void fetchQuests(true, true)
-    setTimeout(() => {
-      if (isQueueRunning.value) void processQueue()
-    }, 2000)
   }
 
   async function finishStandaloneQuest(questId: string, failedWith?: string) {
@@ -2188,8 +2194,8 @@ export const useQuestsStore = defineStore('quests', () => {
         && runningQuests.value.length < MAX_PARALLEL_QUESTS) {
         // A game quest holds the account's single game slot, so the game quests
         // behind it wait instead of failing: skipping the candidate here rather
-        // than dropping it keeps it queued for the pass that the running quest's
-        // completion triggers.
+        // than dropping it keeps it queued for the refill that `releaseQuestSlot`
+        // schedules once the running one lets go of the slot.
         const gameBusy = gameSlotBusy()
         const queueItem = questQueue.value.find(item =>
           !questSlot(item.id) && !(gameBusy && isGameQuest(item)))

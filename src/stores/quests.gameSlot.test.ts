@@ -149,8 +149,27 @@ describe('one game quest at a time per account', () => {
     mocks.getQuestTaskStatuses.mockResolvedValue([
       { questId: 'game-a', accountId: null, own: true, state: 'finished', error: null },
     ])
-    // One polling tick ends `game-a`; its completion re-triggers the queue.
-    await vi.advanceTimersByTimeAsync(120_000)
+    // A lone slot is polled on the user's own cadence, so the window has to reach
+    // the tick that ends `game-a` *and* the refill the released slot schedules.
+    await vi.advanceTimersByTimeAsync(store.gamePollingInterval * 1000 + 5_000)
+
+    expect(startedIds(store)).toEqual(['game-a', 'game-b'])
+    expect(store.runningQuests.map(slot => slot.questId)).toEqual(['game-b'])
+    expect(store.questQueue.map(item => item.id)).toEqual(['game-b'])
+  })
+
+  it('hands the game slot to the queued quest when the running one is stopped', async () => {
+    const store = useQuestsStore()
+    store.gameQuestMode = 'heartbeat'
+    store.addToQueue(gameQuest('game-a'))
+    store.addToQueue(gameQuest('game-b'))
+
+    await store.startQueue()
+    expect(startedIds(store)).toEqual(['game-a'])
+
+    // A hand Stop is not a completion, so it has to release the slot the same way.
+    await store.stopRunningQuest('game-a')
+    await vi.advanceTimersByTimeAsync(5_000)
 
     expect(startedIds(store)).toEqual(['game-a', 'game-b'])
     expect(store.runningQuests.map(slot => slot.questId)).toEqual(['game-b'])
