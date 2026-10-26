@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const source = readFileSync('src-tauri/src/cdp_quest.rs', 'utf8')
 const stopCode = source.match(/const JS_STOP_VIDEO_QUEST: &str = r#"([\s\S]*?)"#;/)[1]
 const template = source.match(/fn js_start_video_quest[\s\S]*?r#"([\s\S]*?)"#,/)[1]
-const code = Object.entries({ quest_id: 'qid', seconds_needed: '100', initial_seconds: '0',
+const code = Object.entries({ quest_id_json: JSON.stringify('qid'), seconds_needed: '100', initial_seconds: '0',
   video_speed: '10', video_interval: '1', video_max_future: '10' })
   .reduce((js, [key, value]) => js.replaceAll(`{${key}}`, value), template)
   .replaceAll('{{', '{').replaceAll('}}', '}')
