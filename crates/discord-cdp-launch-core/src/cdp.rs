@@ -117,9 +117,20 @@ pub fn classify_cdp_target(target: &CdpTarget) -> CdpTargetClassification {
     CdpTargetClassification::DiscordOtherRenderer
 }
 
-/// Reduce a target URL to something safe to put in diagnostics: scheme, host
-/// and at most the first path segment. Query, fragment and everything after the
-/// first segment (guild / channel / invite IDs) are dropped.
+/// `/json` diagnostics keep at most this many leading path segments.
+const DIAGNOSTIC_PATH_SEGMENTS: usize = 2;
+
+/// Route segments that are followed by an id in a Discord URL.
+const ID_ROUTES: [&str; 5] = ["channels", "guilds", "messages", "users", "invite"];
+
+/// Second segments that name a view instead of an account.
+const NEUTRAL_SEGMENTS: [&str; 2] = ["@me", "friends"];
+
+/// Reduce a target URL to something safe to put in diagnostics: query and
+/// fragment are dropped, and an id — a guild, channel, message or user
+/// snowflake, or the code of an invite — plus everything after it becomes `…`.
+/// Account-neutral routes such as `/app` and the `/channels/@me` sentinel stay
+/// whole, because they are what makes a report readable.
 fn sanitized_target_url(url: &str) -> String {
     if url.eq_ignore_ascii_case("about:blank") {
         return url.to_string();
@@ -132,32 +143,63 @@ fn sanitized_target_url(url: &str) -> String {
         // `data:`, `blob:` and similar carry their payload after the scheme.
         return format!("{scheme}:");
     };
-    let mut segments = parsed
+    let segments = parsed
         .path_segments()
         .into_iter()
         .flatten()
         .filter(|segment| !segment.is_empty());
-    let first = segments.next();
-    let has_more = segments.next().is_some();
-    match first {
-        Some(first) if has_more => format!("{scheme}://{host}/{first}/…"),
-        Some(first) => format!("{scheme}://{host}/{first}"),
-        None => format!("{scheme}://{host}"),
+    let mut path = String::new();
+    let mut kept = 0_usize;
+    let mut hidden = false;
+    let mut first_route = "";
+    for (index, segment) in segments.enumerate() {
+        let is_id = is_identifier_segment(segment)
+            || (index == 1
+                && ID_ROUTES.contains(&first_route)
+                && !NEUTRAL_SEGMENTS.contains(&segment));
+        if kept == DIAGNOSTIC_PATH_SEGMENTS || is_id {
+            hidden = true;
+            break;
+        }
+        path.push('/');
+        path.push_str(segment);
+        kept += 1;
+        if index == 0 {
+            first_route = segment;
+        }
     }
+    if hidden {
+        path.push_str("/…");
+    }
+    format!("{scheme}://{host}{path}")
 }
 
-/// Page titles in Discord contain DM partner, server and channel names. Keep
-/// only the generic product name (or the known overlay label) in diagnostics.
+/// A segment of nothing but digits is a snowflake, and a snowflake is the only
+/// part of a Discord route that names someone's guild or channel. An empty
+/// segment is not one: `is_ascii_digit` is false for it.
+fn is_identifier_segment(segment: &str) -> bool {
+    segment.is_ascii_digit()
+}
+
+/// Page titles in Discord contain DM partner, server and channel names. A
+/// `… | …` conversation title and any `@name` are masked, and a title carrying
+/// the product name collapses to it. Account-neutral labels such as `Friends`
+/// or `Quests` are kept: they identify a renderer, not a person.
 fn sanitized_title(title: &str) -> String {
     if title.is_empty() {
-        String::new()
-    } else if is_discord_auxiliary_page(title, "") {
-        title.to_string()
-    } else if title.to_ascii_lowercase().ends_with("discord") {
-        "Discord".to_string()
-    } else {
-        "[redacted]".to_string()
+        return String::new();
     }
+    if is_discord_auxiliary_page(title, "") {
+        return title.to_string();
+    }
+    let lower = title.to_ascii_lowercase();
+    if lower.ends_with("discord") {
+        return "Discord".to_string();
+    }
+    if lower.contains('|') || lower.starts_with('@') {
+        return "[redacted]".to_string();
+    }
+    title.to_string()
 }
 
 fn diagnostic_target(
@@ -943,6 +985,22 @@ mod tests {
             "https://discord.com/channels/…"
         );
         assert_eq!(
+            sanitized_target_url("https://discord.com/channels/@me?secret=value#fragment"),
+            "https://discord.com/channels/@me"
+        );
+        assert_eq!(
+            sanitized_target_url("https://discord.com/channels/@me/123456789012345678"),
+            "https://discord.com/channels/@me/…"
+        );
+        assert_eq!(
+            sanitized_target_url("https://discord.com/invite/abcXYZ"),
+            "https://discord.com/invite/…"
+        );
+        assert_eq!(
+            sanitized_target_url("https://discord.com/channels/friends"),
+            "https://discord.com/channels/friends"
+        );
+        assert_eq!(
             sanitized_target_url("https://discord.com/app"),
             "https://discord.com/app"
         );
@@ -958,8 +1016,10 @@ mod tests {
     #[test]
     fn diagnostic_titles_hide_conversation_names() {
         assert_eq!(sanitized_title("#general | My Server - Discord"), "Discord");
+        assert_eq!(sanitized_title("#general | My Server"), "[redacted]");
         assert_eq!(sanitized_title("Discord Overlay"), "Discord Overlay");
         assert_eq!(sanitized_title("@alice"), "[redacted]");
+        assert_eq!(sanitized_title("Quests"), "Quests");
         assert_eq!(sanitized_title(""), "");
     }
 

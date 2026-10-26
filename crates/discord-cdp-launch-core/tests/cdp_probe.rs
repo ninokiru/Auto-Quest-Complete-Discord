@@ -319,7 +319,7 @@ fn overlay_only_is_not_discord_ready() {
 #[test]
 fn distinguishes_valid_chromium_without_discord() {
     let _guard = serialize_socket_test();
-    let body = r#"[{"type":"page","title":"Chromium","url":"https://example.com","webSocketDebuggerUrl":"ws://example"}]"#;
+    let body = r#"[{"id":"1","type":"page","title":"Chromium","url":"https://example.com","webSocketDebuggerUrl":"ws://example"}]"#;
     let port = serve_once(
         Some(leaked_response(response_owned("200 OK", body))),
         Duration::ZERO,
@@ -333,7 +333,7 @@ fn distinguishes_valid_chromium_without_discord() {
 #[test]
 fn discord_target_without_websocket_is_not_ready() {
     let _guard = serialize_socket_test();
-    let body = r#"[{"type":"page","title":"Discord","url":"https://discord.com/app"}]"#;
+    let body = r#"[{"id":"1","type":"page","title":"Discord","url":"https://discord.com/app"}]"#;
     let port = serve_once(
         Some(leaked_response(response_owned("200 OK", body))),
         Duration::ZERO,
@@ -409,7 +409,7 @@ fn unrelated_tcp_listener_is_not_misclassified_as_discord() {
 #[test]
 fn complete_content_length_does_not_wait_for_connection_close() {
     let _guard = serialize_socket_test();
-    let body = r#"[{"type":"page","title":"Discord","url":"https://discord.com/app","webSocketDebuggerUrl":"ws://example"}]"#;
+    let body = r#"[{"id":"1","type":"page","title":"Discord","url":"https://discord.com/app","webSocketDebuggerUrl":"ws://example"}]"#;
     let response = response_owned("200 OK", body);
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     listener.set_nonblocking(true).unwrap();
