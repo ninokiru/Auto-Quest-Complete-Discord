@@ -331,7 +331,8 @@ fn readiness_timeout_leaves_no_unjournaled_debug_instance() {
     // The first reading is the pre-spawn check, the next one says the client
     // this call started is still up, and every reading after the terminate
     // says it is gone — which is what lets the normal-mode relaunch proceed.
-    let platform = FakePlatform::new(vec![install(DiscordChannel::Stable)], &[false, true, false]);
+    let running_readings = [false, true, false];
+    let platform = FakePlatform::new(vec![install(DiscordChannel::Stable)], &running_readings);
     let probe = FakeProbe::new(vec![CdpProbeStatus::Unreachable]);
 
     let error = launch_with_backends(fast_options(), &platform, &probe)

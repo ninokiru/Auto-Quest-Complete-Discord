@@ -176,9 +176,9 @@ fn sanitized_target_url(url: &str) -> String {
 
 /// A segment of nothing but digits is a snowflake, and a snowflake is the only
 /// part of a Discord route that names someone's guild or channel. An empty
-/// segment is not one: `is_ascii_digit` is false for it.
+/// segment is not one.
 fn is_identifier_segment(segment: &str) -> bool {
-    segment.is_ascii_digit()
+    !segment.is_empty() && segment.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 /// Page titles in Discord contain DM partner, server and channel names. A
