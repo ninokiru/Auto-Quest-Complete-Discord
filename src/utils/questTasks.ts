@@ -129,6 +129,19 @@ export function isPlayActivityQuest(quest: Quest): boolean {
 }
 
 /**
+ * True when the quest starts through a game path: a desktop-play quest or a
+ * cloud-game Activity. Both publish a game presence for their account, and on
+ * the simulated path an executable and a history segment keyed to the title
+ * rather than to the quest, so one account runs one of them at a time. Every
+ * task is tested, not just the first startable one, because the queue routes on
+ * `getQuestKind`, which sends a quest listing a game task beside a video task
+ * down the game path as well.
+ */
+export function isGameQuest(quest: Quest): boolean {
+  return getQuestTasks(quest).some(task => isDesktopPlayTask(task) || isPlayActivityTask(task))
+}
+
+/**
  * True when the quest's routed task is a checkpoint Activity
  * (`ACHIEVEMENT_IN_ACTIVITY`): its checkpoints only register while the user
  * keeps the Activity window open in the attached Discord client. `getQuestKind`

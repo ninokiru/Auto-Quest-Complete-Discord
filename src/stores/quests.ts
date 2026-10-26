@@ -7,6 +7,7 @@ import {
   foreignQuestBlocker,
   getQuestKind,
   getQuestTasks,
+  isGameQuest,
   isManualActivityQuest,
   isManualStreamQuest,
   isPlayActivityQuest,
@@ -297,6 +298,28 @@ export const useQuestsStore = defineStore('quests', () => {
       error.value = message
       throw new Error(message)
     }
+  }
+
+  /** Whether a game quest already holds this account's single game slot. Every
+   *  local slot belongs to the account the page is on; another account's task
+   *  lives in `accountTasks` and has its own slot. */
+  function gameSlotBusy(): boolean {
+    return runningQuests.value.some(slot => slot.type === 'game' || slot.type === 'activity')
+  }
+
+  /**
+   * Reject a game quest while another one runs. An account publishes one game
+   * presence, and on the simulated path one executable and one history segment
+   * per title rather than per quest, so the first quest to finish would tear
+   * down the second's resources. The queue defers these candidates instead of
+   * calling in, so this covers a manual Start; the backend enforces the same
+   * rule for the paths it owns.
+   */
+  function ensureGameSlotFree() {
+    if (!gameSlotBusy()) return
+    const message = 'One game quest runs at a time per account; wait for the running one to finish'
+    error.value = message
+    throw new Error(message)
   }
 
   // Single-quest readers (progress panel, quest cards, simulator page) follow the
@@ -1498,6 +1521,7 @@ export const useQuestsStore = defineStore('quests', () => {
 
   async function startPlay(quest: Quest, secondsNeeded: number, initialProgress: number, selectedExeName?: string) {
     ensureLocalQuestSlot(quest.id)
+    ensureGameSlotFree()
     startingQuestId.value = quest.id
     error.value = null
     // Remember the request so a soft error can offer "switch to CDP and retry".
@@ -1757,6 +1781,7 @@ export const useQuestsStore = defineStore('quests', () => {
 
   async function startPlayActivity(quest: Quest, secondsNeeded: number, initialProgress: number) {
     ensureLocalQuestSlot(quest.id)
+    ensureGameSlotFree()
     startingQuestId.value = quest.id
     error.value = null
     let preserveActiveState = false
@@ -2139,7 +2164,8 @@ export const useQuestsStore = defineStore('quests', () => {
   /**
    * Fill every free parallel slot from the queue. A queue item stays in the list
    * until its quest is finalized, so the candidate for the next slot is the first
-   * item that does not already occupy one. `queueFillInFlight` keeps two
+   * item that does not already occupy one — and, while a game quest runs, the
+   * first item that is not another game quest. `queueFillInFlight` keeps two
    * completion callbacks from starting the same candidate twice.
    */
   async function processQueue() {
@@ -2160,7 +2186,13 @@ export const useQuestsStore = defineStore('quests', () => {
       while (!stopping.value
         && questQueue.value.length > 0
         && runningQuests.value.length < MAX_PARALLEL_QUESTS) {
-        const queueItem = questQueue.value.find(item => !questSlot(item.id))
+        // A game quest holds the account's single game slot, so the game quests
+        // behind it wait instead of failing: skipping the candidate here rather
+        // than dropping it keeps it queued for the pass that the running quest's
+        // completion triggers.
+        const gameBusy = gameSlotBusy()
+        const queueItem = questQueue.value.find(item =>
+          !questSlot(item.id) && !(gameBusy && isGameQuest(item)))
         if (!queueItem) return
         console.log(`Queue processing: ${queueItem.id}`)
 

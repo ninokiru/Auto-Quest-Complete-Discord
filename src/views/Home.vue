@@ -522,7 +522,7 @@
             <div class="space-y-4 my-4">
               <p>
                 {{ batchCompleteType === 'game'
-                  ? t('dialog.complete_game_desc', { count: pendingBatchCompleteQuests.length, max: parallelCap })
+                  ? t('dialog.complete_game_desc', { count: pendingBatchCompleteQuests.length })
                   : t('dialog.complete_all_desc', { count: pendingBatchCompleteQuests.length, max: questsStore.maxParallelQuests })
                 }}
               </p>

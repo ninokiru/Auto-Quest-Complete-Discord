@@ -8,6 +8,7 @@ import {
   getQuestKind,
   getQuestTasks,
   isBatchCompletableQuest,
+  isGameQuest,
   isManualActivityQuest,
   isManualQuest,
   isPlayActivityQuest,
@@ -204,5 +205,29 @@ describe('quest application id', () => {
   it('reports no application for a quest that carries none', () => {
     expect(questApplicationId(appIdQuest({ PLAY_ON_DESKTOP: { type: 'PLAY_ON_DESKTOP', target: 600 } }))).toBeUndefined()
     expect(questApplicationId(undefined)).toBeUndefined()
+  })
+})
+
+describe('game quest predicate', () => {
+  it('counts exactly the quests that start through a game path', () => {
+    expect(isGameQuest(singleTaskQuest('play', 'PLAY_ON_DESKTOP', 600))).toBe(true)
+    expect(isGameQuest(playActivityQuest())).toBe(true)
+    expect(isGameQuest(singleTaskQuest('video', 'WATCH_VIDEO', 60))).toBe(false)
+    expect(isGameQuest(singleTaskQuest('stream', 'STREAM_ON_DESKTOP', 900))).toBe(false)
+    expect(isGameQuest(singleTaskQuest('checkpoint', 'ACHIEVEMENT_IN_ACTIVITY', 3))).toBe(false)
+  })
+
+  it('counts a quest that lists a game task beside a video task', () => {
+    // The queue routes on `getQuestKind`, which sees the play task and starts
+    // this quest through the game path even though the video task comes first in
+    // `firstStartableTask`, so the game slot has to hold it back as well.
+    const mixed = appIdQuest({
+      WATCH_VIDEO: { type: 'WATCH_VIDEO', target: 60 },
+      PLAY_ON_DESKTOP: { type: 'PLAY_ON_DESKTOP', target: 600 },
+    })
+
+    expect(getQuestKind(mixed)).toBe('stream')
+    expect(firstStartableTask(mixed)?.type).toBe('WATCH_VIDEO')
+    expect(isGameQuest(mixed)).toBe(true)
   })
 })

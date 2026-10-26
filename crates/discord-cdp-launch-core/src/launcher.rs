@@ -11,6 +11,34 @@ use crate::{
 use std::ffi::OsString;
 use std::time::{Duration, Instant};
 
+/// How long `PortOccupied` may persist, observation after observation, before a
+/// launch is abandoned. The probe reports every fetch failure other than "could
+/// not connect" (connection reset, truncated response, HTTP 5xx) as
+/// `PortOccupied`, and a Chromium that has only just opened its DevTools server
+/// produces those for a moment. Failing on the first one would kill a client
+/// that was seconds away from being ready.
+const PORT_OCCUPIED_GRACE: Duration = Duration::from_secs(3);
+
+/// Re-probe a port this call has just taken back, up to `occupied_grace`.
+///
+/// The exit wait only proves the process table no longer lists the client it
+/// terminated; a DevTools server that is still closing answers the request with
+/// a reset, and the probe reports that as `PortOccupied`. Reading one such reset
+/// as a foreign owner would refuse a launch whose own client is already gone.
+fn probe_after_shutdown<C: CdpProbe>(
+    cdp: &C,
+    options: &LaunchOptions,
+    occupied_grace: Duration,
+) -> CdpProbeStatus {
+    let started = Instant::now();
+    let mut status = cdp.probe(options.port);
+    while matches!(status, CdpProbeStatus::PortOccupied) && started.elapsed() < occupied_grace {
+        std::thread::sleep(options.poll_interval);
+        status = cdp.probe(options.port);
+    }
+    status
+}
+
 fn readiness_timeout_for_observation(
     status: &CdpProbeStatus,
     saw_cdp_server: &mut bool,
@@ -31,12 +59,22 @@ fn wait_for_cdp_readiness<C: CdpProbe>(
     cdp: &C,
     options: &LaunchOptions,
 ) -> Result<(), LaunchError> {
+    wait_for_cdp_readiness_with_grace(cdp, options, PORT_OCCUPIED_GRACE)
+}
+
+fn wait_for_cdp_readiness_with_grace<C: CdpProbe>(
+    cdp: &C,
+    options: &LaunchOptions,
+    occupied_grace: Duration,
+) -> Result<(), LaunchError> {
     let started = Instant::now();
     let base_timeout = options.readiness_timeout;
     let extended_timeout = base_timeout.saturating_add(base_timeout);
     // Once a CDP server has appeared, keep the extended renderer grace period.
     // Discord's updater-to-app handoff can make the endpoint briefly disappear.
     let mut saw_cdp_server = false;
+    // Start of the current unbroken run of `PortOccupied` observations.
+    let mut occupied_since: Option<Instant> = None;
     let mut last = cdp.observe(options.port);
     let mut logged_status: Option<CdpProbeStatus> = None;
 
@@ -55,10 +93,14 @@ fn wait_for_cdp_readiness<C: CdpProbe>(
         match &last.status {
             CdpProbeStatus::DiscordReady { .. } => return Ok(()),
             CdpProbeStatus::PortOccupied => {
-                return Err(LaunchError::PortOccupied { port: options.port });
+                let since = *occupied_since.get_or_insert_with(Instant::now);
+                if since.elapsed() >= occupied_grace {
+                    return Err(LaunchError::PortOccupied { port: options.port });
+                }
             }
-            CdpProbeStatus::CdpWithoutDiscordTarget => {}
-            CdpProbeStatus::Unreachable => {}
+            CdpProbeStatus::CdpWithoutDiscordTarget | CdpProbeStatus::Unreachable => {
+                occupied_since = None;
+            }
         }
         let timeout = readiness_timeout_for_observation(
             &last.status,
@@ -67,6 +109,9 @@ fn wait_for_cdp_readiness<C: CdpProbe>(
             extended_timeout,
         );
         if started.elapsed() >= timeout {
+            if matches!(last.status, CdpProbeStatus::PortOccupied) {
+                return Err(LaunchError::PortOccupied { port: options.port });
+            }
             return Err(LaunchError::ReadinessTimeout {
                 port: options.port,
                 timeout,
@@ -153,19 +198,13 @@ pub fn launch_discord_with_cdp(options: LaunchOptions) -> Result<LaunchResult, L
             .installation
             .clone()
             .or_else(discovered_vesktop_installation);
-        if selected_installation.as_ref().is_some_and(|installation| {
+        if let Some(installation) = selected_installation.as_ref().filter(|installation| {
             matches!(
                 &installation.launch_target,
                 crate::LaunchTarget::Flatpak { .. }
             )
         }) {
-            return launch_flatpak_with_cdp(
-                options,
-                selected_installation
-                    .as_ref()
-                    .expect("checked selected installation"),
-                &StdCdpProbe::default(),
-            );
+            return launch_flatpak_with_cdp(options, installation, &StdCdpProbe::default());
         }
         let install = selected_installation
             .as_ref()
@@ -193,6 +232,7 @@ fn launch_flatpak_with_cdp<C: CdpProbe>(
         });
     };
     validated_flatpak_command(command.as_deref())?;
+    validated_flatpak_app_id(app_id)?;
     if options.port == 0 {
         return Err(LaunchError::InvalidPort(options.port));
     }
@@ -213,25 +253,16 @@ fn launch_flatpak_with_cdp<C: CdpProbe>(
         }
         CdpProbeStatus::Unreachable | CdpProbeStatus::CdpWithoutDiscordTarget => {}
     }
+    let mut terminated_existing = false;
     if flatpak_is_running(app_id, command.as_deref())? {
         if !options.restart_existing {
             return Err(LaunchError::DesktopClientAlreadyRunning { client: "Vesktop" });
         }
         flatpak_kill(app_id, command.as_deref())?;
-        let started = Instant::now();
-        while started.elapsed() < options.shutdown_timeout {
-            if !flatpak_is_running(app_id, command.as_deref())? {
-                break;
-            }
-            std::thread::sleep(options.poll_interval);
-        }
-        if flatpak_is_running(app_id, command.as_deref())? {
-            return Err(LaunchError::ShutdownTimeout {
-                timeout: options.shutdown_timeout,
-            });
-        }
+        wait_until_flatpak_exits(app_id, command.as_deref(), &options)?;
+        terminated_existing = true;
     }
-    match cdp.probe(options.port) {
+    match probe_after_shutdown(cdp, &options, PORT_OCCUPIED_GRACE) {
         CdpProbeStatus::Unreachable => {}
         CdpProbeStatus::DiscordReady { .. } => {
             return Ok(flatpak_result(
@@ -243,10 +274,16 @@ fn launch_flatpak_with_cdp<C: CdpProbe>(
             ));
         }
         CdpProbeStatus::PortOccupied => {
-            return Err(LaunchError::PortOccupied { port: options.port })
+            if terminated_existing {
+                abandon_failed_flatpak_launch(app_id, command.as_deref(), &options);
+            }
+            return Err(LaunchError::PortOccupied { port: options.port });
         }
         CdpProbeStatus::CdpWithoutDiscordTarget => {
-            return Err(LaunchError::NonDiscordCdpTarget { port: options.port })
+            if terminated_existing {
+                abandon_failed_flatpak_launch(app_id, command.as_deref(), &options);
+            }
+            return Err(LaunchError::NonDiscordCdpTarget { port: options.port });
         }
     }
     let pid = flatpak_spawn(app_id, command.as_deref(), Some(options.port))?;
@@ -263,8 +300,7 @@ fn launch_flatpak_with_cdp<C: CdpProbe>(
     if let Err(error) = wait_for_cdp_readiness(cdp, &options) {
         // Same rule as the other targets: an unjournaled Flatpak client must not
         // survive this call with its debugging port open.
-        let _ = flatpak_kill(app_id, command.as_deref());
-        let _ = flatpak_spawn(app_id, command.as_deref(), None);
+        abandon_failed_flatpak_launch(app_id, command.as_deref(), &options);
         return Err(error);
     }
     Ok(flatpak_result(
@@ -274,6 +310,47 @@ fn launch_flatpak_with_cdp<C: CdpProbe>(
         Some(pid),
         true,
     ))
+}
+
+/// Poll `flatpak ps` until the application is gone or `shutdown_timeout` runs
+/// out.
+fn wait_until_flatpak_exits(
+    app_id: &str,
+    command: Option<&str>,
+    options: &LaunchOptions,
+) -> Result<(), LaunchError> {
+    let started = Instant::now();
+    loop {
+        if !flatpak_is_running(app_id, command)? {
+            return Ok(());
+        }
+        if started.elapsed() >= options.shutdown_timeout {
+            return Err(LaunchError::ShutdownTimeout {
+                timeout: options.shutdown_timeout,
+            });
+        }
+        std::thread::sleep(options.poll_interval);
+    }
+}
+
+/// Flatpak counterpart of [`abandon_failed_cdp_launch`]: close the client that
+/// was started with a debug port, wait until it is really gone, and only then
+/// start it again in normal mode. Relaunching while the old instance is still
+/// shutting down lets Electron's single-instance lock hand the new process over
+/// to the dying one, which leaves the user with no Discord at all.
+fn abandon_failed_flatpak_launch(app_id: &str, command: Option<&str>, options: &LaunchOptions) {
+    // An unreadable process list is treated as "still running": leaving a debug
+    // port open is the worse of the two mistakes.
+    if flatpak_is_running(app_id, command).unwrap_or(true) {
+        if flatpak_kill(app_id, command).is_ok() {
+            let _ = wait_until_flatpak_exits(app_id, command, options);
+        }
+        if flatpak_is_running(app_id, command).unwrap_or(true) {
+            eprintln!("[cdp-launch] could not stop {app_id}; its debugging port may still be open");
+            return;
+        }
+    }
+    let _ = flatpak_spawn(app_id, command, None);
 }
 
 fn flatpak_result(
@@ -330,6 +407,7 @@ pub(crate) fn flatpak_is_running(
 #[cfg(target_os = "linux")]
 pub(crate) fn flatpak_kill(app_id: &str, command: Option<&str>) -> Result<(), LaunchError> {
     let command = validated_flatpak_command(command)?;
+    let app_id = validated_flatpak_app_id(app_id)?;
     let output = std::process::Command::new(command)
         .args(["kill", app_id])
         .output()
@@ -359,6 +437,7 @@ pub(crate) fn flatpak_spawn(
     port: Option<u16>,
 ) -> Result<u32, LaunchError> {
     let command = validated_flatpak_command(command)?;
+    let app_id = validated_flatpak_app_id(app_id)?;
     let mut process = std::process::Command::new(command);
     process.args(["run", app_id]);
     if let Some(port) = port {
@@ -424,6 +503,29 @@ fn validated_flatpak_command(command: Option<&str>) -> Result<&str, LaunchError>
     }
 }
 
+/// The application id is passed to `flatpak` as an argument, so a value that
+/// starts with `-` would be read as an option. Require the reverse-DNS shape
+/// Flatpak itself uses: at least two dot-separated, non-empty segments made of
+/// letters, digits, `_` and `-`.
+fn validated_flatpak_app_id(app_id: &str) -> Result<&str, LaunchError> {
+    let valid = !app_id.starts_with('-')
+        && app_id.len() <= 255
+        && app_id.split('.').count() >= 2
+        && app_id.split('.').all(|segment| {
+            !segment.is_empty()
+                && segment
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+        });
+    if valid {
+        Ok(app_id)
+    } else {
+        Err(LaunchError::InvalidInstallation {
+            details: "The Flatpak application id is not a valid reverse-DNS name.".into(),
+        })
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn reap_spawned_child(mut child: std::process::Child) -> u32 {
     let pid = child.id();
@@ -469,6 +571,7 @@ fn launch_vesktop_with_cdp<C: CdpProbe>(
     if running && !options.restart_existing {
         return Err(LaunchError::DesktopClientAlreadyRunning { client: "Vesktop" });
     }
+    let mut terminated_existing = false;
     if running {
         crate::ProcessSupervisor::terminate_exact(&supervised_installation)?;
         crate::ProcessSupervisor::wait_for_exit(
@@ -476,9 +579,10 @@ fn launch_vesktop_with_cdp<C: CdpProbe>(
             options.shutdown_timeout,
             options.poll_interval,
         )?;
+        terminated_existing = true;
     }
 
-    match cdp.probe(options.port) {
+    match probe_after_shutdown(cdp, &options, PORT_OCCUPIED_GRACE) {
         CdpProbeStatus::Unreachable => {}
         CdpProbeStatus::DiscordReady { .. } => {
             return Ok(vesktop_result(
@@ -491,9 +595,15 @@ fn launch_vesktop_with_cdp<C: CdpProbe>(
             ));
         }
         CdpProbeStatus::PortOccupied => {
+            if terminated_existing {
+                abandon_failed_vesktop_launch(&install, &supervised_installation, &options);
+            }
             return Err(LaunchError::PortOccupied { port: options.port });
         }
         CdpProbeStatus::CdpWithoutDiscordTarget => {
+            if terminated_existing {
+                abandon_failed_vesktop_launch(&install, &supervised_installation, &options);
+            }
             return Err(LaunchError::NonDiscordCdpTarget { port: options.port });
         }
     }
@@ -512,10 +622,7 @@ fn launch_vesktop_with_cdp<C: CdpProbe>(
     }
 
     if let Err(error) = wait_for_cdp_readiness(cdp, &options) {
-        // The Vesktop instance has no `LaunchResult` to carry its pid, so this is
-        // the only chance to close the debug port it left open.
-        let _ = crate::terminate_installation_process_tree(&install.executable_path);
-        let _ = spawn_vesktop(&install, DiscordLaunchMode::Normal);
+        abandon_failed_vesktop_launch(&install, &supervised_installation, &options);
         return Err(error);
     }
     Ok(vesktop_result(
@@ -526,6 +633,30 @@ fn launch_vesktop_with_cdp<C: CdpProbe>(
         Some(pid),
         true,
     ))
+}
+
+/// Vesktop counterpart of [`abandon_failed_cdp_launch`]. The instance has no
+/// `LaunchResult` to carry its pid, so this is the only chance to close the
+/// debug port it left open, and the relaunch happens only once it is really
+/// gone: Electron's single-instance lock otherwise hands the new process over to
+/// the dying one and leaves the user with neither.
+fn abandon_failed_vesktop_launch(
+    install: &VesktopInstall,
+    supervised_installation: &crate::ClientInstallation,
+    options: &LaunchOptions,
+) {
+    let _ = crate::terminate_installation_process_tree(&install.executable_path);
+    if crate::ProcessSupervisor::wait_for_exit(
+        supervised_installation,
+        options.shutdown_timeout,
+        options.poll_interval,
+    )
+    .is_ok()
+    {
+        let _ = spawn_vesktop(install, DiscordLaunchMode::Normal);
+    } else {
+        eprintln!("[cdp-launch] could not stop Vesktop; its debugging port may still be open");
+    }
 }
 
 fn vesktop_result(
@@ -611,12 +742,14 @@ where
             channel: selected_channel,
         });
     }
+    let mut terminated_existing = false;
     if running {
         platform.terminate(selected_channel)?;
         wait_until_discord_exits(platform, selected_channel, &options)?;
+        terminated_existing = true;
     }
 
-    match cdp.probe(options.port) {
+    match probe_after_shutdown(cdp, &options, PORT_OCCUPIED_GRACE) {
         CdpProbeStatus::Unreachable => {}
         CdpProbeStatus::DiscordReady { .. } => {
             return already_available_result(
@@ -626,9 +759,15 @@ where
             );
         }
         CdpProbeStatus::PortOccupied => {
+            if terminated_existing {
+                abandon_failed_cdp_launch(platform, &install, selected_channel, &options);
+            }
             return Err(LaunchError::PortOccupied { port: options.port });
         }
         CdpProbeStatus::CdpWithoutDiscordTarget => {
+            if terminated_existing {
+                abandon_failed_cdp_launch(platform, &install, selected_channel, &options);
+            }
             return Err(LaunchError::NonDiscordCdpTarget { port: options.port });
         }
     }
@@ -675,7 +814,14 @@ fn already_available_result(
         },
     };
     if provider_id == ProviderId::official_discord() {
-        if let Ok(install) = select_preferred_install(&installs, options.channel) {
+        // When the caller picked a specific installation, describe that one;
+        // the preferred install may be a different channel, and mixing its path
+        // and channel with the selected installation's id would be misleading.
+        let install = match &options.installation {
+            Some(selected) => crate::installation_as_official(selected),
+            None => select_preferred_install(&installs, options.channel).ok(),
+        };
+        if let Some(install) = install {
             return Ok(result_for(
                 &install,
                 options,
@@ -744,6 +890,10 @@ fn wait_until_discord_exits<P: PlatformBackend>(
 /// (a pre-existing one was terminated before the spawn), so terminating the
 /// channel closes the window, and the normal-mode relaunch keeps the user from
 /// losing their Discord because a debug endpoint was slow.
+///
+/// The relaunch only happens once the old client is confirmed gone. If it cannot
+/// be stopped it is left alone: starting a second instance next to it would not
+/// restore anything and would not close the debug port either.
 fn abandon_failed_cdp_launch<P: PlatformBackend>(
     platform: &P,
     install: &DiscordInstall,
@@ -755,6 +905,10 @@ fn abandon_failed_cdp_launch<P: PlatformBackend>(
     if platform.is_running(channel).unwrap_or(true) {
         if platform.terminate(channel).is_ok() {
             let _ = wait_until_discord_exits(platform, channel, options);
+        }
+        if platform.is_running(channel).unwrap_or(true) {
+            eprintln!("[cdp-launch] could not stop Discord; its debugging port may still be open");
+            return;
         }
     }
     let _ = platform.spawn(install, DiscordLaunchMode::Normal);
@@ -794,6 +948,46 @@ fn result_for(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
+    /// Probe that replays a fixed sequence of statuses, then repeats `fallback`.
+    struct SequenceProbe {
+        sequence: Mutex<VecDeque<CdpProbeStatus>>,
+        fallback: CdpProbeStatus,
+    }
+
+    impl SequenceProbe {
+        fn new(sequence: Vec<CdpProbeStatus>, fallback: CdpProbeStatus) -> Self {
+            Self {
+                sequence: Mutex::new(sequence.into()),
+                fallback,
+            }
+        }
+    }
+
+    impl CdpProbe for SequenceProbe {
+        fn probe(&self, _port: u16) -> CdpProbeStatus {
+            self.sequence
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| self.fallback.clone())
+        }
+    }
+
+    fn ready() -> CdpProbeStatus {
+        CdpProbeStatus::DiscordReady { target_title: None }
+    }
+
+    fn fast_options(readiness_timeout: Duration) -> LaunchOptions {
+        LaunchOptions {
+            port: 9223,
+            readiness_timeout,
+            poll_interval: Duration::from_millis(2),
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn rejects_custom_flatpak_commands() {
@@ -803,6 +997,32 @@ mod tests {
             validated_flatpak_command(Some("/tmp/launcher")),
             Err(LaunchError::InvalidInstallation { .. })
         ));
+    }
+
+    #[test]
+    fn flatpak_app_ids_must_be_reverse_dns_names() {
+        for valid in ["dev.vencord.Vesktop", "org.example.App-1", "a.b"] {
+            assert!(validated_flatpak_app_id(valid).is_ok(), "{valid}");
+        }
+        for invalid in [
+            "",
+            "-rf",
+            "--socket=x.y",
+            "nodots",
+            "a..b",
+            ".a.b",
+            "a.b.",
+            "a b.c",
+            "a.b/c",
+        ] {
+            assert!(
+                matches!(
+                    validated_flatpak_app_id(invalid),
+                    Err(LaunchError::InvalidInstallation { .. })
+                ),
+                "{invalid}"
+            );
+        }
     }
 
     #[test]
@@ -841,6 +1061,76 @@ mod tests {
                 extended,
             ),
             extended
+        );
+    }
+
+    #[test]
+    fn a_brief_port_occupied_blip_does_not_abort_readiness() {
+        let cdp = SequenceProbe::new(
+            vec![
+                CdpProbeStatus::PortOccupied,
+                CdpProbeStatus::PortOccupied,
+                CdpProbeStatus::CdpWithoutDiscordTarget,
+            ],
+            ready(),
+        );
+        let result = wait_for_cdp_readiness_with_grace(
+            &cdp,
+            &fast_options(Duration::from_secs(5)),
+            Duration::from_secs(1),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn a_persistent_port_occupied_fails_once_the_grace_expires() {
+        let cdp = SequenceProbe::new(Vec::new(), CdpProbeStatus::PortOccupied);
+        let result = wait_for_cdp_readiness_with_grace(
+            &cdp,
+            &fast_options(Duration::from_secs(5)),
+            Duration::from_millis(30),
+        );
+        assert!(matches!(
+            result,
+            Err(LaunchError::PortOccupied { port: 9223 })
+        ));
+    }
+
+    #[test]
+    fn readiness_times_out_when_the_endpoint_never_appears() {
+        let cdp = SequenceProbe::new(Vec::new(), CdpProbeStatus::Unreachable);
+        let result = wait_for_cdp_readiness_with_grace(
+            &cdp,
+            &fast_options(Duration::from_millis(30)),
+            Duration::from_secs(1),
+        );
+        assert!(matches!(result, Err(LaunchError::ReadinessTimeout { .. })));
+    }
+
+    #[test]
+    fn a_reset_from_the_client_being_replaced_does_not_claim_the_port() {
+        let cdp = SequenceProbe::new(
+            vec![
+                CdpProbeStatus::PortOccupied,
+                CdpProbeStatus::PortOccupied,
+                CdpProbeStatus::Unreachable,
+            ],
+            CdpProbeStatus::PortOccupied,
+        );
+        let options = fast_options(Duration::from_secs(5));
+        assert_eq!(
+            probe_after_shutdown(&cdp, &options, Duration::from_secs(1)),
+            CdpProbeStatus::Unreachable
+        );
+    }
+
+    #[test]
+    fn a_port_that_keeps_refusing_stays_occupied() {
+        let cdp = SequenceProbe::new(Vec::new(), CdpProbeStatus::PortOccupied);
+        let options = fast_options(Duration::from_secs(5));
+        assert_eq!(
+            probe_after_shutdown(&cdp, &options, Duration::from_millis(30)),
+            CdpProbeStatus::PortOccupied
         );
     }
 }

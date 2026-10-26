@@ -92,7 +92,7 @@ server of its own, and no telemetry.
 | 📺 **Video and stream quests** | Start once and let progress submissions run in the background. Configurable submission interval and completion speed. |
 | 🎮 **Zero-download game quests** | Simulate a game process so Play/Install quests complete without downloading or installing the real game. A CDP injection mode covers games the simulator cannot handle. |
 | 🎯 **Activity quests** | Drive Discord's own Activity page through CDP: navigate to the quest, launch the Activity, then take over progress reporting. |
-| 🔀 **Twenty quests in parallel** | Run up to twenty quests at the same time per account from a queue, and stop any single one of them without touching the rest. |
+| 🔀 **Twenty quests in parallel** | Run up to twenty quests at the same time per account from a queue, and stop any single one of them without touching the rest. Game quests take turns: an account runs one at a time and the others stay queued until it finishes. |
 | 🪟 **Every account at once** | The dashboard lists the quests of each remembered account under its avatar and name, and **Run** starts them with that account's own token — no sign-out, no switching. Quests that need the desktop client stay listed with the reason they cannot run from here. |
 | 🔍 **Batch actions** | Accept All, Complete All Video Quests, Complete All Game Quests, Complete All Quests, and Stop Queue. |
 | 🗂️ **Filters and views** | Preset views (Recommended, To Accept, Ready to Run, Ready to Claim, Completed, All), free-text search, and filters by type, reward, status, and expiry. Filter state is saved between sessions. |

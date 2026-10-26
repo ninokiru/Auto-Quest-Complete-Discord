@@ -30,6 +30,9 @@ pub(crate) fn port_is_listening(port: u16) -> bool {
 }
 
 pub trait CdpProbe {
+    /// Full probe: fetches `/json` and verifies every Discord candidate, so it
+    /// can take noticeably longer than a plain connect check. Use
+    /// [`port_is_listening`] when only "is anything listening" matters.
     fn probe(&self, port: u16) -> CdpProbeStatus;
 
     fn observe(&self, port: u16) -> CdpProbeObservation {
@@ -114,8 +117,47 @@ pub fn classify_cdp_target(target: &CdpTarget) -> CdpTargetClassification {
     CdpTargetClassification::DiscordOtherRenderer
 }
 
+/// Reduce a target URL to something safe to put in diagnostics: scheme, host
+/// and at most the first path segment. Query, fragment and everything after the
+/// first segment (guild / channel / invite IDs) are dropped.
 fn sanitized_target_url(url: &str) -> String {
-    url.split(['?', '#']).next().unwrap_or(url).to_string()
+    if url.eq_ignore_ascii_case("about:blank") {
+        return url.to_string();
+    }
+    let Ok(parsed) = url::Url::parse(url) else {
+        return String::new();
+    };
+    let scheme = parsed.scheme();
+    let Some(host) = parsed.host_str() else {
+        // `data:`, `blob:` and similar carry their payload after the scheme.
+        return format!("{scheme}:");
+    };
+    let mut segments = parsed
+        .path_segments()
+        .into_iter()
+        .flatten()
+        .filter(|segment| !segment.is_empty());
+    let first = segments.next();
+    let has_more = segments.next().is_some();
+    match first {
+        Some(first) if has_more => format!("{scheme}://{host}/{first}/…"),
+        Some(first) => format!("{scheme}://{host}/{first}"),
+        None => format!("{scheme}://{host}"),
+    }
+}
+
+/// Page titles in Discord contain DM partner, server and channel names. Keep
+/// only the generic product name (or the known overlay label) in diagnostics.
+fn sanitized_title(title: &str) -> String {
+    if title.is_empty() {
+        String::new()
+    } else if is_discord_auxiliary_page(title, "") {
+        title.to_string()
+    } else if title.to_ascii_lowercase().ends_with("discord") {
+        "Discord".to_string()
+    } else {
+        "[redacted]".to_string()
+    }
 }
 
 fn diagnostic_target(
@@ -123,9 +165,12 @@ fn diagnostic_target(
     runtime: crate::CdpRuntime,
     selected_id: Option<&str>,
 ) -> CdpDiagnosticTarget {
+    // The auxiliary label is a hint for pages only; a worker or service worker
+    // that happens to carry the same title must not be labelled as one.
+    let is_auxiliary_window = target.target_type == "page" && is_discord_auxiliary_window(target);
     let classification = if selected_id == Some(target.id.as_str()) {
         CdpTargetClassification::DiscordMainRenderer
-    } else if is_discord_auxiliary_window(target) {
+    } else if is_auxiliary_window {
         CdpTargetClassification::DiscordAuxiliary
     } else {
         classify_cdp_target(target)
@@ -133,11 +178,11 @@ fn diagnostic_target(
     CdpDiagnosticTarget {
         id: target.id.clone(),
         target_type: target.target_type.clone(),
-        title: target.title.clone(),
+        title: sanitized_title(&target.title),
         url: sanitized_target_url(&target.url),
         has_web_socket_debugger_url: target.web_socket_debugger_url.is_some(),
         is_discord_target: is_discord_target(target),
-        is_auxiliary_window: is_discord_auxiliary_window(target),
+        is_auxiliary_window,
         is_main_renderer: classification == CdpTargetClassification::DiscordMainRenderer,
         classification,
         runtime,
@@ -219,11 +264,15 @@ pub fn is_transient_cdp_io_error(error: &io::Error) -> bool {
 
 /// List every CDP target on the loopback DevTools HTTP server.
 ///
-/// Uses raw HTTP/1.1 to `127.0.0.1` and never consults a system or environment proxy.
+/// Uses raw HTTP to `127.0.0.1` and never consults a system or environment
+/// proxy. The whole request (connect plus read) shares one budget of
+/// `connect_timeout + io_timeout`, which is 3 seconds here.
 pub fn list_cdp_targets(port: u16) -> Result<Vec<CdpTarget>, CdpListError> {
-    list_cdp_targets_with_timeouts(port, Duration::from_secs(2), Duration::from_secs(3))
+    list_cdp_targets_with_timeouts(port, Duration::from_secs(2), Duration::from_secs(1))
 }
 
+/// Same as [`list_cdp_targets`] with an explicit budget: the total time allowed
+/// for the request is `connect_timeout + io_timeout`.
 pub fn list_cdp_targets_with_timeouts(
     port: u16,
     connect_timeout: Duration,
@@ -241,7 +290,7 @@ fn fetch_cdp_http_response(
     if port == 0 {
         return Err(CdpListError::Unreachable { port });
     }
-    let deadline = Instant::now() + (connect_timeout + io_timeout).min(Duration::from_secs(3));
+    let deadline = Instant::now() + connect_timeout + io_timeout;
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     let mut stream = TcpStream::connect_timeout(
         &address,
@@ -252,8 +301,10 @@ fn fetch_cdp_http_response(
     let _ = stream.set_write_timeout(Some(
         io_timeout.min(deadline.saturating_duration_since(Instant::now())),
     ));
+    // HTTP/1.0 on purpose: the server cannot answer with chunked encoding, so
+    // the body is always delimited by Content-Length or by the connection close.
     let request =
-        format!("GET /json HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+        format!("GET /json HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
     stream
         .write_all(request.as_bytes())
         .map_err(|source| CdpListError::ConnectionFailed { port, source })?;
@@ -315,7 +366,7 @@ fn detailed_probe_with_timeouts(
     // /json fetch returns; a slow fetch would otherwise leave no time to probe
     // any target and report a healthy Discord as a non-Discord endpoint.
     let deadline = Instant::now() + Duration::from_secs(3);
-    let http_status = http_status(&response);
+    let status_code = http_status(&response);
     match parse_cdp_targets_http_response(port, &response) {
         Ok(raw_targets) => {
             let mut candidates: Vec<_> = raw_targets
@@ -347,17 +398,23 @@ fn detailed_probe_with_timeouts(
                         .cloned()
                         .unwrap_or_default()
                 });
+            // NOTE: when Discord pages exist but none is `Ready` yet (for
+            // example the renderer is still `Loading`), `status` is still
+            // `CdpWithoutDiscordTarget`. The real state is in `runtime` and in
+            // each target's `runtime`; callers that need to tell "Discord is
+            // loading" apart from "no Discord page" must read those, because
+            // `CdpProbeStatus` has no variant for the loading case.
             let status = selected_target.as_ref().map_or(
                 CdpProbeStatus::CdpWithoutDiscordTarget,
                 |target| CdpProbeStatus::DiscordReady {
-                    target_title: Some(target.title.clone()),
+                    target_title: Some(sanitized_title(&target.title)),
                 },
             );
             DetailedCdpProbeResult {
                 status,
                 port_listening: true,
                 http_reachable: true,
-                http_status,
+                http_status: status_code,
                 response_parseable: true,
                 targets: raw_targets
                     .iter()
@@ -376,8 +433,8 @@ fn detailed_probe_with_timeouts(
         Err(_) => DetailedCdpProbeResult {
             status: CdpProbeStatus::PortOccupied,
             port_listening: true,
-            http_reachable: http_status.is_some(),
-            http_status,
+            http_reachable: status_code.is_some(),
+            http_status: status_code,
             response_parseable: false,
             targets: Vec::new(),
             runtime: crate::CdpRuntime {
@@ -443,10 +500,16 @@ fn verify_candidates(
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     // Keep explicit diagnostics for unprocessed candidates; completed ready
     // results remain eligible even if other workers fail or time runs out.
+    // A candidate left over after the deadline passed is a deadline problem,
+    // even if some worker also failed; only blame a worker while time remains.
+    let reason = match worker_failure {
+        Some(failure) if Instant::now() < deadline => failure,
+        _ => "probe_round_deadline",
+    };
     for target in candidates {
-        runtimes.entry(target.id.clone()).or_insert_with(|| {
-            probe_worker_failure(worker_failure.unwrap_or("probe_round_deadline"))
-        });
+        runtimes
+            .entry(target.id.clone())
+            .or_insert_with(|| probe_worker_failure(reason));
     }
     runtimes
 }
@@ -516,7 +579,10 @@ fn read_http_response(
             }
         }
     }
-    if response.is_empty() {
+    // Nothing at all, or the connection ended / timed out before the header
+    // block finished: that is a truncated response (worth a retry), not a
+    // malformed one.
+    if response.is_empty() || !response.windows(4).any(|window| window == b"\r\n\r\n") {
         return Err(CdpListError::IncompleteResponse { port });
     }
     Ok(response)
@@ -553,7 +619,7 @@ pub fn parse_cdp_targets_http_response(
         });
     };
     let (head, body_with_separator) = response.split_at(header_end);
-    let body = &body_with_separator[4..];
+    let mut body = &body_with_separator[4..];
     let Ok(head) = std::str::from_utf8(head) else {
         return Err(CdpListError::InvalidResponse {
             port,
@@ -564,6 +630,9 @@ pub fn parse_cdp_targets_http_response(
         if body.len() < content_length {
             return Err(CdpListError::IncompleteResponse { port });
         }
+        // Ignore any bytes past the declared body so they cannot corrupt the
+        // JSON document.
+        body = &body[..content_length];
     }
     let Some(status_line) = head.lines().next() else {
         return Err(CdpListError::InvalidResponse {
@@ -603,14 +672,17 @@ pub fn parse_cdp_targets_http_response(
     Ok(items.iter().filter_map(target_from_value).collect())
 }
 
+/// Targets without an `id` cannot be addressed or told apart (they would all
+/// share one key in the per-target runtime map), so they are skipped.
 fn target_from_value(value: &Value) -> Option<CdpTarget> {
     let object = value.as_object()?;
+    let id = object
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())?
+        .to_string();
     Some(CdpTarget {
-        id: object
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
+        id,
         target_type: object
             .get("type")
             .and_then(Value::as_str)
@@ -646,6 +718,28 @@ mod tests {
             url: url.to_string(),
             web_socket_debugger_url: Some("ws://example".to_string()),
         }
+    }
+
+    /// One-shot loopback server: waits for the request headers, writes
+    /// `response`, then closes the connection. Binds port 0, so it never
+    /// competes with other tests for a fixed port.
+    fn serve_once(response: Vec<u8>) -> u16 {
+        let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 512];
+                while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    match stream.read(&mut buffer) {
+                        Ok(0) | Err(_) => break,
+                        Ok(read) => request.extend_from_slice(&buffer[..read]),
+                    }
+                }
+                let _ = stream.write_all(&response);
+            }
+        });
+        port
     }
 
     #[test]
@@ -753,6 +847,23 @@ mod tests {
     }
 
     #[test]
+    fn parse_skips_targets_without_an_id() {
+        let body = r#"[{"type":"page","url":"https://discord.com/app"},{"id":"","type":"page"},{"id":"ok","type":"page"}]"#;
+        let targets = parse_cdp_targets_http_response(9223, &http_json("200 OK", body)).unwrap();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].id, "ok");
+    }
+
+    #[test]
+    fn parse_ignores_bytes_past_content_length() {
+        let body = "[]";
+        let mut response = http_json("200 OK", body);
+        response.extend_from_slice(b"trailing garbage");
+        let targets = parse_cdp_targets_http_response(9223, &response).unwrap();
+        assert!(targets.is_empty());
+    }
+
+    #[test]
     fn parse_rejects_http_400_and_malformed_json() {
         let bad_status = parse_cdp_targets_http_response(9223, &http_json("400 Bad Request", "[]"));
         assert!(matches!(
@@ -790,5 +901,81 @@ mod tests {
         assert!(is_transient_cdp_io_error(&io::Error::from_raw_os_error(
             10061
         )));
+    }
+
+    #[test]
+    fn list_targets_round_trips_over_loopback_and_ignores_trailing_bytes() {
+        let body = r#"[{"id":"1","type":"page","title":"Friends - Discord","url":"https://discord.com/channels/@me","webSocketDebuggerUrl":"ws://127.0.0.1/devtools/page/1"}]"#;
+        let mut response = http_json("200 OK", body);
+        response.extend_from_slice(b"trailing garbage");
+        let port = serve_once(response);
+        let targets =
+            list_cdp_targets_with_timeouts(port, Duration::from_secs(2), Duration::from_secs(2))
+                .unwrap();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].id, "1");
+    }
+
+    #[test]
+    fn response_cut_inside_the_headers_is_incomplete_and_transient() {
+        let port = serve_once(b"HTTP/1.1 200 OK\r\nContent-Le".to_vec());
+        let error =
+            list_cdp_targets_with_timeouts(port, Duration::from_secs(2), Duration::from_secs(2))
+                .unwrap_err();
+        assert!(matches!(error, CdpListError::IncompleteResponse { .. }));
+        assert!(error.is_transient());
+    }
+
+    #[test]
+    fn response_cut_inside_the_body_is_incomplete_and_transient() {
+        let port = serve_once(b"HTTP/1.1 200 OK\r\nContent-Length: 50\r\n\r\n[{\"id\"".to_vec());
+        let error =
+            list_cdp_targets_with_timeouts(port, Duration::from_secs(2), Duration::from_secs(2))
+                .unwrap_err();
+        assert!(matches!(error, CdpListError::IncompleteResponse { .. }));
+        assert!(error.is_transient());
+    }
+
+    #[test]
+    fn diagnostic_urls_drop_query_fragment_and_ids() {
+        assert_eq!(
+            sanitized_target_url("https://discord.com/channels/123/456?x=1#frag"),
+            "https://discord.com/channels/…"
+        );
+        assert_eq!(
+            sanitized_target_url("https://discord.com/app"),
+            "https://discord.com/app"
+        );
+        assert_eq!(
+            sanitized_target_url("https://discord.com/"),
+            "https://discord.com"
+        );
+        assert_eq!(sanitized_target_url("about:blank"), "about:blank");
+        assert_eq!(sanitized_target_url("data:text/html,secret"), "data:");
+        assert_eq!(sanitized_target_url("not a url"), "");
+    }
+
+    #[test]
+    fn diagnostic_titles_hide_conversation_names() {
+        assert_eq!(sanitized_title("#general | My Server - Discord"), "Discord");
+        assert_eq!(sanitized_title("Discord Overlay"), "Discord Overlay");
+        assert_eq!(sanitized_title("@alice"), "[redacted]");
+        assert_eq!(sanitized_title(""), "");
+    }
+
+    #[test]
+    fn auxiliary_label_applies_to_pages_only() {
+        let mut worker = target("w", "Discord Overlay", "https://discord.com/overlay");
+        worker.target_type = "worker".to_string();
+        let diagnostic = diagnostic_target(&worker, crate::CdpRuntime::default(), None);
+        assert!(!diagnostic.is_auxiliary_window);
+
+        let page = target("p", "Discord Overlay", "https://discord.com/overlay");
+        let diagnostic = diagnostic_target(&page, crate::CdpRuntime::default(), None);
+        assert!(diagnostic.is_auxiliary_window);
+        assert_eq!(
+            diagnostic.classification,
+            CdpTargetClassification::DiscordAuxiliary
+        );
     }
 }
