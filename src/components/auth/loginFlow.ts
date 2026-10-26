@@ -96,6 +96,18 @@ export function canBeginLogin(activeMethod: LoginMethod | null, storeLoading: bo
   return activeMethod === null && !storeLoading
 }
 
+/** The login screen scans this machine on its own once per app run. `spent` is the
+ *  store's record of that pass: a scan never repeats, and signing out spends it so
+ *  the screen cannot sign the same account straight back in. */
+export function shouldRunUnattendedScan(options: {
+  spent: boolean
+  authenticated: boolean
+  busy: boolean
+  supported: boolean
+}): boolean {
+  return options.supported && !options.spent && !options.authenticated && !options.busy
+}
+
 export function usesVesktopForCdpLogin(inventory: DesktopClientInventory | null): boolean {
   if (!inventory) return false
   if (inventory.cdpOwner === 'vesktop') return true

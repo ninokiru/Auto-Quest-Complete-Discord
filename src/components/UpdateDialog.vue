@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button'
 import { exitAppNow, startSelfUpdate, type SelfUpdatePhase } from '@/api/tauri'
 import { useNotificationsStore } from '@/stores/notifications'
 import { useQuestsStore } from '@/stores/quests'
-import { useVersionStore } from '@/stores/version'
+import { useVersionStore, formatVersionLabel } from '@/stores/version'
 import { commandErrorMessage } from '@/utils/commandError'
 import { formatPublishedDate } from '@/utils/relativeTime'
 import ReleaseNotesList from './ReleaseNotesList.vue'
@@ -133,8 +133,8 @@ watch(() => versionStore.pendingUpdateTag, (tag) => {
   updateError.value = ''
   visible.value = true
   notifications.push('update_available', {
-    version: tag,
-    current: versionStore.currentVersion,
+    version: formatVersionLabel(tag),
+    current: versionStore.displayVersion,
     url: release.value?.html_url,
   })
 })
@@ -159,10 +159,10 @@ watch(() => versionStore.pendingUpdateTag, (tag) => {
           </div>
           <div class="min-w-0 shrink space-y-1 pr-9">
             <AlertDialogTitle class="text-base leading-snug">
-              {{ t('notify.dialog.title', { version: release?.tag_name ?? '' }) }}
+              {{ t('notify.dialog.title', { version: formatVersionLabel(release?.tag_name ?? '') }) }}
             </AlertDialogTitle>
             <AlertDialogDescription class="text-sm">
-              {{ t('notify.dialog.body', { current: versionStore.currentVersion }) }}
+              {{ t('notify.dialog.body', { current: versionStore.displayVersion }) }}
             </AlertDialogDescription>
             <p v-if="publishedText" class="text-xs text-muted-foreground">
               {{ t('notify.dialog.published', { date: publishedText }) }}

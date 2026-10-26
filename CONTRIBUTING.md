@@ -48,6 +48,7 @@ Output location: `target/release/bundle/`
 | `pnpm test` | Run frontend tests (Vitest) |
 | `pnpm i18n:check` | Validate i18n locale files |
 | `pnpm sync-version` | Sync version from `public/version.txt` across configs |
+| `pnpm version:build` | Bump the small-patch label in `public/version.txt` (`0.0.5` → `0.0.5-L1.1`) |
 | `pnpm build:runner` | Build game runner sidecar binary |
 | `pnpm build:cdp-launcher` | Build CDP launcher sidecar binary |
 | `pnpm analyze:har` | Analyze HAR files for quest data (Python) |

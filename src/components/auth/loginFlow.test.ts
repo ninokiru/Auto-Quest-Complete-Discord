@@ -18,6 +18,7 @@ import {
   selectionForCurrentCdpOwner,
   shouldAskCdpLaunchTarget,
   shouldPollCdp,
+  shouldRunUnattendedScan,
   startCdpPolling,
   usesVesktopForCdpLogin,
 } from './loginFlow'
@@ -373,5 +374,20 @@ describe('login operation gate', () => {
     expect(canBeginLogin('local', false)).toBe(false)
     expect(canBeginLogin(null, true)).toBe(false)
     expect(canBeginLogin(null, false)).toBe(true)
+  })
+})
+
+describe('unattended login scan', () => {
+  const allowed = { spent: false, authenticated: false, busy: false, supported: true }
+
+  it('runs on the login screen where local detection is supported', () => {
+    expect(shouldRunUnattendedScan(allowed)).toBe(true)
+  })
+
+  it('stays out of the way once spent, signed in, busy, or unsupported', () => {
+    expect(shouldRunUnattendedScan({ ...allowed, spent: true })).toBe(false)
+    expect(shouldRunUnattendedScan({ ...allowed, authenticated: true })).toBe(false)
+    expect(shouldRunUnattendedScan({ ...allowed, busy: true })).toBe(false)
+    expect(shouldRunUnattendedScan({ ...allowed, supported: false })).toBe(false)
   })
 })

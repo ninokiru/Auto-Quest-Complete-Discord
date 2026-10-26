@@ -409,11 +409,12 @@ mod tests {
 
     #[test]
     fn accepts_the_tags_this_project_publishes() {
-        for tag in ["0.0.3", "0.10.0-rc2", "1.2.3_build4"] {
+        for tag in ["0.0.3", "0.10.0-rc2", "1.2.3_build4", "0.0.5-L12.1"] {
             assert!(tag_is_safe(tag), "{tag} should be usable");
         }
         assert_eq!(normalize_tag("v0.0.3").unwrap(), "0.0.3");
         assert_eq!(normalize_tag(" 0.0.3 ").unwrap(), "0.0.3");
+        assert_eq!(normalize_tag("v0.0.5-L12.1").unwrap(), "0.0.5-L12.1");
     }
 
     #[test]

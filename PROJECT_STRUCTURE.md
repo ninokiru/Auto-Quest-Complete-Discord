@@ -209,6 +209,7 @@ Deliberately Tauri-free (CI enforces it) so the sidecar can reuse it without pul
 | File | Used by | Does |
 | --- | --- | --- |
 | `sync-version.js` | `pnpm sync-version`, dev, build, CI | Propagates `public/version.txt` into `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`; validates each patch |
+| `bump-build-version.js` | `pnpm version:build` | Advances the small-patch label in `public/version.txt` (`0.0.5` → `0.0.5-L1.1`) |
 | `build-runner.js`, `build-cdp-launcher.js` | `pnpm tauri:dev`, `pnpm tauri:build`, CI | Build the two sidecars and place them where bundling expects them |
 | `run-tauri-dev.js` | `pnpm tauri:dev` | Wraps `tauri dev` with the right environment |
 | `i18n-validate.mjs` | `pnpm i18n:check`, CI | Locale parity/placeholder/emptiness gate; warnings never fail the build |
@@ -265,7 +266,7 @@ Files in `scripts/` must keep their executable bit in git or CI steps fail on pe
 | Colors/theme | `src/style.css` tokens | components that use `primary`/`muted` classes |
 | Settings toggle | `src/components/settings/QuestBehaviorSettings.vue` | the store that consumes it, `en.json`, `vi.json` |
 | Packed binary names/identity | `src-tauri/tauri.conf.json` | `scripts/check-runtime-identity-config.mjs`, `docs/runtime-identity-audit.schema.json` |
-| Version | `public/version.txt` | `pnpm run sync-version`, then hand-edit `Cargo.lock` (CI is `--locked`) |
+| Version | `public/version.txt` | `pnpm run sync-version` (or `pnpm version:build` for a small patch), then hand-edit `Cargo.lock` (CI is `--locked`) |
 | Release text | `public/version-desc.txt` | it *is* the GitHub Release body |
 | A CI gate | `.github/workflows/verify.yml` | keep the command identical to the local one in docs/BUILDING.md |
 

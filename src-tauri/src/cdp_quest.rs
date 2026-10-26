@@ -804,6 +804,7 @@ fn js_spoof_stream(app_id: &str) -> String {
 /// submitted timestamp doesn't exceed `(now - enrolledAt) + maxFuture`.
 fn js_start_video_quest(quest_id: &str, seconds_needed: u32, initial_seconds: f64) -> String {
     let timing = cdp_video_timing();
+    let quest_id_json = serde_json::to_string(quest_id).unwrap_or_else(|_| "\"\"".to_string());
     format!(
         r#"
 (async () => {{
@@ -811,7 +812,7 @@ fn js_start_video_quest(quest_id: &str, seconds_needed: u32, initial_seconds: f6
         const dqh = window.__dqh_cdp;
         if (!dqh || !dqh.initialized) return JSON.stringify({{ success: false, error: "Modules not initialized" }});
 
-        const questId = "{quest_id}";
+        const questId = {quest_id_json};
         const secondsNeeded = {seconds_needed};
 
         // Enrollment through Helper's HTTP API may not yet be in Discord's store.
@@ -1000,7 +1001,6 @@ fn js_start_video_quest(quest_id: &str, seconds_needed: u32, initial_seconds: f6
     }}
 }})()
 "#,
-        quest_id = quest_id,
         seconds_needed = seconds_needed,
         initial_seconds = initial_seconds,
         video_speed = timing.speed,
@@ -1018,6 +1018,7 @@ fn js_start_video_quest(quest_id: &str, seconds_needed: u32, initial_seconds: f6
 /// 3. Heartbeat subscription data (`_lastProgress`)
 /// 4. QuestsStore fallback (may be stale)
 fn js_query_progress(quest_id: &str) -> String {
+    let quest_id_json = serde_json::to_string(quest_id).unwrap_or_else(|_| "\"\"".to_string());
     format!(
         r#"
 (async () => {{
@@ -1026,7 +1027,7 @@ fn js_query_progress(quest_id: &str) -> String {
         if (!dqh || !dqh.initialized) return JSON.stringify({{ success: false, error: "Modules not initialized" }});
 
         // Check video quest progress (set by video JS loop) — only if this quest owns the video state
-        const isVideoQuest = dqh._videoQuestId === "{quest_id}";
+        const isVideoQuest = dqh._videoQuestId === {quest_id_json};
         if (isVideoQuest && dqh._videoProgress !== undefined && dqh._videoProgress > 0) {{
             return JSON.stringify({{ success: true, progress: dqh._videoProgress, completed: !!dqh._videoCompleted, source: "video", error: dqh._videoError || null, videoResult: dqh._videoResult || null, videoRunning: !!dqh._videoRunning }});
         }}
@@ -1051,7 +1052,7 @@ fn js_query_progress(quest_id: &str) -> String {
             try {{
                 const res = await dqh.api.get({{ url: "/quests/@me" }});
                 if (res && res.body && Array.isArray(res.body)) {{
-                    const quest = res.body.find(q => q.id === "{quest_id}");
+                    const quest = res.body.find(q => q.id === {quest_id_json});
                     if (quest && quest.user_status) {{
                         const completed = !!quest.user_status.completed_at;
                         let progressSeconds = 0;
@@ -1080,7 +1081,7 @@ fn js_query_progress(quest_id: &str) -> String {
         }}
 
         // Fallback: QuestsStore (may be stale)
-        const quest = dqh.QuestsStore.getQuest("{quest_id}");
+        const quest = dqh.QuestsStore.getQuest({quest_id_json});
         if (!quest) return JSON.stringify({{ success: false, error: "Quest not found in QuestsStore" }});
 
         const userStatus = quest.userStatus;
@@ -1106,8 +1107,7 @@ fn js_query_progress(quest_id: &str) -> String {
         return JSON.stringify({{ success: false, error: String(e) }});
     }}
 }})()
-"#,
-        quest_id = quest_id
+"#
     )
 }
 
@@ -4753,6 +4753,18 @@ mod tests {
         assert!(js.contains(&format!("const speed = {};", timing.speed)));
         assert!(js.contains(&format!("const interval = {};", timing.interval)));
         assert!(!js.contains("const speed = 7;"));
+    }
+
+    #[test]
+    fn quest_js_escapes_the_quest_id_instead_of_interpolating_it_raw() {
+        let hostile = "q\"+globalThis.pwned=1+\"";
+        let escaped = serde_json::to_string(hostile).unwrap();
+        let video = js_start_video_quest(hostile, 100, 0.0);
+        assert!(video.contains(&format!("const questId = {escaped};")));
+        let progress = js_query_progress(hostile);
+        assert!(progress.contains(&format!("dqh._videoQuestId === {escaped}")));
+        assert!(progress.contains(&format!("q.id === {escaped}")));
+        assert!(progress.contains(&format!("QuestsStore.getQuest({escaped})")));
     }
 
     #[test]

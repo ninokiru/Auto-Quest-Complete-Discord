@@ -526,6 +526,28 @@ fn guard_document(code: &str, generation: &str) -> String {
         serde_json::to_string(generation).unwrap(), code.trim().trim_end_matches(';'))
 }
 
+/// Chromium may collect a promise that only the DevTools session references
+/// while `Runtime.evaluate { awaitPromise }` is waiting on it, failing the
+/// evaluation with -32000 "Promise was collected" even though the page is
+/// healthy. Parking it on a page global for as long as it is pending keeps it
+/// reachable; the slot is removed when the promise settles, so nothing
+/// accumulates. Every slot has its own name because several evaluations can be
+/// in flight on the same target (a foreground quest and its monitor).
+fn park_awaited_promise(js_code: &str) -> String {
+    format!(
+        r#"(() => {{
+    const value = ({});
+    if (!value || typeof value.then !== "function") return value;
+    const slot = "__dqhAwait" + Math.random().toString(36).slice(2);
+    globalThis[slot] = value;
+    const release = () => {{ delete globalThis[slot]; }};
+    value.then(release, release);
+    return value;
+}})()"#,
+        js_code.trim().trim_end_matches(';').trim_end()
+    )
+}
+
 pub async fn bring_primary_discord_target_to_front(port: u16) -> Result<()> {
     use crate::logger::{log, LogCategory, LogLevel};
 
@@ -1938,11 +1960,16 @@ async fn execute_js_via_ws(
             .context("Failed to connect to CDP WebSocket")?;
     let (mut write, mut read) = ws_stream.split();
 
+    let expression = if await_promise {
+        park_awaited_promise(js_code)
+    } else {
+        js_code.to_string()
+    };
     let request = serde_json::json!({
         "id": 1,
         "method": "Runtime.evaluate",
         "params": {
-            "expression": js_code,
+            "expression": expression,
             "returnByValue": true,
             "awaitPromise": await_promise
         }
@@ -2771,5 +2798,61 @@ mod tests {
         let outcome = tokio::time::timeout(std::time::Duration::from_secs(30), session).await;
         let result = outcome.expect("the monitor must notice the closed target");
         assert!(error_is_target_invalidated(&result.unwrap_err()));
+    }
+
+    #[test]
+    fn awaited_evaluations_park_the_promise_so_v8_cannot_collect_it() {
+        let wrapped = park_awaited_promise("(async () => { await thing(); return 'ok'; })();");
+
+        assert!(wrapped.contains("(async () => { await thing(); return 'ok'; })"));
+        // The caller's trailing semicolon must not end up inside the parentheses.
+        assert!(!wrapped.contains("})();"));
+        assert!(wrapped.contains("globalThis[slot] = value;"));
+        assert!(wrapped.contains("value.then(release, release);"));
+        // A synchronous result has no promise to park and must be returned as is.
+        let sync_guard = r#"if (!value || typeof value.then !== "function") return value;"#;
+        assert!(wrapped.contains(sync_guard));
+    }
+
+    #[tokio::test]
+    async fn awaited_evaluation_sends_the_parked_expression_and_returns_its_value() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut socket = tokio_tungstenite::tungstenite::accept(stream).unwrap();
+            let request: serde_json::Value =
+                serde_json::from_str(&socket.read().unwrap().into_text().unwrap()).unwrap();
+            assert_eq!(request["method"], "Runtime.evaluate");
+            assert_eq!(request["params"]["awaitPromise"], true);
+            let expression = request["params"]["expression"].as_str().unwrap();
+            assert!(expression.contains("globalThis[slot] = value;"));
+            socket
+                .send(Message::Text(
+                    serde_json::json!({
+                        "id": 1,
+                        "result": {"result": {"type": "string", "value": "ok"}}
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .unwrap();
+            let _ = socket.read();
+        });
+
+        let value = execute_js_via_ws(
+            &format!("ws://127.0.0.1:{port}/devtools/page/test"),
+            "(async () => 'ok')()",
+            true,
+            5,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(value, "ok");
+        server.join().unwrap();
     }
 }

@@ -443,6 +443,7 @@ pnpm tauri:dev
 | `pnpm test` | Frontend unit tests (Vitest). |
 | `pnpm i18n:check` | Validate the English and Vietnamese locale files for missing or extra keys. |
 | `pnpm sync-version` | Propagate `public/version.txt` into the app, Tauri, and Cargo configs. |
+| `pnpm version:build` | Bump the small-patch label in `public/version.txt` (e.g. `0.0.5` → `0.0.5-L1.1`, shown as `v0.0.5 L1#1`). |
 | `pnpm build:runner` / `pnpm build:cdp-launcher` | Build one sidecar. |
 | `pnpm check:runtime-identity`, `pnpm test:identity-audit`, `pnpm test:packaged-identity` | Identity config and packaged-binary audits. |
 | `pnpm analyze:har` | Derive quest schema facts from a HAR capture (Python). |

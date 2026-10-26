@@ -2,7 +2,7 @@
  * sync-version.js
  *
  * Reads the canonical version from public/version.txt, strips any
- * pre-release suffix (e.g. -rc1, -beta2), and patches:
+ * pre-release or small-patch suffix (e.g. -rc1, -beta2, -L12.1), and patches:
  *   - package.json           (npm "version" field)
  *   - src-tauri/Cargo.toml   (Cargo [package] version)
  *   - src-tauri/tauri.conf.json (Tauri "version" field)

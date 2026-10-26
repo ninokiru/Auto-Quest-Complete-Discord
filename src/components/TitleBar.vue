@@ -70,7 +70,7 @@ async function handleDragStart(e: MouseEvent) {
     >
         <AppMark label="" aria-hidden="true" class="h-4 w-4 shrink-0 pointer-events-none" />
         <span class="text-xs font-medium text-muted-foreground pointer-events-none">
-          Auto Quest Complete Discord <span class="opacity-70 ml-1">v{{ versionStore.currentVersion }}</span>
+          Auto Quest Complete Discord <span class="opacity-70 ml-1">v{{ versionStore.displayVersion }}</span>
         </span>
     </div>
 

@@ -12,7 +12,7 @@
         <div>
           <p class="font-semibold text-primary">{{ t('version.update_available') }}</p>
           <p class="text-sm text-muted-foreground">
-            {{ t('version.update_desc', { version: versionStore.latestRelease.tag_name, current: versionStore.currentVersion }) }}
+            {{ t('version.update_desc', { version: formatVersionLabel(versionStore.latestRelease.tag_name), current: versionStore.displayVersion }) }}
           </p>
         </div>
       </div>
@@ -626,7 +626,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useQuestsStore } from '@/stores/quests'
-import { useVersionStore } from '@/stores/version'
+import { useVersionStore, formatVersionLabel } from '@/stores/version'
 import { useGameIdleStore } from '@/stores/gameIdle'
 import OrbsNitroStatus from '@/components/OrbsNitroStatus.vue'
 import BackgroundQuestsPanel from '@/components/BackgroundQuestsPanel.vue'

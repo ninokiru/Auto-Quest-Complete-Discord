@@ -13,6 +13,7 @@
     "tauri:dev": "pnpm run sync-version && pnpm run build:runner && pnpm run build:cdp-launcher && node scripts/run-tauri-dev.js",
     "tauri:build": "pnpm run sync-version && pnpm run build:runner && pnpm run build:cdp-launcher && tauri build",
     "sync-version": "node scripts/sync-version.js",
+    "version:build": "node scripts/bump-build-version.js",
     "build:runner": "node scripts/build-runner.js",
     "build:cdp-launcher": "node scripts/build-cdp-launcher.js",
     "check:cdp-core-deps": "node scripts/check-cdp-core-deps.js",

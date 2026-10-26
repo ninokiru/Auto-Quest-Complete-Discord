@@ -180,7 +180,7 @@ onUnmounted(clearTapResetTimer)
             @keydown.space.prevent="handleVersionTapWithBubble"
             title="Version Info"
           >
-            Auto Quest Complete Discord v{{ versionStore.currentVersion }}
+            Auto Quest Complete Discord v{{ versionStore.displayVersion }}
             <AppMark
               v-for="bubble in logoBubbles"
               :key="bubble.id"

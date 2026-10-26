@@ -24,7 +24,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useNotificationsStore, type AppNotification, type NotificationKind } from '@/stores/notifications'
-import { useVersionStore } from '@/stores/version'
+import { useVersionStore, formatVersionLabel } from '@/stores/version'
 import { formatPublishedDate, formatRelativeTime } from '@/utils/relativeTime'
 import ReleaseNotesList from './ReleaseNotesList.vue'
 
@@ -285,7 +285,7 @@ const latestTag = computed(() => versionStore.latestRelease?.tag_name ?? '')
               class="border-t border-border/50 py-3 first:border-t-0 first:pt-0"
             >
               <div class="mb-2 flex flex-wrap items-center gap-2">
-                <h4 class="font-mono text-sm font-semibold text-foreground">{{ release.tag_name }}</h4>
+                <h4 class="font-mono text-sm font-semibold text-foreground">{{ formatVersionLabel(release.tag_name) }}</h4>
                 <Badge v-if="index === 0" variant="outline" class="border-primary/40 text-[10px] text-primary">
                   {{ t('notify.log_latest') }}
                 </Badge>

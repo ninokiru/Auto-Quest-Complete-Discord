@@ -50,7 +50,7 @@ jobs:
           should_release=false
           prerelease=false
 
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$ ]]; then
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+|-L[0-9]+\.[0-9]+)?$ ]]; then
             echo "::error::Invalid release version: $version"
             exit 1
           fi
@@ -80,7 +80,8 @@ jobs:
           PRERELEASE: ${{ steps.policy.outputs.prerelease }}
         run: |
           set -euo pipefail
-          flags=(--draft --title "$VERSION" --notes-file public/version-desc.txt)
+          display=$(printf '%s' "$VERSION" | sed -E 's/-L([0-9]+)\.([0-9]+)$/ L\1#\2/')
+          flags=(--draft --title "v$display" --notes-file public/version-desc.txt)
           if [ "$PRERELEASE" = 'true' ]; then
             flags+=(--prerelease)
           fi

@@ -14,23 +14,34 @@ export interface ReleaseInfo {
 
 interface ParsedVersion {
     core: [number, number, number]
+    /** `-L<build>.<attempt>` patch label; sorts above the bare core. */
+    build: [number, number] | null
     prerelease: string | null
 }
 
 /**
- * Parse a version string like "0.9.0-rc1" into its numeric core [0, 9, 0] and an
- * optional pre-release suffix ("rc1"). The pre-release is kept so it can be
- * ordered below the matching stable release.
+ * Parse a version string like "0.9.0-rc1" or "0.0.5-L12.1" into its numeric
+ * core, an optional pre-release suffix ("rc1"), and an optional patch label
+ * ([12, 1]). The patch label is tracked separately because it orders *above*
+ * the bare core, unlike a pre-release.
  */
 function parseVersion(version: string): ParsedVersion {
     const cleaned = version.replace(/^v/, '')
-    const [coreStr, ...preParts] = cleaned.split('-')
+    let coreAndPrerelease = cleaned
+    let build: [number, number] | null = null
+    const buildMatch = /^(.+)-L(\d+)\.(\d+)$/.exec(cleaned)
+    if (buildMatch) {
+        coreAndPrerelease = buildMatch[1]
+        build = [parseInt(buildMatch[2], 10), parseInt(buildMatch[3], 10)]
+    }
+    const [coreStr, ...preParts] = coreAndPrerelease.split('-')
     const parts = coreStr.split('.').map(part => {
         const n = parseInt(part, 10)
         return Number.isNaN(n) ? 0 : n
     })
     return {
         core: [parts[0] || 0, parts[1] || 0, parts[2] || 0],
+        build,
         prerelease: preParts.length > 0 ? preParts.join('-') : null,
     }
 }
@@ -59,21 +70,44 @@ function comparePrerelease(a: string, b: string): -1 | 0 | 1 {
     return 0
 }
 
+/** Pre-releases sort below the bare core; patch labels sort above it. */
+function versionRank(version: ParsedVersion): -1 | 0 | 1 {
+    if (version.build) return 1
+    return version.prerelease ? -1 : 0
+}
+
 /**
- * Compare two semver strings. Returns -1 / 0 / 1.
+ * Compare two version strings. Returns -1 / 0 / 1.
  * A pre-release (e.g. 1.2.0-rc1) is older than its stable release (1.2.0), while
- * the numeric core still compares numerically (0.10.10 > 0.9.9).
+ * a patch label (0.0.5-L2.1) is newer than 0.0.5 and compares numerically.
+ * The numeric core still compares numerically (0.10.10 > 0.9.9).
  */
-function compareSemver(a: string, b: string): -1 | 0 | 1 {
+export function compareVersions(a: string, b: string): -1 | 0 | 1 {
     const va = parseVersion(a)
     const vb = parseVersion(b)
     if (va.core[0] !== vb.core[0]) return va.core[0] < vb.core[0] ? -1 : 1
     if (va.core[1] !== vb.core[1]) return va.core[1] < vb.core[1] ? -1 : 1
     if (va.core[2] !== vb.core[2]) return va.core[2] < vb.core[2] ? -1 : 1
-    if (va.prerelease === null && vb.prerelease === null) return 0
-    if (va.prerelease === null) return 1
-    if (vb.prerelease === null) return -1
-    return comparePrerelease(va.prerelease, vb.prerelease)
+
+    const rankA = versionRank(va)
+    const rankB = versionRank(vb)
+    if (rankA !== rankB) return rankA < rankB ? -1 : 1
+    if (rankA === 0) return 0
+
+    if (rankA === 1 && va.build && vb.build) {
+        if (va.build[0] !== vb.build[0]) return va.build[0] < vb.build[0] ? -1 : 1
+        if (va.build[1] !== vb.build[1]) return va.build[1] < vb.build[1] ? -1 : 1
+        return 0
+    }
+    return comparePrerelease(va.prerelease ?? '', vb.prerelease ?? '')
+}
+
+/**
+ * Human label for a version or release tag: "0.0.5-L12.1" renders as
+ * "0.0.5 L12#1", the same form the release title uses.
+ */
+export function formatVersionLabel(version: string): string {
+    return version.replace(/^v/, '').replace(/-L(\d+)\.(\d+)$/, ' L$1#$2')
 }
 
 const RELEASES_API = 'https://api.github.com/repos/ninokiru/Auto-Quest-Complete-Discord/releases'
@@ -159,11 +193,14 @@ export const useVersionStore = defineStore('version', () => {
         currentVersion.value !== 'Dev' && currentVersion.value.toLowerCase().includes('rc'),
     )
 
+    /** "0.0.5-L2.1" → "0.0.5 L2#1" for every place the version is shown. */
+    const displayVersion = computed(() => formatVersionLabel(currentVersion.value))
+
     const hasUpdate = computed(() => {
         if (!latestRelease.value || currentVersion.value === 'Dev') return false
         const current = currentVersion.value.replace(/^v/, '')
         const latest = latestRelease.value.tag_name.replace(/^v/, '')
-        return compareSemver(latest, current) > 0
+        return compareVersions(latest, current) > 0
     })
 
     const isLatest = computed(() => {
@@ -256,7 +293,7 @@ export const useVersionStore = defineStore('version', () => {
             // but only within the channel the user asked for.
             const newest = releases.find(release => !release.prerelease || checkPreRelease.value)
             if (newest && (!latestRelease.value
-              || compareSemver(newest.tag_name, latestRelease.value.tag_name) > 0)) {
+              || compareVersions(newest.tag_name, latestRelease.value.tag_name) > 0)) {
                 latestRelease.value = newest
                 hasChecked.value = true
             }
@@ -293,6 +330,7 @@ export const useVersionStore = defineStore('version', () => {
 
     return {
         currentVersion,
+        displayVersion,
         latestRelease,
         checkError,
         isChecking,

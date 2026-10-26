@@ -34,6 +34,9 @@ export const useAuthStore = defineStore('auth', () => {
   /** Every account this run has authenticated. The backend keeps each account's
    *  API client, so switching needs the Discord user id and no second token. */
   const knownAccounts = ref<AccountSummary[]>([])
+  /** One unattended local scan per app run: the login screen runs it on entry,
+   *  and `logout` spends it so signing out cannot sign the same account back in. */
+  const autoScanSpent = ref(false)
 
   // Discord's Program Rewards endpoint owns the monthly Orbs schedule.
   const nitroProgramReward = ref<ProgramReward | null>(null)
@@ -349,6 +352,9 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = null
     error.value = null
     detectedAccounts.value = []
+    // Leaving was deliberate, so the login screen must not run its unattended
+    // scan and sign the same account straight back in.
+    autoScanSpent.value = true
     // Nothing is switchable to while signed out; the list is re-read from the
     // backend on the next login.
     knownAccounts.value = []
@@ -417,6 +423,7 @@ export const useAuthStore = defineStore('auth', () => {
     error,
     detectedAccounts,
     knownAccounts,
+    autoScanSpent,
     nitroProgramReward,
     programRewardLoading,
     programRewardError,

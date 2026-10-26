@@ -145,6 +145,17 @@ describe('auth login quest mode selection', () => {
       .toBeLessThan(mocks.stopAllGameSimulations.mock.invocationCallOrder[0])
   })
 
+  it('spends the unattended scan on logout so the same account cannot sign back in', async () => {
+    const authStore = useAuthStore()
+    authStore.user = user
+    expect(authStore.autoScanSpent).toBe(false)
+
+    await authStore.logout()
+
+    expect(authStore.autoScanSpent).toBe(true)
+    expect(authStore.user).toBeNull()
+  })
+
   it('uses Discord program reward timestamps for the Orbs countdown', async () => {
     const authStore = useAuthStore()
     authStore.user = user

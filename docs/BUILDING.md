@@ -129,6 +129,24 @@ touch, that is the diff CI will show you; paste `rustfmt` output rather than gue
 - `public/version-desc.txt` is the body of the GitHub Release; `build-release.yml` passes it as
   `body_path`.
 
+### Small patches inside one release line
+
+A fix that lands between milestones still gets its own GitHub Release, tagged
+`x.y.z-L<build>.<attempt>` (for example `0.0.5-L12.1`). The app shows it as `v0.0.5 L12#1`.
+`#` is display-only because the self-update tag check (`tag_is_safe` in
+`src-tauri/src/self_update.rs`) rejects it.
+
+- Run `pnpm version:build` to write the next auto-incremented label (`L1.1`, `L2.1`, …) into
+  `public/version.txt`; the `.<attempt>` part increments by hand if the same build is retried.
+- Commit that file together with `public/version-desc.txt`; the release job fires on a push to
+  `main` that changes `public/version.txt`, exactly like a core bump. Do not bump the label for
+  cosmetic edits that are not being published.
+- `sync-version.js` strips the `-L…` suffix, so the installer, PE metadata, and
+  `CARGO_PKG_VERSION` stay on `x.y.z`. Ordering still works because the update comparator treats
+  a patch label as newer than its bare core (pre-release < bare core < patch label).
+- The GitHub Release title uses the display form (`v0.0.5 L12#1`) while the tag stays
+  path/URL-safe.
+
 ## 8. Which CI workflow does what
 
 | Workflow | Trigger | Result |

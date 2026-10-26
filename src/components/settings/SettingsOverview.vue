@@ -59,7 +59,7 @@ const cards = computed(() => [
   },
   {
     label: t('settings.overview_version'),
-    value: `v${versionStore.currentVersion}`,
+    value: `v${versionStore.displayVersion}`,
     ok: !versionStore.hasUpdate,
     icon: CheckCircle2,
     tone: 'primary' as SettingsTone,

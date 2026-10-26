@@ -50,6 +50,7 @@ import {
   presentAuthProgress,
   shouldAskCdpLaunchTarget,
   shouldPollCdp,
+  shouldRunUnattendedScan,
   selectionForCdpLaunchTarget,
   findCurrentCdpOwnerSession,
   selectionForCurrentCdpOwner,
@@ -298,7 +299,7 @@ function syncLegacyDesktopClientPreference(selection: ClientSelection) {
   questsStore.desktopClient = desktopClientArgForProvider(selection.providerId)
 }
 
-async function handleAutoDetect() {
+async function handleAutoDetect(silent = false) {
   if (!begin('local')) return
   setProgress('local', 'running', 'auth.progress.extracting_tokens')
   try {
@@ -310,11 +311,34 @@ async function handleAutoDetect() {
       showDetectedAccounts,
     )
     if (!succeeded) {
-      setProgress('local', 'error', 'auth.progress.failed', undefined, authStore.error ?? undefined)
+      if (silent) {
+        // Nobody asked for this pass, so its failure leaves no trace; the click
+        // paths keep reporting it.
+        authStore.error = null
+        progress.value = null
+      } else {
+        setProgress('local', 'error', 'auth.progress.failed', undefined, authStore.error ?? undefined)
+      }
+    } else if (silent && !authStore.user && !showingDetectedAccounts.value) {
+      // Found nothing: hand the screen back exactly as the user found it.
+      progress.value = null
     }
   } finally {
     finish()
   }
+}
+
+/** Scan this machine as the login screen appears: one saved account signs in
+ *  without a click, several land on the account list. Runs once per app run. */
+function maybeRunUnattendedScan() {
+  if (!shouldRunUnattendedScan({
+    spent: authStore.autoScanSpent,
+    authenticated: Boolean(authStore.user),
+    busy: busy.value,
+    supported: showAutoDetect.value,
+  })) return
+  authStore.autoScanSpent = true
+  void handleAutoDetect(true)
 }
 
 async function selectAccount(account: AccountSummary) {
@@ -622,6 +646,10 @@ onUnmounted(() => {
 watch(() => questsStore.cdpPort, () => {
   void refreshCdpStatus()
 })
+
+// Platform capabilities load after the panel mounts, so the capability-gated
+// scan waits for `showAutoDetect` to flip instead of checking once on mount.
+watch(showAutoDetect, maybeRunUnattendedScan, { immediate: true })
 </script>
 
 <template>
@@ -691,7 +719,7 @@ watch(() => questsStore.cdpPort, () => {
         </div>
 
         <div class="border-t px-5 py-4 sm:px-6">
-          <Button variant="ghost" size="sm" class="gap-2" :disabled="busy" @click="handleAutoDetect">
+          <Button variant="ghost" size="sm" class="gap-2" :disabled="busy" @click="handleAutoDetect()">
             <RotateCcw class="h-4 w-4" />
             {{ t('auth.rescan') }}
           </Button>
@@ -711,7 +739,7 @@ watch(() => questsStore.cdpPort, () => {
               </div>
             </div>
             <div class="login-method-action">
-              <Button size="lg" class="login-method-button gap-2" :disabled="busy" @click="handleAutoDetect">
+              <Button size="lg" class="login-method-button gap-2" :disabled="busy" @click="handleAutoDetect()">
                 <Loader2 v-if="activeMethod === 'local'" class="h-4 w-4 shrink-0 animate-spin" />
                 {{ t('auth.extract_token') }}
               </Button>

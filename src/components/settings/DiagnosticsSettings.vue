@@ -51,7 +51,7 @@ async function exportLogs() {
 
 async function copyDiagnosticsSummary() {
   const summary = [
-    `Version: ${versionStore.currentVersion}`,
+    `Version: ${versionStore.displayVersion}`,
     `Account: ${authStore.user ? authStore.user.username : 'not connected'}`,
     `Quest mode: ${questsStore.gameQuestMode}`,
     `CDP available: ${questsStore.cdpAvailable}`,
