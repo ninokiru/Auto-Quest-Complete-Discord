@@ -93,8 +93,12 @@ jobs:
               exit 1
             fi
             # Re-running a failed publish reuses the draft this workflow left
-            # behind instead of stranding two releases on one version.
-            gh release edit "$VERSION" "${flags[@]}"
+            # behind instead of stranding two releases on one version. The
+            # target is re-pointed at the commit this run builds: a draft has
+            # no tag yet, and GitHub creates the tag at its target when the
+            # release is published, so keeping the old target would ship a tag
+            # pointing at the commit that failed.
+            gh release edit "$VERSION" --target "$GITHUB_SHA" "${flags[@]}"
           elif gh api "repos/$GH_REPO/git/refs/tags/$VERSION" >/dev/null 2>&1; then
             # A tag with no release is the normal state after a release was
             # deleted, and gh refuses to attach to an existing tag unless the

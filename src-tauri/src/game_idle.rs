@@ -434,7 +434,7 @@ impl IdleShared {
             .lanes
             .iter_mut()
             .find(|lane| lane.slot == slot)
-            .map(|lane| lane.ends_at.replace(None));
+            .and_then(|lane| lane.ends_at.take());
         self.sync_lanes();
         frozen
     }
