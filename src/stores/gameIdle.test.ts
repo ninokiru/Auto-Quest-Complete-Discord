@@ -40,6 +40,13 @@ function idleStatus(overrides: Partial<GameIdleStatus> = {}): GameIdleStatus {
     phase: 'stopped',
     playMinutes: 60,
     restMinutes: 0,
+    playDuration: { mode: 'fixed', fixed: 60, min: 60, max: 60 },
+    restDuration: { mode: 'fixed', fixed: 0, min: 0, max: 0 },
+    crashSimulation: {
+      enabled: false,
+      crashAfterMinutes: { mode: 'fixed', fixed: 10, min: 10, max: 10 },
+      reopenDelaySeconds: { mode: 'fixed', fixed: 45, min: 45, max: 45 },
+    },
     concurrentGames: 1,
     lanes: [],
     recent: [],
@@ -75,29 +82,57 @@ describe('game idle store', () => {
     const store = useGameIdleStore()
     await store.initialize()
 
-    expect(store.playMinutes).toBe(60)
-    expect(store.restMinutes).toBe(0)
+    expect(store.playDuration).toEqual({ mode: 'fixed', fixed: 60, min: 60, max: 60 })
+    expect(store.restDuration).toEqual({ mode: 'fixed', fixed: 0, min: 0, max: 0 })
     expect(store.concurrentGames).toBe(1)
     expect(store.mode).toBe('cdp')
   })
 
-  it('restores valid values and rejects fractional input', () => {
+  it('restores legacy saved numbers as fixed durations', () => {
     storage.set('questHelper_gameIdlePlayMinutes', '90')
     storage.set('questHelper_gameIdleRestMinutes', '5')
     storage.set('questHelper_gameIdleConcurrentGames', '3')
     storage.set('questHelper_gameIdleMode', 'process')
     const store = useGameIdleStore()
 
-    expect(store.playMinutes).toBe(90)
-    expect(store.restMinutes).toBe(5)
+    expect(store.playDuration).toEqual({ mode: 'fixed', fixed: 90, min: 60, max: 60 })
+    expect(store.restDuration).toEqual({ mode: 'fixed', fixed: 5, min: 0, max: 0 })
     expect(store.concurrentGames).toBe(3)
     expect(store.mode).toBe('process')
-    store.playMinutes = 1.5
-    expect(store.validateConfig()).toBe('play_minutes')
-    store.playMinutes = 1
-    store.restMinutes = -1
-    expect(store.validateConfig()).toBe('rest_minutes')
-    store.restMinutes = 0
+  })
+
+  it('clamps duration edits into valid bounds', () => {
+    const store = useGameIdleStore()
+    store.playDuration = { mode: 'fixed', fixed: 0, min: 0, max: 0 }
+    expect(store.playDuration).toEqual({ mode: 'fixed', fixed: 1, min: 1, max: 1 })
+    store.playDuration = { mode: 'random', fixed: 30, min: 8, max: 4 }
+    expect(store.playDuration).toEqual({ mode: 'random', fixed: 30, min: 8, max: 8 })
+    store.restDuration = { mode: 'random', fixed: 0, min: 0, max: 0 }
+    expect(store.restDuration).toEqual({ mode: 'random', fixed: 0, min: 0, max: 0 })
+    store.playDuration = { mode: 'fixed', fixed: Number.NaN, min: 1, max: 1 }
+    expect(store.playDuration).toEqual({ mode: 'fixed', fixed: 1, min: 1, max: 1 })
+    // Values beyond u32::MAX would be rejected by the Rust deserializer.
+    store.playDuration = { mode: 'fixed', fixed: 4_294_967_301, min: 1, max: 1 }
+    expect(store.playDuration).toEqual({ mode: 'fixed', fixed: 4_294_967_295, min: 1, max: 1 })
+  })
+
+  it('persists crash simulation settings immediately and clamps their bounds', () => {
+    const store = useGameIdleStore()
+    expect(store.crashEnabled).toBe(false)
+    expect(store.crashAfterMinutes).toEqual({ mode: 'random', fixed: 10, min: 5, max: 15 })
+    expect(store.reopenDelaySeconds).toEqual({ mode: 'random', fixed: 45, min: 30, max: 60 })
+    store.crashEnabled = true
+    expect(storage.get('questHelper_gameIdleCrashEnabled')).toBe('true')
+    store.crashAfterMinutes = { mode: 'fixed', fixed: 0, min: 0, max: 0 }
+    expect(store.crashAfterMinutes).toEqual({ mode: 'fixed', fixed: 1, min: 1, max: 1 })
+    expect(JSON.parse(storage.get('questHelper_gameIdleCrashAfterMinutes')!))
+      .toEqual({ mode: 'fixed', fixed: 1, min: 1, max: 1 })
+    store.reopenDelaySeconds = { mode: 'fixed', fixed: -5, min: 0, max: 0 }
+    expect(store.reopenDelaySeconds).toEqual({ mode: 'fixed', fixed: 0, min: 0, max: 0 })
+  })
+
+  it('rejects a lane count that is not a whole number in range', () => {
+    const store = useGameIdleStore()
     store.concurrentGames = 1.5
     expect(store.validateConfig()).toBe('concurrent_games')
     store.concurrentGames = MAX_CONCURRENT_GAMES + 1

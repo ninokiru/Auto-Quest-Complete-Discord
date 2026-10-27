@@ -17,6 +17,8 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import DurationSettingInput from '@/components/DurationSettingInput.vue'
+import SettingsSwitch from '@/components/settings/SettingsSwitch.vue'
 import { useAuthStore } from '@/stores/auth'
 import {
   MAX_CONCURRENT_GAMES,
@@ -128,6 +130,14 @@ const sessionDuration = computed(() => formatSimulationDuration(sessionSeconds.v
 const configError = computed(() => idle.validateConfig())
 const nextGameName = computed(() => idle.status?.upcoming[0]?.name || t('game_idle.preparing'))
 
+// The play window can be a random range, so the readout describes the
+// configured spec instead of the length resolved for the current cycle.
+const configuredPlaySummary = computed(() => {
+  const spec = idle.status?.playDuration ?? idle.playDuration
+  if (spec.mode === 'fixed') return t('game_idle.configured_for', { count: spec.fixed })
+  return t('game_idle.configured_range', { min: spec.min, max: spec.max })
+})
+
 function formatCountdown(seconds: number) {
   const hours = Math.floor(seconds / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
@@ -214,6 +224,10 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="idle-shell space-y-5" :class="immersive && 'is-immersive'" aria-labelledby="game-idle-heading">
+    <!-- The header holds only the title and the start/stop action: the duration
+         controls need ~1100 px on one line, and a `1fr auto` grid hands the `auto`
+         track its max-content first, which collapsed the heading at the app's
+         1200 px window. They sit in their own wrapping row below. -->
     <div v-if="!immersive" class="idle-controls grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
       <div>
         <div class="flex items-center gap-2 text-primary">
@@ -228,75 +242,7 @@ onBeforeUnmount(() => {
         </p>
       </div>
 
-      <div class="flex flex-wrap items-end gap-3">
-        <div class="space-y-1.5">
-          <Label for="idle-play-minutes" class="text-xs">{{ t('game_idle.play_minutes') }}</Label>
-          <Input
-            id="idle-play-minutes"
-            v-model.number="idle.playMinutes"
-            type="number"
-            inputmode="numeric"
-            min="1"
-            step="1"
-            class="w-28 tabular-nums"
-            :disabled="active"
-            :aria-invalid="configError === 'play_minutes'"
-          />
-        </div>
-        <div class="space-y-1.5">
-          <Label for="idle-rest-minutes" class="text-xs">{{ t('game_idle.rest_minutes') }}</Label>
-          <Input
-            id="idle-rest-minutes"
-            v-model.number="idle.restMinutes"
-            type="number"
-            inputmode="numeric"
-            min="0"
-            step="1"
-            class="w-28 tabular-nums"
-            :disabled="active"
-            :aria-invalid="configError === 'rest_minutes'"
-          />
-        </div>
-        <div class="space-y-1.5">
-          <Label for="idle-concurrent-games" class="text-xs">{{ t('game_idle.concurrent_games') }}</Label>
-          <Input
-            id="idle-concurrent-games"
-            v-model.number="idle.concurrentGames"
-            type="number"
-            inputmode="numeric"
-            min="1"
-            :max="MAX_CONCURRENT_GAMES"
-            step="1"
-            class="w-28 tabular-nums"
-            :disabled="active || idle.mode === 'cdp'"
-            :aria-invalid="configError === 'concurrent_games'"
-          />
-        </div>
-        <div class="space-y-1.5">
-          <Label class="text-xs">{{ t('game_idle.simulation_mode') }}</Label>
-          <div class="flex h-10 rounded-md border bg-background p-1">
-            <button
-              type="button"
-              class="idle-mode-button"
-              :class="idle.mode === 'process' && 'is-active'"
-              :disabled="active"
-              @click="idle.mode = 'process'"
-            >
-              <Gamepad2 class="h-3.5 w-3.5" />
-              {{ t('game_idle.process') }}
-            </button>
-            <button
-              type="button"
-              class="idle-mode-button"
-              :class="idle.mode === 'cdp' && 'is-active'"
-              :disabled="active || !quests.cdpAvailable"
-              @click="idle.mode = 'cdp'"
-            >
-              <MonitorPlay class="h-3.5 w-3.5" />
-              CDP
-            </button>
-          </div>
-        </div>
+      <div class="flex items-center gap-3">
         <Button
           v-if="!active"
           class="h-10 min-w-28 gap-2"
@@ -312,6 +258,98 @@ onBeforeUnmount(() => {
           <Square v-else class="h-4 w-4 fill-current" />
           {{ idle.stopping ? t('game_idle.stopping') : t('game_idle.stop') }}
         </Button>
+      </div>
+    </div>
+
+    <div v-if="!immersive" class="flex flex-wrap items-end gap-3">
+      <DurationSettingInput
+        v-model="idle.playDuration"
+        :label="t('game_idle.play_minutes')"
+        unit="minutes"
+        :min-allowed="1"
+        :disabled="active"
+        :invalid="configError === 'play_minutes'"
+      />
+      <DurationSettingInput
+        v-model="idle.restDuration"
+        :label="t('game_idle.rest_minutes')"
+        unit="minutes"
+        :min-allowed="0"
+        :disabled="active"
+        :invalid="configError === 'rest_minutes'"
+      />
+      <div class="space-y-1.5">
+        <Label for="idle-concurrent-games" class="text-xs">{{ t('game_idle.concurrent_games') }}</Label>
+        <Input
+          id="idle-concurrent-games"
+          v-model.number="idle.concurrentGames"
+          type="number"
+          inputmode="numeric"
+          min="1"
+          :max="MAX_CONCURRENT_GAMES"
+          step="1"
+          class="w-28 tabular-nums"
+          :disabled="active || idle.mode === 'cdp'"
+          :aria-invalid="configError === 'concurrent_games'"
+        />
+      </div>
+      <div class="space-y-1.5">
+        <Label class="text-xs">{{ t('game_idle.simulation_mode') }}</Label>
+        <div class="flex h-10 rounded-md border bg-background p-1">
+          <button
+            type="button"
+            class="idle-mode-button"
+            :class="idle.mode === 'process' && 'is-active'"
+            :disabled="active"
+            @click="idle.mode = 'process'"
+          >
+            <Gamepad2 class="h-3.5 w-3.5" />
+            {{ t('game_idle.process') }}
+          </button>
+          <button
+            type="button"
+            class="idle-mode-button"
+            :class="idle.mode === 'cdp' && 'is-active'"
+            :disabled="active || !quests.cdpAvailable"
+            @click="idle.mode = 'cdp'"
+          >
+            <MonitorPlay class="h-3.5 w-3.5" />
+            CDP
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="!immersive" class="space-y-3">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="max-w-xl space-y-1">
+          <Label class="text-xs">{{ t('game_idle.crash_simulation') }}</Label>
+          <p class="text-xs text-muted-foreground">{{ t('game_idle.crash_simulation_desc') }}</p>
+        </div>
+        <SettingsSwitch
+          :model-value="idle.crashEnabled"
+          :disabled="active"
+          :label="t('game_idle.crash_simulation')"
+          @update:model-value="idle.crashEnabled = $event"
+        />
+      </div>
+      <div v-if="idle.crashEnabled" class="flex flex-wrap items-end gap-3">
+        <DurationSettingInput
+          v-model="idle.crashAfterMinutes"
+          :label="t('game_idle.crash_after')"
+          unit="minutes"
+          :min-allowed="1"
+          :disabled="active"
+          :invalid="configError === 'crash_simulation'"
+        />
+        <DurationSettingInput
+          v-model="idle.reopenDelaySeconds"
+          :label="t('game_idle.reopen_delay')"
+          unit="seconds"
+          :min-allowed="0"
+          :disabled="active"
+          :invalid="configError === 'crash_simulation'"
+        />
       </div>
     </div>
 
@@ -387,7 +425,7 @@ onBeforeUnmount(() => {
           <TimerReset class="h-4 w-4" />
           <span>{{ isMultiLane ? t('game_idle.next_change') : idle.status.phase === 'resting' ? t('game_idle.rest_remaining') : t('game_idle.play_remaining') }}</span>
           <strong>{{ formatCountdown(phaseRemainingSeconds) }}</strong>
-          <small>{{ t('game_idle.configured_for', { count: idle.status.playMinutes }) }}</small>
+          <small>{{ configuredPlaySummary }}</small>
         </div>
         <div class="idle-metric idle-total">
           <Clock3 class="h-4 w-4" />

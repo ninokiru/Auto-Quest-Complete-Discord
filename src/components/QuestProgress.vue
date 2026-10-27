@@ -4,9 +4,9 @@ import { useQuestsStore } from '@/stores/quests'
 import type { RunningQuest } from '@/stores/quests'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { AlertCircle, ChevronUp, ListChecks, X } from 'lucide-vue-next'
+import { AlertCircle, ChevronUp, ListChecks, Timer, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
-import { formatSlotProgress } from '@/utils/questProgressDisplay'
+import { formatClockTime, formatSlotProgress } from '@/utils/questProgressDisplay'
 
 const { t } = useI18n()
 const questsStore = useQuestsStore()
@@ -264,6 +264,28 @@ const activeBarStyle = computed(() =>
 function slotBarStyle(slot: RunningQuest): Record<string, string> {
   return barStyleFor(slot.localProgress, slotSubmittedPercent(slot))
 }
+
+// Keep-alive countdown: the quest already ended, but its game stays connected
+// until the store's delayed teardown fires.
+const nowTick = ref(Date.now())
+let keepAliveTicker: ReturnType<typeof setInterval> | null = null
+watch(() => questsStore.keepAliveEndsAt, (endsAt) => {
+  if (endsAt !== null && keepAliveTicker === null) {
+    nowTick.value = Date.now()
+    keepAliveTicker = setInterval(() => { nowTick.value = Date.now() }, 1000)
+  } else if (endsAt === null && keepAliveTicker !== null) {
+    clearInterval(keepAliveTicker)
+    keepAliveTicker = null
+  }
+}, { immediate: true })
+onUnmounted(() => {
+  if (keepAliveTicker !== null) clearInterval(keepAliveTicker)
+})
+const keepAliveRemainingText = computed(() => {
+  const endsAt = questsStore.keepAliveEndsAt
+  if (endsAt === null) return ''
+  return formatClockTime(Math.max(0, Math.ceil((endsAt - nowTick.value) / 1000)))
+})
 </script>
 
 <template>
@@ -381,6 +403,15 @@ function slotBarStyle(slot: RunningQuest): Record<string, string> {
               <div class="h-2 w-2 rounded-full bg-green-400"></div>
               <span>{{ t('quest.pending') }}</span>
             </div>
+          </div>
+
+          <div
+            v-if="questsStore.keepAliveEndsAt"
+            class="flex items-center gap-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-sm"
+            role="status"
+          >
+            <Timer class="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+            <span>{{ t('quest.keep_alive_active', { time: keepAliveRemainingText }) }}</span>
           </div>
 
           <Button

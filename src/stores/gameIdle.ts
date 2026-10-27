@@ -1,6 +1,8 @@
-import { computed, ref } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 import { defineStore } from 'pinia'
 import type {
+  GameIdleCrashConfig,
+  GameIdleDuration,
   GameIdleMode,
   GameIdleItem,
   GameIdleStatus,
@@ -16,11 +18,23 @@ import {
   stopGameIdle,
 } from '@/api/tauri'
 import { useQuestsStore } from './quests'
+import {
+  clampGameIdleDuration,
+  isGameIdleDurationValid,
+  loadGameIdleDuration,
+} from '@/utils/durationSetting'
 
 const PLAY_MINUTES_KEY = 'questHelper_gameIdlePlayMinutes'
 const REST_MINUTES_KEY = 'questHelper_gameIdleRestMinutes'
 const MODE_KEY = 'questHelper_gameIdleMode'
 const CONCURRENT_GAMES_KEY = 'questHelper_gameIdleConcurrentGames'
+const CRASH_ENABLED_KEY = 'questHelper_gameIdleCrashEnabled'
+const CRASH_AFTER_KEY = 'questHelper_gameIdleCrashAfterMinutes'
+const REOPEN_DELAY_KEY = 'questHelper_gameIdleReopenDelaySeconds'
+const DEFAULT_PLAY_DURATION: GameIdleDuration = { mode: 'fixed', fixed: 60, min: 60, max: 60 }
+const DEFAULT_REST_DURATION: GameIdleDuration = { mode: 'fixed', fixed: 0, min: 0, max: 0 }
+const DEFAULT_CRASH_AFTER_DURATION: GameIdleDuration = { mode: 'random', fixed: 10, min: 5, max: 15 }
+const DEFAULT_REOPEN_DELAY_DURATION: GameIdleDuration = { mode: 'random', fixed: 45, min: 30, max: 60 }
 
 // Mirrors `MAX_CONCURRENT_GAMES` in src-tauri/src/game_idle.rs: Discord has one
 // rich-presence slot, so extra lanes are detected only as running processes.
@@ -58,9 +72,12 @@ export function formatSimulationDuration(totalSeconds: number): { hours: number;
 
 export const useGameIdleStore = defineStore('gameIdle', () => {
   const quests = useQuestsStore()
-  const playMinutes = ref(savedInteger(PLAY_MINUTES_KEY, 60, 1))
-  const restMinutes = ref(savedInteger(REST_MINUTES_KEY, 0, 0))
+  const playDuration = ref(loadGameIdleDuration(PLAY_MINUTES_KEY, DEFAULT_PLAY_DURATION, 1))
+  const restDuration = ref(loadGameIdleDuration(REST_MINUTES_KEY, DEFAULT_REST_DURATION, 0))
   const concurrentGames = ref(savedInteger(CONCURRENT_GAMES_KEY, 1, 1, MAX_CONCURRENT_GAMES))
+  const crashEnabled = ref(localStorage.getItem(CRASH_ENABLED_KEY) === 'true')
+  const crashAfterMinutes = ref(loadGameIdleDuration(CRASH_AFTER_KEY, DEFAULT_CRASH_AFTER_DURATION, 1))
+  const reopenDelaySeconds = ref(loadGameIdleDuration(REOPEN_DELAY_KEY, DEFAULT_REOPEN_DELAY_DURATION, 0))
   const savedMode = localStorage.getItem(MODE_KEY)
   const mode = ref<GameIdleMode>(savedMode === 'process' || savedMode === 'cdp' ? savedMode : 'process')
   const status = ref<GameIdleStatus | null>(null)
@@ -87,19 +104,47 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
     mode.value === 'cdp' ? 1 : concurrentGames.value
   )
 
+  // Duration edits can hold transient out-of-range values while the user is
+  // typing; normalizing synchronously keeps every read (validation, start
+  // payload) within the backend's bounds. An optional key persists the
+  // normalized value immediately instead of waiting for the start-scoped
+  // persistConfig write.
+  function watchClampedDuration(target: Ref<GameIdleDuration>, minimum: number, persistKey?: string) {
+    watch(target, (value) => {
+      const next = clampGameIdleDuration(value, minimum)
+      if (next !== value) target.value = next
+      if (persistKey) localStorage.setItem(persistKey, JSON.stringify(next))
+    }, { flush: 'sync' })
+  }
+
+  watchClampedDuration(playDuration, 1)
+  watchClampedDuration(restDuration, 0)
+  watchClampedDuration(crashAfterMinutes, 1, CRASH_AFTER_KEY)
+  watchClampedDuration(reopenDelaySeconds, 0, REOPEN_DELAY_KEY)
+  watch(crashEnabled, (enabled) => {
+    localStorage.setItem(CRASH_ENABLED_KEY, String(enabled))
+  }, { flush: 'sync' })
+
   function persistConfig() {
-    localStorage.setItem(PLAY_MINUTES_KEY, String(playMinutes.value))
-    localStorage.setItem(REST_MINUTES_KEY, String(restMinutes.value))
+    localStorage.setItem(PLAY_MINUTES_KEY, JSON.stringify(playDuration.value))
+    localStorage.setItem(REST_MINUTES_KEY, JSON.stringify(restDuration.value))
     localStorage.setItem(CONCURRENT_GAMES_KEY, String(concurrentGames.value))
     localStorage.setItem(MODE_KEY, mode.value)
   }
 
   function validateConfig(): string | null {
-    if (!Number.isSafeInteger(playMinutes.value) || playMinutes.value <= 0) {
+    if (!isGameIdleDurationValid(playDuration.value, 1)) {
       return 'play_minutes'
     }
-    if (!Number.isSafeInteger(restMinutes.value) || restMinutes.value < 0) {
+    if (!isGameIdleDurationValid(restDuration.value, 0)) {
       return 'rest_minutes'
+    }
+    if (
+      crashEnabled.value &&
+      (!isGameIdleDurationValid(crashAfterMinutes.value, 1) ||
+        !isGameIdleDurationValid(reopenDelaySeconds.value, 0))
+    ) {
+      return 'crash_simulation'
     }
     if (
       mode.value === 'process' &&
@@ -143,8 +188,11 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
       ])
       status.value = clearStoppedQueue(activeStatus)
       if (activeStatus && activeStatus.phase !== 'stopped') {
-        playMinutes.value = activeStatus.playMinutes
-        restMinutes.value = activeStatus.restMinutes
+        playDuration.value = activeStatus.playDuration
+        restDuration.value = activeStatus.restDuration
+        crashEnabled.value = activeStatus.crashSimulation.enabled
+        crashAfterMinutes.value = activeStatus.crashSimulation.crashAfterMinutes
+        reopenDelaySeconds.value = activeStatus.crashSimulation.reopenDelaySeconds
         concurrentGames.value = activeStatus.concurrentGames
         mode.value = activeStatus.mode
       }
@@ -182,11 +230,17 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
         ])
         if (generation !== accountGeneration) return
         persistConfig()
+        const crashSimulation: GameIdleCrashConfig = {
+          enabled: crashEnabled.value,
+          crashAfterMinutes: crashAfterMinutes.value,
+          reopenDelaySeconds: reopenDelaySeconds.value,
+        }
         status.value = await startGameIdle(
           {
             mode: mode.value,
-            playMinutes: playMinutes.value,
-            restMinutes: restMinutes.value,
+            playDuration: playDuration.value,
+            restDuration: restDuration.value,
+            crashSimulation,
             concurrentGames: effectiveConcurrentGames.value,
             cdpPort: quests.cdpPort,
             simulationPath,
@@ -265,8 +319,11 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
   }
 
   return {
-    playMinutes,
-    restMinutes,
+    playDuration,
+    restDuration,
+    crashEnabled,
+    crashAfterMinutes,
+    reopenDelaySeconds,
     concurrentGames,
     mode,
     status,

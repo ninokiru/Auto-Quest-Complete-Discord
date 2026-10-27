@@ -9,12 +9,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import DurationSettingInput from '@/components/DurationSettingInput.vue'
 import { useQuestsStore } from '@/stores/quests'
 import { navigateToTab } from '@/utils/navigate'
 import AdvancedDisclosure from './AdvancedDisclosure.vue'
 import SettingRow from './SettingRow.vue'
 import SettingsSectionCard from './SettingsSectionCard.vue'
 import SettingsStatusPanel from './SettingsStatusPanel.vue'
+import SettingsSwitch from './SettingsSwitch.vue'
 import { cn } from '@/lib/utils'
 import { settingToneClass } from './settingTones'
 
@@ -258,6 +260,32 @@ onMounted(() => {
               </Badge>
             </div>
           </SettingRow>
+        </div>
+      </div>
+
+      <div class="space-y-3">
+        <Label>{{ t('settings.keep_alive_after_quest') }}</Label>
+        <p class="text-xs text-muted-foreground">{{ t('settings.keep_alive_desc') }}</p>
+        <SettingsStatusPanel v-if="questsStore.gameQuestMode !== 'simulate'" tone="info" :icon="AlertTriangle">
+          {{ t('settings.keep_alive_simulate_only') }}
+        </SettingsStatusPanel>
+        <div class="rounded-lg border px-4">
+          <SettingRow :label="t('settings.keep_alive_enabled')">
+            <SettingsSwitch
+              :model-value="questsStore.postQuestKeepAliveEnabled"
+              :label="t('settings.keep_alive_enabled')"
+              @update:model-value="questsStore.postQuestKeepAliveEnabled = $event"
+            />
+          </SettingRow>
+          <div v-if="questsStore.postQuestKeepAliveEnabled" class="py-4">
+            <DurationSettingInput
+              :model-value="questsStore.postQuestKeepAlive"
+              :label="t('settings.keep_alive_duration')"
+              unit="minutes"
+              :min-allowed="1"
+              @update:model-value="questsStore.postQuestKeepAlive = $event"
+            />
+          </div>
         </div>
       </div>
 

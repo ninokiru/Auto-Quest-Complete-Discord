@@ -139,8 +139,22 @@ jobs:
           components: clippy, rustfmt
 
       # Tauri 2 build dependencies for Debian/Ubuntu (WebKitGTK 4.1 baseline).
+      #
+      # The WebKitGTK chain is a few hundred MB and the mirror is the slowest
+      # step of the whole pipeline: one release run sat in apt for 13 minutes
+      # while every other job was finished in three. The runner image deletes
+      # downloaded .deb files right after the install, so the archives are kept
+      # and cached here — a warm cache installs from the local archive in
+      # seconds and never touches the mirror.
+      - name: Cache apt archives
+        uses: actions/cache@v5
+        with:
+          path: /var/cache/apt/archives/*.deb
+          key: apt-${{ runner.os }}-webkit-4.1-v1
+
       - name: Install Linux dependencies
         run: |
+          sudo rm -f /etc/apt/apt.conf.d/docker-clean
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
@@ -410,9 +424,20 @@ jobs:
           targets: ${{ matrix.platform == 'macos-14' && 'aarch64-apple-darwin' || '' }}
 
       # Tauri 2 build dependencies for Debian/Ubuntu (WebKitGTK 4.1 baseline).
+      #
+      # Same cache as the quality job above: the .deb archives are kept after
+      # the install and reused, so this step does not wait for the mirror.
+      - name: Cache apt archives
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/cache@v5
+        with:
+          path: /var/cache/apt/archives/*.deb
+          key: apt-${{ runner.os }}-webkit-4.1-v1
+
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
+          sudo rm -f /etc/apt/apt.conf.d/docker-clean
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \

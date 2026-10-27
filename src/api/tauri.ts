@@ -484,11 +484,28 @@ export async function getManualCdpGameSimulation(): Promise<ManualCdpGameSimulat
 
 export type GameIdleMode = 'process' | 'cdp'
 export type GameIdlePhase = 'starting' | 'playing' | 'resting' | 'stopping' | 'error' | 'stopped'
+export type GameIdleDurationMode = 'fixed' | 'random'
+
+/** Fixed minutes/seconds or an inclusive random range; the unit is implied by the field carrying it. */
+export interface GameIdleDuration {
+  mode: GameIdleDurationMode
+  fixed: number
+  min: number
+  max: number
+}
+
+/** Optional simulated disconnect during the play window. */
+export interface GameIdleCrashConfig {
+  enabled: boolean
+  crashAfterMinutes: GameIdleDuration
+  reopenDelaySeconds: GameIdleDuration
+}
 
 export interface GameIdleConfig {
   mode: GameIdleMode
-  playMinutes: number
-  restMinutes: number
+  playDuration: GameIdleDuration
+  restDuration: GameIdleDuration
+  crashSimulation: GameIdleCrashConfig
   concurrentGames: number
   cdpPort: number
   simulationPath: string
@@ -515,8 +532,12 @@ export interface GameIdleStatus {
   sessionId: string
   mode: GameIdleMode
   phase: GameIdlePhase
+  /** Resolved duration of the most recent cycle; the specs below carry the configuration. */
   playMinutes: number
   restMinutes: number
+  playDuration: GameIdleDuration
+  restDuration: GameIdleDuration
+  crashSimulation: GameIdleCrashConfig
   concurrentGames: number
   lanes: GameIdleLane[]
   recent: GameIdleItem[]

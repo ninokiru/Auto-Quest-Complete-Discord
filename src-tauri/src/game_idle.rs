@@ -1,6 +1,7 @@
 use crate::models::DetectableGame;
 use crate::simulation_history::SimulationHistory;
 use rand::seq::SliceRandom;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
@@ -27,12 +28,102 @@ pub enum GameIdleMode {
     Cdp,
 }
 
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GameIdleDurationMode {
+    #[default]
+    Fixed,
+    Random,
+}
+
+/// A per-cycle duration that is either a constant or sampled from an inclusive
+/// range. The unit is implied by the field that carries it: minutes for a play
+/// window, seconds for a reopen delay.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GameIdleDuration {
+    pub mode: GameIdleDurationMode,
+    pub fixed: u32,
+    pub min: u32,
+    pub max: u32,
+}
+
+impl Default for GameIdleDuration {
+    fn default() -> Self {
+        Self {
+            mode: GameIdleDurationMode::Fixed,
+            fixed: 1,
+            min: 1,
+            max: 1,
+        }
+    }
+}
+
+impl GameIdleDuration {
+    fn resolve(&self) -> u32 {
+        match self.mode {
+            GameIdleDurationMode::Fixed => self.fixed,
+            // The swap guard keeps a hand-edited config from panicking the
+            // session worker before `validate` ever sees it.
+            GameIdleDurationMode::Random => {
+                let (low, high) = (self.min.min(self.max), self.min.max(self.max));
+                rand::rng().random_range(low..=high)
+            }
+        }
+    }
+
+    fn validate(&self, field: &str, minimum: u32) -> Result<(), String> {
+        let valid = match self.mode {
+            GameIdleDurationMode::Fixed => self.fixed >= minimum,
+            GameIdleDurationMode::Random => self.min >= minimum && self.min <= self.max,
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(format!(
+                "{field} must be a fixed value of at least {minimum}, or a random range where min >= {minimum} and min <= max"
+            ))
+        }
+    }
+}
+
+/// Optional simulated disconnect during a game's play window: close the game,
+/// wait, relaunch it, and keep the same play cycle going.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GameIdleCrashConfig {
+    pub enabled: bool,
+    pub crash_after_minutes: GameIdleDuration,
+    pub reopen_delay_seconds: GameIdleDuration,
+}
+
+impl Default for GameIdleCrashConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            crash_after_minutes: GameIdleDuration {
+                mode: GameIdleDurationMode::Random,
+                fixed: 10,
+                min: 5,
+                max: 15,
+            },
+            reopen_delay_seconds: GameIdleDuration {
+                mode: GameIdleDurationMode::Random,
+                fixed: 45,
+                min: 30,
+                max: 60,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GameIdleConfig {
     pub mode: GameIdleMode,
-    pub play_minutes: u32,
-    pub rest_minutes: u32,
+    pub play_duration: GameIdleDuration,
+    pub rest_duration: GameIdleDuration,
+    pub crash_simulation: GameIdleCrashConfig,
     pub concurrent_games: u32,
     pub cdp_port: u16,
     pub simulation_path: String,
@@ -40,8 +131,16 @@ pub struct GameIdleConfig {
 
 impl GameIdleConfig {
     pub fn validate(&self) -> Result<(), String> {
-        if self.play_minutes == 0 {
-            return Err("Game simulation duration must be a positive integer".to_string());
+        self.play_duration
+            .validate("Game simulation duration", 1)?;
+        self.rest_duration.validate("Rest duration", 0)?;
+        if self.crash_simulation.enabled {
+            self.crash_simulation
+                .crash_after_minutes
+                .validate("Crash delay", 1)?;
+            self.crash_simulation
+                .reopen_delay_seconds
+                .validate("Reopen delay", 0)?;
         }
         if !(1..=(MAX_CONCURRENT_GAMES as u32)).contains(&self.concurrent_games) {
             return Err(format!(
@@ -112,8 +211,14 @@ pub struct GameIdleStatus {
     /// Session-wide summary of `lanes`, plus the explicit `Stopping`, `Error`
     /// and `Stopped` states the manager sets itself.
     pub phase: GameIdlePhase,
+    /// Resolved duration of the most recent cycle; `play_duration` and
+    /// `rest_duration` carry the configured fixed-or-random spec the UI editor
+    /// restores from.
     pub play_minutes: u32,
     pub rest_minutes: u32,
+    pub play_duration: GameIdleDuration,
+    pub rest_duration: GameIdleDuration,
+    pub crash_simulation: GameIdleCrashConfig,
     pub concurrent_games: u32,
     pub lanes: Vec<GameIdleLane>,
     pub recent: Vec<GameIdleItem>,
@@ -314,6 +419,37 @@ impl IdleShared {
         }
     }
 
+    /// The lane's simulation is gone — a simulated crash closed it — so Stop
+    /// must not target a process that no longer exists.
+    fn clear_lane_running(&mut self, slot: usize) {
+        if let Some(lane) = self.lanes.iter_mut().find(|lane| lane.slot == slot) {
+            lane.running = None;
+        }
+    }
+
+    /// Parks the lane's countdown while its game is closed and returns the end
+    /// time it had. A `None` end time freezes the panel instead of counting the
+    /// outage as play; reopening re-bases both timestamps.
+    fn park_lane_countdown(&mut self, slot: usize) -> Option<i64> {
+        let frozen = self
+            .lanes
+            .iter_mut()
+            .find(|lane| lane.slot == slot)
+            .map(|lane| lane.ends_at.replace(None));
+        self.sync_lanes();
+        frozen
+    }
+
+    /// Re-bases the lane's clock by the window its game spent closed, so the
+    /// countdown resumes with the real remaining play time.
+    fn rebase_lane_window(&mut self, slot: usize, window_millis: i64, frozen_ends_at: Option<i64>) {
+        if let Some(lane) = self.lanes.iter_mut().find(|lane| lane.slot == slot) {
+            lane.started_at += window_millis;
+            lane.ends_at = frozen_ends_at.map(|ends_at| ends_at + window_millis);
+        }
+        self.sync_lanes();
+    }
+
     /// The lane is now playing. The game joins `recent` so the reel keeps
     /// showing it as played while the other lanes carry on.
     fn mark_playing(&mut self, slot: usize, play_minutes: u32) {
@@ -453,8 +589,11 @@ impl GameIdleManager {
             session_id,
             mode: config.mode,
             phase: GameIdlePhase::Starting,
-            play_minutes: config.play_minutes,
-            rest_minutes: config.rest_minutes,
+            play_minutes: config.play_duration.resolve(),
+            rest_minutes: config.rest_duration.resolve(),
+            play_duration: config.play_duration,
+            rest_duration: config.rest_duration,
+            crash_simulation: config.crash_simulation,
             concurrent_games: lanes as u32,
             lanes: Vec::new(),
             recent: Vec::new(),
@@ -782,31 +921,111 @@ async fn run_lane(
         }
 
         let play_started = Instant::now();
+        let play_minutes = config.play_duration.resolve();
         {
             let mut state = shared.lock().await;
-            state.mark_playing(slot, config.play_minutes);
+            state.mark_playing(slot, play_minutes);
+            state.status.play_minutes = play_minutes;
         }
         emit_status(&app, &shared.lock().await.status);
 
-        let play_duration = Duration::from_secs(u64::from(config.play_minutes) * 60);
-        let cancelled = tokio::select! {
-            _ = tokio::time::sleep(play_duration) => false,
-            _ = cancel.changed() => true,
-        };
-
-        if let Err(error) = stop_simulation(&simulation, presence, &app).await {
-            set_error(
-                &shared,
-                &app,
-                format!("Failed to stop {}: {}", candidate.name, error),
-            )
-            .await;
-            let _ = cancel_tx.send(true);
-            break;
+        let play_duration_secs = u64::from(play_minutes) * 60;
+        // `live_simulation` degrades to None while a simulated crash has closed
+        // the game, so cleanup and Stop requests never target a dead simulation.
+        let mut live_simulation = Some(simulation);
+        let mut crash_window = Duration::ZERO;
+        let mut cancelled = false;
+        let mut remaining_secs = play_duration_secs;
+        if let Some((crash_at, reopen_after)) =
+            crash_plan(&config.crash_simulation, play_duration_secs)
+        {
+            cancelled = wait_cancellable(Duration::from_secs(crash_at), &mut cancel).await;
+            if !cancelled {
+                let frozen_ends_at;
+                if let Some(current) = live_simulation.take() {
+                    if let Err(error) = stop_simulation(&current, presence, &app).await {
+                        set_error(
+                            &shared,
+                            &app,
+                            format!("Failed to stop {}: {}", candidate.name, error),
+                        )
+                        .await;
+                        let _ = cancel_tx.send(true);
+                        break;
+                    }
+                }
+                let closed_at;
+                {
+                    let mut state = shared.lock().await;
+                    state.clear_lane_running(slot);
+                    frozen_ends_at = state.park_lane_countdown(slot);
+                    closed_at = Instant::now();
+                }
+                emit_status(&app, &shared.lock().await.status);
+                cancelled = wait_cancellable(Duration::from_secs(reopen_after), &mut cancel).await;
+                if cancelled {
+                    crash_window = closed_at.elapsed();
+                } else {
+                    match start_simulation(&candidate, &config, presence).await {
+                        Ok(restarted) => {
+                            let window = closed_at.elapsed();
+                            crash_window = window;
+                            remaining_secs = play_duration_secs.saturating_sub(crash_at);
+                            live_simulation = Some(restarted.clone());
+                            let window_millis = window.as_millis() as i64;
+                            let mut state = shared.lock().await;
+                            state.set_lane_running(slot, restarted);
+                            state.rebase_lane_window(slot, window_millis, frozen_ends_at);
+                            emit_status(&app, &state.status);
+                        }
+                        Err(error) => {
+                            if let Some(orphan) = error.running {
+                                // The attempted rollback failed. Retain ownership
+                                // for the normal Stop retry instead of launching
+                                // the game again.
+                                shared.lock().await.set_lane_running(slot, orphan);
+                            }
+                            set_error(
+                                &shared,
+                                &app,
+                                format!(
+                                    "Failed to relaunch {} after the simulated crash: {}",
+                                    candidate.name, error.message
+                                ),
+                            )
+                            .await;
+                            let _ = cancel_tx.send(true);
+                            break;
+                        }
+                    }
+                }
+            }
         }
+        if !cancelled {
+            cancelled = wait_cancellable(Duration::from_secs(remaining_secs), &mut cancel).await;
+        }
+
+        if let Some(current) = live_simulation.as_ref() {
+            if let Err(error) = stop_simulation(current, presence, &app).await {
+                set_error(
+                    &shared,
+                    &app,
+                    format!("Failed to stop {}: {}", candidate.name, error),
+                )
+                .await;
+                let _ = cancel_tx.send(true);
+                break;
+            }
+        }
+        let rest_minutes = config.rest_duration.resolve();
         {
             let mut state = shared.lock().await;
-            state.end_play(slot, play_started.elapsed().as_secs(), config.rest_minutes);
+            state.status.rest_minutes = rest_minutes;
+            state.end_play(
+                slot,
+                play_started.elapsed().saturating_sub(crash_window).as_secs(),
+                rest_minutes,
+            );
         }
         emit_status(&app, &shared.lock().await.status);
         if let Err(error) = history
@@ -821,12 +1040,9 @@ async fn run_lane(
             break;
         }
 
-        if config.rest_minutes > 0 {
-            let rest_duration = Duration::from_secs(u64::from(config.rest_minutes) * 60);
-            let interrupted = tokio::select! {
-                _ = tokio::time::sleep(rest_duration) => false,
-                _ = cancel.changed() => true,
-            };
+        if rest_minutes > 0 {
+            let rest_duration = Duration::from_secs(u64::from(rest_minutes) * 60);
+            let interrupted = wait_cancellable(rest_duration, &mut cancel).await;
             if interrupted {
                 shared.lock().await.release_lane(slot);
                 break;
@@ -836,6 +1052,32 @@ async fn run_lane(
             shared.lock().await.release_lane(slot);
         }
     }
+}
+
+/// Sleeps until the duration elapses or the session is cancelled. Returns
+/// whether the wait was interrupted.
+async fn wait_cancellable(
+    duration: Duration,
+    cancel: &mut tokio::sync::watch::Receiver<bool>,
+) -> bool {
+    tokio::select! {
+        _ = tokio::time::sleep(duration) => false,
+        _ = cancel.changed() => true,
+    }
+}
+
+/// Decides this cycle's simulated crash: None when disabled, when the sampled
+/// moment lands at or after the game's natural end, or when the delay is zero;
+/// otherwise `(crash_at_seconds, reopen_delay_seconds)`.
+fn crash_plan(crash: &GameIdleCrashConfig, play_secs: u64) -> Option<(u64, u64)> {
+    if !crash.enabled {
+        return None;
+    }
+    let crash_at = u64::from(crash.crash_after_minutes.resolve()) * 60;
+    if crash_at == 0 || crash_at >= play_secs {
+        return None;
+    }
+    Some((crash_at, u64::from(crash.reopen_delay_seconds.resolve())))
 }
 
 /// Roll back a simulated process whose launch succeeded but whose presence
@@ -1050,6 +1292,19 @@ mod tests {
                 phase: GameIdlePhase::Starting,
                 play_minutes: 1,
                 rest_minutes: 0,
+                play_duration: GameIdleDuration {
+                    mode: GameIdleDurationMode::Fixed,
+                    fixed: 1,
+                    min: 1,
+                    max: 1,
+                },
+                rest_duration: GameIdleDuration {
+                    mode: GameIdleDurationMode::Fixed,
+                    fixed: 0,
+                    min: 0,
+                    max: 0,
+                },
+                crash_simulation: GameIdleCrashConfig::default(),
                 concurrent_games: 1,
                 lanes: vec![],
                 recent: vec![],
@@ -1071,8 +1326,19 @@ mod tests {
     fn duration_validation_rejects_zero_play_time() {
         let config = GameIdleConfig {
             mode: GameIdleMode::Cdp,
-            play_minutes: 0,
-            rest_minutes: 0,
+            play_duration: GameIdleDuration {
+                mode: GameIdleDurationMode::Fixed,
+                fixed: 0,
+                min: 0,
+                max: 0,
+            },
+            rest_duration: GameIdleDuration {
+                mode: GameIdleDurationMode::Fixed,
+                fixed: 0,
+                min: 0,
+                max: 0,
+            },
+            crash_simulation: GameIdleCrashConfig::default(),
             concurrent_games: 1,
             cdp_port: 9223,
             simulation_path: String::new(),
@@ -1081,11 +1347,125 @@ mod tests {
     }
 
     #[test]
+    fn random_duration_needs_a_ordered_range() {
+        let mut config = GameIdleConfig {
+            mode: GameIdleMode::Cdp,
+            play_duration: GameIdleDuration {
+                mode: GameIdleDurationMode::Random,
+                fixed: 10,
+                min: 5,
+                max: 15,
+            },
+            rest_duration: GameIdleDuration {
+                mode: GameIdleDurationMode::Fixed,
+                fixed: 0,
+                min: 0,
+                max: 0,
+            },
+            crash_simulation: GameIdleCrashConfig::default(),
+            concurrent_games: 1,
+            cdp_port: 9223,
+            simulation_path: String::new(),
+        };
+        assert!(config.validate().is_ok());
+        // A sampled duration always lands inside the configured range.
+        for _ in 0..16 {
+            let resolved = config.play_duration.resolve();
+            assert!((5..=15).contains(&resolved));
+        }
+
+        config.play_duration.min = 20;
+        config.play_duration.max = 10;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn crash_simulation_validation_gates_only_the_enabled_config() {
+        let mut config = GameIdleConfig {
+            mode: GameIdleMode::Cdp,
+            play_duration: GameIdleDuration {
+                mode: GameIdleDurationMode::Fixed,
+                fixed: 30,
+                min: 30,
+                max: 30,
+            },
+            rest_duration: GameIdleDuration {
+                mode: GameIdleDurationMode::Fixed,
+                fixed: 0,
+                min: 0,
+                max: 0,
+            },
+            crash_simulation: GameIdleCrashConfig::default(),
+            concurrent_games: 1,
+            cdp_port: 9223,
+            simulation_path: String::new(),
+        };
+        // A disabled crash simulation is never validated.
+        config.crash_simulation.crash_after_minutes = GameIdleDuration {
+            mode: GameIdleDurationMode::Fixed,
+            fixed: 0,
+            min: 0,
+            max: 0,
+        };
+        assert!(config.validate().is_ok());
+
+        config.crash_simulation.enabled = true;
+        assert!(config.validate().is_err());
+
+        config.crash_simulation.crash_after_minutes = GameIdleDuration {
+            mode: GameIdleDurationMode::Fixed,
+            fixed: 10,
+            min: 10,
+            max: 10,
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn crash_plan_requires_an_enabled_config_inside_the_play_window() {
+        let disabled = GameIdleCrashConfig::default();
+        assert_eq!(crash_plan(&disabled, 3600), None);
+
+        let mut crash = GameIdleCrashConfig {
+            enabled: true,
+            ..GameIdleCrashConfig::default()
+        };
+        crash.crash_after_minutes = GameIdleDuration {
+            mode: GameIdleDurationMode::Fixed,
+            fixed: 10,
+            min: 10,
+            max: 10,
+        };
+        crash.reopen_delay_seconds = GameIdleDuration {
+            mode: GameIdleDurationMode::Fixed,
+            fixed: 45,
+            min: 45,
+            max: 45,
+        };
+        assert_eq!(crash_plan(&crash, 3600), Some((600, 45)));
+
+        // A crash moment at or after the natural end of play never triggers.
+        assert_eq!(crash_plan(&crash, 1800), None);
+        assert_eq!(crash_plan(&crash, 600), None);
+    }
+
+    #[test]
     fn concurrent_games_is_bounded_and_cdp_stays_single_lane() {
         let mut config = GameIdleConfig {
             mode: GameIdleMode::Process,
-            play_minutes: 1,
-            rest_minutes: 0,
+            play_duration: GameIdleDuration {
+                mode: GameIdleDurationMode::Fixed,
+                fixed: 1,
+                min: 1,
+                max: 1,
+            },
+            rest_duration: GameIdleDuration {
+                mode: GameIdleDurationMode::Fixed,
+                fixed: 0,
+                min: 0,
+                max: 0,
+            },
+            crash_simulation: GameIdleCrashConfig::default(),
             concurrent_games: 1,
             cdp_port: 9223,
             simulation_path: "C:/simulations".to_string(),

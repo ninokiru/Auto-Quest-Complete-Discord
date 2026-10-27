@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
-import type { Quest, DetectableGame, DesktopClientArg, ExcludedQuest, GameQuestMode, PlatformCapabilities, QuestTaskStatus, AccountQuestGroup } from '@/api/tauri'
+import type { Quest, DetectableGame, DesktopClientArg, ExcludedQuest, GameIdleDuration, GameQuestMode, PlatformCapabilities, QuestTaskStatus, AccountQuestGroup } from '@/api/tauri'
 import {
   firstProgressValue,
   firstStartableTask,
@@ -17,6 +17,7 @@ import {
   questApplicationId,
 } from '@/utils/questTasks'
 import { resolveSimulationExecutable } from '@/utils/executables'
+import { clampGameIdleDuration, loadGameIdleDuration, resolveGameIdleDuration } from '@/utils/durationSetting'
 import { announceQuestEnd } from '@/utils/questNotifier'
 import { useNotificationsStore } from '@/stores/notifications'
 
@@ -155,6 +156,11 @@ const STORAGE_SIMULATION_PATH_KEY = 'questHelper_simulationPath'
 const STORAGE_DETECTABLE_GAMES_KEY = 'questHelper_detectableGames'
 const STORAGE_DETECTABLE_GAMES_AT_KEY = 'questHelper_detectableGamesAt'
 const STORAGE_RECENT_GAMES_KEY = 'questHelper_recentGameIds'
+const STORAGE_KEEP_ALIVE_ENABLED_KEY = 'questHelper_postQuestKeepAliveEnabled'
+const STORAGE_KEEP_ALIVE_KEY = 'questHelper_postQuestKeepAlive'
+
+/** How long a completed game quest keeps its simulated game connected. */
+const DEFAULT_KEEP_ALIVE_DURATION: GameIdleDuration = { mode: 'random', fixed: 10, min: 5, max: 15 }
 
 /** How long a stored game list may serve before the next fetch replaces it. */
 const DETECTABLE_GAMES_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000
@@ -369,6 +375,138 @@ export const useQuestsStore = defineStore('quests', () => {
     initialGamePolling = 120
   }
   const gamePollingInterval = ref(initialGamePolling)
+
+  // Post-quest keep-alive: a completed game quest keeps its simulated game
+  // (and the Discord presence it holds) connected for a while before the
+  // teardown runs. Only process-simulated games qualify — a CDP quest drops
+  // its spoofed presence before the completion reaches this store, so there
+  // would be nothing left to hold open.
+  const postQuestKeepAliveEnabled = ref(localStorage.getItem(STORAGE_KEEP_ALIVE_ENABLED_KEY) === 'true')
+  const postQuestKeepAlive = ref(loadGameIdleDuration(STORAGE_KEEP_ALIVE_KEY, DEFAULT_KEEP_ALIVE_DURATION, 1))
+
+  watch(postQuestKeepAliveEnabled, (enabled) => {
+    localStorage.setItem(STORAGE_KEEP_ALIVE_ENABLED_KEY, String(enabled))
+  }, { flush: 'sync' })
+  watch(postQuestKeepAlive, (value) => {
+    const next = clampGameIdleDuration(value, 1)
+    if (next !== value) postQuestKeepAlive.value = next
+    localStorage.setItem(STORAGE_KEEP_ALIVE_KEY, JSON.stringify(next))
+  }, { flush: 'sync' })
+
+  /** When the held game closes, so the UI can show the remaining time. */
+  const keepAliveEndsAt = ref<number | null>(null)
+  let keepAliveTimer: ReturnType<typeof setTimeout> | null = null
+  let keepAliveQuestId: string | null = null
+  let keepAliveGeneration = 0
+  /**
+   * The slot the hold belongs to, captured while it is still in `runningQuests`.
+   * An account switch clears that list, so the hold cannot look its own slot up
+   * again when it ends.
+   */
+  let keepAliveSlot: RunningQuest | null = null
+
+  /** Webview timers clamp delays above ~2^31 ms, so a long hold waits in chunks. */
+  const KEEP_ALIVE_MAX_TIMER_MS = 2_147_000_000
+
+  /** Drop a pending hold without touching the game it holds open. */
+  function cancelKeepAlive(): void {
+    if (keepAliveTimer !== null) {
+      clearTimeout(keepAliveTimer)
+      keepAliveTimer = null
+    }
+    keepAliveQuestId = null
+    keepAliveSlot = null
+    keepAliveEndsAt.value = null
+    keepAliveGeneration++
+  }
+
+  /**
+   * Drop a pending hold and close the game it was holding open. With the timer
+   * gone, nothing else would ever tear that game down.
+   */
+  async function cancelKeepAliveAndStopGame(): Promise<void> {
+    const slot = keepAliveSlot
+    cancelKeepAlive()
+    if (!slot) return
+    try {
+      await finalizeQuestActivity(slot)
+    } catch (cleanupError) {
+      console.error('Failed to close the game held open by keep-alive:', cleanupError)
+    }
+  }
+
+  /**
+   * Hold a finished quest's game open for the configured time. The hold defers
+   * the teardown only: the completion itself is announced right away.
+   *
+   * The slot stays in `runningQuests` for the whole hold, so the account's
+   * single game slot remains taken and no second game quest can start while
+   * the first one's game is still connected. The completion claim stays too, so
+   * polling and late events cannot finalize the same slot twice.
+   *
+   * Returns false when no hold applies — the feature is off, or the quest never
+   * owned a simulated process (a CDP or heartbeat quest has nothing to hold).
+   */
+  function scheduleKeepAliveTeardown(questId: string, slot: RunningQuest): boolean {
+    if (!postQuestKeepAliveEnabled.value) return false
+    if (!slot.gameExe) return false
+    if (keepAliveQuestId === questId) return true
+    cancelKeepAlive()
+    const minutes = resolveGameIdleDuration(postQuestKeepAlive.value)
+    keepAliveQuestId = questId
+    keepAliveSlot = slot
+    keepAliveEndsAt.value = Date.now() + minutes * 60_000
+    const generation = keepAliveGeneration
+    const wait = (remainingMs: number) => {
+      keepAliveTimer = setTimeout(() => {
+        keepAliveTimer = null
+        if (generation !== keepAliveGeneration) return
+        const leftMs = (keepAliveEndsAt.value ?? 0) - Date.now()
+        // A clamped or early-firing timer must not close the game sooner than
+        // the configured end, so it waits out the rest.
+        if (leftMs > 0) {
+          wait(Math.min(leftMs, KEEP_ALIVE_MAX_TIMER_MS))
+          return
+        }
+        void teardownHeldQuest(questId)
+      }, Math.min(remainingMs, KEEP_ALIVE_MAX_TIMER_MS))
+    }
+    wait(minutes * 60_000)
+    return true
+  }
+
+  /** Close a held quest's game and free its slot. */
+  async function teardownHeldQuest(questId: string) {
+    const slot = keepAliveSlot?.questId === questId ? keepAliveSlot : null
+    cancelKeepAlive()
+    if (!slot) return
+    // The slot leaves the running list and its handles are cleared before the
+    // first await: a Stop that lands while the native teardown is in flight
+    // must not tear the same process and history segment down a second time.
+    const executable = slot.gameExe
+    const appId = slot.simulationAppId
+    slot.gameExe = null
+    slot.simulationAppId = null
+    releaseQuestSlot(questId)
+    try {
+      if (executable) await stopSimulatedGame(executable)
+    } catch (cleanupError) {
+      error.value = errorMessage(cleanupError)
+    }
+    if (slot.rpcConnected) {
+      slot.rpcConnected = false
+      await emit('event_disconnect').catch(() => undefined)
+    }
+    if (appId) {
+      try {
+        await stopGameSimulationUsage(appId)
+      } catch (cleanupError) {
+        error.value = errorMessage(cleanupError)
+      }
+    }
+    syncPolling()
+    if (runningQuests.value.length === 0) cleanupListeners()
+  }
 
   // Game Quest Mode - 'simulate' runs a fake game exe, 'heartbeat' sends direct API heartbeats, 'cdp' injects via CDP
   const STORAGE_GAME_QUEST_MODE_KEY = 'questHelper_gameQuestMode'
@@ -793,18 +931,24 @@ export const useQuestsStore = defineStore('quests', () => {
     await finishSlotSimulationUsage(slot)
   }
 
-  function releaseQuestSlot(questId: string) {
-    closeQuestSlot(questId)
-    claimedCompletions.delete(questId)
-    // A freed slot is what a deferred queue item waits on: while a game quest
-    // held one, `processQueue` passed over the game quests behind it instead of
-    // failing them. Every end path comes through here — completion, failure and a
-    // hand Stop — so the refill is scheduled once rather than at each caller.
+  /** A freed slot is what a deferred queue item waits on: while a game quest
+   *  held one, `processQueue` passed over the game quests behind it instead of
+   *  failing them. Every end path comes through the release — completion,
+   *  failure and a hand Stop — so the refill is scheduled once rather than at
+   *  each caller. A keep-alive hold schedules it too: the slot stays taken
+   *  there, but the items behind the finished quest are not game quests. */
+  function scheduleQueueRefill() {
     if (isQueueRunning.value && questQueue.value.length > 0) {
       setTimeout(() => {
         if (isQueueRunning.value) void processQueue()
       }, 2000)
     }
+  }
+
+  function releaseQuestSlot(questId: string) {
+    closeQuestSlot(questId)
+    claimedCompletions.delete(questId)
+    scheduleQueueRefill()
   }
 
   /** Whether a quest of another account is in flight. Quest events name no account,
@@ -909,6 +1053,9 @@ export const useQuestsStore = defineStore('quests', () => {
    *  the account being left cannot commit into this one's list.
    */
   function resetForAccountSwitch(leavingAccountId: string | null) {
+    // A held game belongs to a quest that already ended, so it is not carried
+    // over to the next account: it is closed here.
+    void cancelKeepAliveAndStopGame()
     const carried = [...accountTasks.value]
     for (const slot of runningQuests.value) {
       if (!slot.hasBackendTask) continue
@@ -1144,27 +1291,37 @@ export const useQuestsStore = defineStore('quests', () => {
       await failQuest(questId, failedWith)
       return
     }
-    try {
-      await finalizeQuestActivity(slot)
-    } catch (cleanupError) {
-      // Keep the queue in place until both native activity and its history
-      // segment have been finalized. The user can retry cleanup with Stop.
-      claimedCompletions.delete(questId)
-      error.value = errorMessage(cleanupError)
-      isQueueRunning.value = false
-      if (runningQuests.value.length === 0) {
-        stopProgressSimulation()
-        cleanupListeners()
-        stopPolling()
+    // A finished game quest can keep its game connected for a while. The hold
+    // defers the teardown, not the announcement: the user learns the quest
+    // ended right away.
+    const held = scheduleKeepAliveTeardown(questId, slot)
+    if (held) {
+      slot.serverProgress = 100
+      slot.localProgress = 100
+    } else {
+      try {
+        await finalizeQuestActivity(slot)
+      } catch (cleanupError) {
+        // Keep the queue in place until both native activity and its history
+        // segment have been finalized. The user can retry cleanup with Stop.
+        claimedCompletions.delete(questId)
+        error.value = errorMessage(cleanupError)
+        isQueueRunning.value = false
+        if (runningQuests.value.length === 0) {
+          stopProgressSimulation()
+          cleanupListeners()
+          stopPolling()
+        }
+        return
       }
-      return
+      releaseQuestSlot(questId)
     }
 
-    releaseQuestSlot(questId)
     announceQuestEnd(questName)
     useNotificationsStore().push('quest_completed', { name: questName })
     questQueue.value = questQueue.value.filter(item => item.id !== questId)
     syncPolling()
+    if (held) scheduleQueueRefill()
     if (runningQuests.value.length === 0) cleanupListeners()
     void fetchQuests(true, true)
   }
@@ -1178,22 +1335,29 @@ export const useQuestsStore = defineStore('quests', () => {
       await failQuest(questId, failedWith)
       return
     }
-    try {
-      await finalizeQuestActivity(slot)
-    } catch (cleanupError) {
-      claimedCompletions.delete(questId)
-      error.value = errorMessage(cleanupError)
-      if (runningQuests.value.length === 0) {
-        stopProgressSimulation()
-        cleanupListeners()
-        stopPolling()
+    const held = scheduleKeepAliveTeardown(questId, slot)
+    if (held) {
+      slot.serverProgress = 100
+      slot.localProgress = 100
+    } else {
+      try {
+        await finalizeQuestActivity(slot)
+      } catch (cleanupError) {
+        claimedCompletions.delete(questId)
+        error.value = errorMessage(cleanupError)
+        if (runningQuests.value.length === 0) {
+          stopProgressSimulation()
+          cleanupListeners()
+          stopPolling()
+        }
+        return
       }
-      return
+      releaseQuestSlot(questId)
     }
-    releaseQuestSlot(questId)
     announceQuestEnd(questName)
     useNotificationsStore().push('quest_completed', { name: questName })
     syncPolling()
+    if (held) scheduleQueueRefill()
     if (runningQuests.value.length === 0) cleanupListeners()
     void fetchQuests(true, true)
   }
@@ -1249,6 +1413,9 @@ export const useQuestsStore = defineStore('quests', () => {
   async function stopRunningQuest(questId: string) {
     const slot = questSlot(questId)
     if (!slot) return
+    // Stopping the held quest means "close it now": the pending teardown is
+    // dropped, and the cleanup below does the work.
+    if (keepAliveQuestId === questId) cancelKeepAlive()
     stopping.value = true
     const failures: string[] = []
     try {
@@ -1912,6 +2079,10 @@ export const useQuestsStore = defineStore('quests', () => {
     stopping.value = true
     console.log('questsStore.stop() called')
 
+    // Stopping everything means "close it now": the pending keep-alive teardown
+    // is dropped, and the cleanup loop below tears the held game down.
+    cancelKeepAlive()
+
     stopProgressSimulation()
 
     try {
@@ -2360,6 +2531,9 @@ export const useQuestsStore = defineStore('quests', () => {
   }
 
   function resetForLogout() {
+    // A held game belongs to a quest that already ended, so it is not carried
+    // over past the sign-out: it is closed here.
+    void cancelKeepAliveAndStopGame()
     orbsFetchGeneration++
     questsFetchGeneration++
     // Invalidate any in-flight `processQueue()` so it stops committing active
@@ -2507,6 +2681,9 @@ export const useQuestsStore = defineStore('quests', () => {
     resetSimulationPath,
     activityCheckpointMin,
     activityCheckpointMax,
+    postQuestKeepAliveEnabled,
+    postQuestKeepAlive,
+    keepAliveEndsAt,
     activeQuestId,
     activeQuestType,
     activeQuestProgress,
