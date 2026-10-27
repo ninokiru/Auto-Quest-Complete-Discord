@@ -1447,7 +1447,9 @@ mod tests {
         assert_eq!(crash_plan(&crash, 3600), Some((600, 45)));
 
         // A crash moment at or after the natural end of play never triggers.
-        assert_eq!(crash_plan(&crash, 1800), None);
+        // The crash is configured for 10 minutes, so a 5-minute play window
+        // ends before it and a 10-minute window ends exactly with it.
+        assert_eq!(crash_plan(&crash, 300), None);
         assert_eq!(crash_plan(&crash, 600), None);
     }
 
