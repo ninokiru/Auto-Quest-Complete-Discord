@@ -113,9 +113,23 @@ export function formatVersionLabel(version: string): string {
 const RELEASES_API = 'https://api.github.com/repos/ninokiru/Auto-Quest-Complete-Discord/releases'
 const DISMISS_KEY = 'aqc_update_dismissed_tags'
 const RELEASE_LOG_LIMIT = 15
+// The log used to be cached for the whole session, so a release published while
+// the window stayed open never appeared. A short window keeps the GitHub quota
+// safe while still refreshing the list the next time the tab is opened.
+const RELEASE_LOG_TTL_MS = 5 * 60 * 1000
+
 // GitHub can hold a request open indefinitely behind a captive portal, which used to
 // leave the header spinning on "checking" until the app restarted.
 const FETCH_TIMEOUT_MS = 15_000
+
+/** Whether a release-list snapshot taken at `fetchedAt` is still fresh. */
+export function releaseLogIsFresh(
+    fetchedAt: number | null,
+    now: number = Date.now(),
+    ttlMs: number = RELEASE_LOG_TTL_MS,
+): boolean {
+    return fetchedAt !== null && now - fetchedAt < ttlMs
+}
 
 async function fetchGithubJson(url: string): Promise<unknown> {
     const controller = new AbortController()
@@ -175,6 +189,7 @@ export const useVersionStore = defineStore('version', () => {
     let versionInfoGeneration = 0
     let updateCheckGeneration = 0
     let releaseLogGeneration = 0
+    let releaseLogFetchedAt: number | null = null
 
     const releaseLog = ref<ReleaseInfo[]>([])
     const releaseLogError = ref<string | null>(null)
@@ -218,6 +233,22 @@ export const useVersionStore = defineStore('version', () => {
         return dismissedUpdateTags.value.includes(tag) ? null : tag
     })
 
+    /**
+     * The release the update dialog acts on. Unlike `pendingUpdateTag` this is not
+     * silenced by a dismissal, so the dialog can still be opened on demand — from
+     * the Home banner, for example — after the announcement was postponed.
+     */
+    const targetUpdateTag = computed(() =>
+        hasUpdate.value ? latestRelease.value?.tag_name ?? null : null,
+    )
+
+    const updateDialogOpen = ref(false)
+
+    function openUpdateDialog() {
+        if (!targetUpdateTag.value) return
+        updateDialogOpen.value = true
+    }
+
     async function loadCurrentVersion() {
         const generation = ++versionInfoGeneration
         try {
@@ -250,8 +281,12 @@ export const useVersionStore = defineStore('version', () => {
             // The list endpoint is newest-first, the /latest endpoint is one object.
             const release = includePreRelease ? toReleaseList(data)[0] : toReleaseInfo(data)
             if (!release) throw new Error('No releases found')
+            const previousTag = latestRelease.value?.tag_name ?? null
             latestRelease.value = release
             hasChecked.value = true
+            // A newer tag means the cached log is out of date, so the next open of
+            // the update log refetches instead of showing the previous release.
+            if (previousTag !== release.tag_name) releaseLogLoaded.value = false
         } catch (e) {
             if (generation !== updateCheckGeneration) return
             checkError.value = e instanceof Error ? e.message : 'Failed to check for updates'
@@ -272,11 +307,13 @@ export const useVersionStore = defineStore('version', () => {
     }
 
     /**
-     * Fetch the release list that backs the update log. Cached after the first
-     * success because the panel can be opened repeatedly in one session.
+     * Fetch the release list that backs the update log. Cached for a few minutes —
+     * long enough to stop a user flipping between tabs from spending the GitHub
+     * quota, short enough that a release published mid-session shows up.
      */
     async function loadReleaseLog(force = false) {
-        if (!force && (releaseLogLoaded.value || isReleaseLogLoading.value)) return
+        if (!force && (isReleaseLogLoading.value
+            || (releaseLogLoaded.value && releaseLogIsFresh(releaseLogFetchedAt)))) return
         const generation = ++releaseLogGeneration
 
         isReleaseLogLoading.value = true
@@ -288,6 +325,7 @@ export const useVersionStore = defineStore('version', () => {
             const releases = toReleaseList(data)
             releaseLog.value = releases
             releaseLogLoaded.value = true
+            releaseLogFetchedAt = Date.now()
 
             // The list is newest-first, so it can also correct a stale /latest result —
             // but only within the channel the user asked for.
@@ -345,6 +383,9 @@ export const useVersionStore = defineStore('version', () => {
         releaseLogLoaded,
         dismissedUpdateTags,
         pendingUpdateTag,
+        targetUpdateTag,
+        updateDialogOpen,
+        openUpdateDialog,
         loadCurrentVersion,
         checkForUpdate,
         loadReleaseLog,

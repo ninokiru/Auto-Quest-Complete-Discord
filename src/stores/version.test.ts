@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compareVersions, formatVersionLabel } from './version'
+import { compareVersions, formatVersionLabel, releaseLogIsFresh } from './version'
 
 describe('compareVersions', () => {
   it('orders numerical cores numerically', () => {
@@ -42,5 +42,18 @@ describe('formatVersionLabel', () => {
   it('leaves plain and pre-release versions untouched', () => {
     expect(formatVersionLabel('0.0.5')).toBe('0.0.5')
     expect(formatVersionLabel('v0.0.5-rc1')).toBe('0.0.5-rc1')
+  })
+})
+
+describe('releaseLogIsFresh', () => {
+  const now = 1_000_000
+
+  it('treats a log that was never fetched as stale', () => {
+    expect(releaseLogIsFresh(null, now)).toBe(false)
+  })
+
+  it('reuses a snapshot inside the TTL and drops it once the TTL passes', () => {
+    expect(releaseLogIsFresh(now - 1_000, now, 60_000)).toBe(true)
+    expect(releaseLogIsFresh(now - 60_000, now, 60_000)).toBe(false)
   })
 })

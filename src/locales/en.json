@@ -281,6 +281,7 @@
     "version_prerelease": "Beta",
     "version_latest": "Latest",
     "version_checking": "Checking...",
+    "update_check_failed": "Could not check for updates: {error}",
     "diagnostics": "Diagnostics",
     "diagnostics_desc": "Export application logs for troubleshooting issues.",
     "diagnostics_info": "Logs are automatically sanitized to remove sensitive data like tokens and personal information. Only logs from this session are included.",

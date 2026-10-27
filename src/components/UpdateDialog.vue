@@ -26,7 +26,10 @@ const versionStore = useVersionStore()
 const notifications = useNotificationsStore()
 const questsStore = useQuestsStore()
 
-const visible = ref(false)
+const visible = computed({
+  get: () => versionStore.updateDialogOpen,
+  set: (open: boolean) => { versionStore.updateDialogOpen = open },
+})
 const release = computed(() => versionStore.latestRelease)
 const publishedText = computed(() =>
   formatPublishedDate(release.value?.published_at, String(locale.value || 'en')),
@@ -76,7 +79,9 @@ function downloadLatest() {
  * dismissal: the tag must stay announced if the relaunch never happens.
  */
 async function installUpdate() {
-  const tag = versionStore.pendingUpdateTag
+  // `targetUpdateTag` is not silenced by a postponed announcement, so the panel
+  // still installs the release it is showing after being reopened on demand.
+  const tag = versionStore.targetUpdateTag
   if (typeof tag !== 'string' || !tag || installing.value) return
 
   installing.value = true
@@ -104,7 +109,7 @@ async function installUpdate() {
 }
 
 function postpone() {
-  const tag = versionStore.pendingUpdateTag
+  const tag = versionStore.targetUpdateTag
   if (typeof tag === 'string' && tag) versionStore.dismissUpdate(tag)
   visible.value = false
 }
@@ -137,6 +142,12 @@ watch(() => versionStore.pendingUpdateTag, (tag) => {
     current: versionStore.displayVersion,
     url: release.value?.html_url,
   })
+})
+
+// The panel can also be opened on demand, where the previous attempt's failure
+// line would describe something that is no longer on screen.
+watch(() => versionStore.updateDialogOpen, (open) => {
+  if (open) updateError.value = ''
 })
 </script>
 

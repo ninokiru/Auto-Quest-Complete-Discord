@@ -276,6 +276,22 @@ onUnmounted(clearTapResetTimer)
           </div>
         </div>
 
+        <!-- A failed check used to leave no trace: no dialog, no banner, and no
+             difference on this page from "already up to date". -->
+        <SettingsStatusPanel v-if="versionStore.checkError" tone="warning" :icon="AlertTriangle">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span>{{ t('settings.update_check_failed', { error: versionStore.checkError }) }}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="versionStore.isChecking"
+              @click="versionStore.checkForUpdate()"
+            >
+              {{ t('toast.retry') }}
+            </Button>
+          </div>
+        </SettingsStatusPanel>
+
         <!-- Postponing an update silences that tag forever, so the only way back is
              here. The row hides itself once there is nothing to restore. -->
         <div

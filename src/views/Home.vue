@@ -5,21 +5,31 @@
       v-if="versionStore.hasUpdate && versionStore.latestRelease" 
       class="mb-6 p-4 bg-primary/10 border border-primary/30 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
     >
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center">
+      <div class="flex min-w-0 items-center gap-3">
+        <div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
           <ArrowUpCircle class="w-5 h-5 text-primary" />
         </div>
-        <div>
+        <div class="min-w-0">
           <p class="font-semibold text-primary">{{ t('version.update_available') }}</p>
           <p class="text-sm text-muted-foreground">
             {{ t('version.update_desc', { version: formatVersionLabel(versionStore.latestRelease.tag_name), current: versionStore.displayVersion }) }}
           </p>
         </div>
       </div>
-      <Button @click="openUpdatePage" class="gap-2 shrink-0">
-        <ExternalLink class="w-4 h-4" />
-        {{ t('version.download') }}
-      </Button>
+      <div class="flex flex-wrap items-center gap-2 shrink-0">
+        <Button v-if="canSelfUpdate" class="gap-2" @click="versionStore.openUpdateDialog()">
+          <ArrowDownCircle class="w-4 h-4" />
+          {{ t('notify.update.button') }}
+        </Button>
+        <Button
+          :variant="canSelfUpdate ? 'outline' : 'default'"
+          @click="openUpdatePage"
+          class="gap-2"
+        >
+          <ExternalLink class="w-4 h-4" />
+          {{ t('version.download') }}
+        </Button>
+      </div>
     </div>
 
     <!-- Discord reports an enrollment cooldown on /quests/@me. Without this the
@@ -664,6 +674,7 @@ import {
 import { cn } from '@/lib/utils'
 import {
   Activity,
+  ArrowDownCircle,
   ArrowUpCircle,
   ExternalLink,
   Gamepad2,
@@ -739,6 +750,10 @@ function simulationExesFor(game: DetectableGame, capabilities: PlatformCapabilit
 }
 
 const isLinuxHost = computed(() => questsStore.platformCapabilities?.os === 'linux')
+
+// The banner used to lead to the release page only, so a postponed announcement
+// left the in-app installer with no way back in.
+const canSelfUpdate = computed(() => questsStore.platformCapabilities?.selfUpdate === true)
 
 /** Open the custom process-name dialog, pre-filled with whatever Discord's own
  *  list supports for this title (empty when there is no such evidence). */

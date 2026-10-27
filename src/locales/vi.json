@@ -279,6 +279,7 @@
     "version_prerelease": "Beta",
     "version_latest": "Mới nhất",
     "version_checking": "Đang kiểm tra...",
+    "update_check_failed": "Không kiểm tra được bản cập nhật: {error}",
     "diagnostics": "Chẩn đoán",
     "diagnostics_desc": "Xuất nhật ký ứng dụng để khắc phục sự cố.",
     "diagnostics_info": "Nhật ký được tự động vệ sinh để xóa dữ liệu nhạy cảm như mã thông báo và thông tin cá nhân. Chỉ có nhật ký từ phiên này được bao gồm.",
