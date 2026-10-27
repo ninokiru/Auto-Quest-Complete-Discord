@@ -131,8 +131,7 @@ pub struct GameIdleConfig {
 
 impl GameIdleConfig {
     pub fn validate(&self) -> Result<(), String> {
-        self.play_duration
-            .validate("Game simulation duration", 1)?;
+        self.play_duration.validate("Game simulation duration", 1)?;
         self.rest_duration.validate("Rest duration", 0)?;
         if self.crash_simulation.enabled {
             self.crash_simulation
@@ -1023,7 +1022,10 @@ async fn run_lane(
             state.status.rest_minutes = rest_minutes;
             state.end_play(
                 slot,
-                play_started.elapsed().saturating_sub(crash_window).as_secs(),
+                play_started
+                    .elapsed()
+                    .saturating_sub(crash_window)
+                    .as_secs(),
                 rest_minutes,
             );
         }
