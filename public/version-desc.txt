@@ -2,28 +2,49 @@
 
 Auto-complete Discord **video, stream and game quests** from one window. Tauri 2 + Rust behind the scenes, Vue 3 on the surface, and no cloud service in between: everything runs on your machine.
 
-## v0.0.5 L1#3 — a patch on 0.0.5
+## v0.0.5 L2#1 — a new quest row, a game picker, and a calmer window
 
-Everything that shipped in 0.0.5, L1#1 and L1#2 is still here. This patch makes the idle game session less metronome-like, makes an update you postponed reachable again, and repairs the game-idle header at the default window size.
+Everything that shipped in 0.0.5 and in L1#1 to L1#3 is still here. This patch rebuilds the quest list, the account panel and the floating progress panel as one readable row design, adds a picker for the games the idle mode hangs, fixes the progress bar in the per-account quest list, keeps the queue honest when the backend is busy, and takes the stutter out of the window. The CDP connection fix prepared for L1#4 is part of this build as well.
 
-### New
+### Added
 
-- **Fixed or random durations.** Every game-idle timer — play window, rest window, crash delay, reopen delay — now takes either a fixed value or a random one inside a range you set, so a session no longer starts and stops on the same minute every time.
-- **Crash simulation.** The idle runner can close the running game at a random moment inside its play window and reopen it a short while later, the way a real disconnect does, then carry the remaining time over to the new session.
-- **Post-quest connection.** A new switch in Quest behaviour keeps a simulated game connected for a while after its quest completes, so a short quest no longer drops the game the second it finishes. It applies to process-simulated quests only, and the panel says so while another mode is selected.
+- **Pick the games the idle mode hangs.** The Game Idle panel now has a **Games** button that opens the list Discord detected, with a search box, a "use all games" shortcut and a checkbox per game. The selection is remembered between runs, the number of compatible executables is shown per game, and a game with no usable executable is greyed out with the reason instead of failing when it is started.
 
 ### Fixed
 
-- **An update you postponed was out of reach.** Dismissing the update dialog hid that release for the rest of the session, and the only way back to the in-app installer was a link buried in Settings. The Home banner now carries an **Update now** button that reopens the installer, and the release list is refreshed on a short timer instead of being cached until restart — a release published while the window stayed open used to never appear.
-- **A failed update check looked like "up to date".** When GitHub could not be reached, nothing was said anywhere in the app. Settings → About now names the error and offers a retry.
-- **The game-idle header collapsed.** At the default 1200px window the start button was wrapping into the title; the title and controls now keep their own rows, and the duplicated rest-time description line is gone.
+- **A quest that was not running showed a running bar instead of the value it had banked.** Discord stores progress per task, and one quest can list several tasks — a desktop-play task next to a checkpoint Activity, for example. The card read whichever entry came first, so a quest that was halfway through was measured against the wrong task and the bar jumped between numbers while the quest kept its progress. The quest card, the running slot and the account panel now all read the one task the app actually drives, and a quest that is not running keeps the value it has banked.
+- **A quest could borrow another task's number.** A checkpoint count is not a duration: reading "2 of 3 checkpoints" as seconds turned it into 0.3%. A lone progress entry is now only borrowed when the quest runs a single task; a quest with several tasks shows the value of its own task, or nothing.
+- **One account runs one game quest, and the account panel now says so.** "Run all" used to start several game quests for the same account, and the backend refused every one after the first. The panel starts a single game quest per account and greys the others out with the reason, instead of failing them one by one.
+- **A busy backend no longer loses a quest.** When the backend refused a start because it was already busy, the quest was dropped from the queue and never ran again. It now waits for a free slot and is retried, and the queue is refilled as soon as a running quest ends.
+- **The card's own Start button and "Run all" ran the same quest two different ways.** A quest that lists a game task next to a video task was started on the video task by its button and on the game task by the batch — a different duration and a different progress unit for one quest. Both now drive the task the app actually runs, so a quest behaves the same however it is started.
+- **A dialog ran outside the window.** The dialog that asks what to do with a Discord still running in CDP mode has four buttons, and their long labels pushed the row past the panel — the last button was cut off at the window edge. The buttons now wrap, the long ones break their text over two lines, and every dialog is capped to the window's height and scrolls instead of spilling out.
+- **A quest was judged on a task it does not run.** One quest can list several tasks, and the card, the batch and the account panel each asked that question in its own way. A quest that lists a video task next to a checkpoint Activity was taken for a video quest, so the app ran it as a three-second game and read "3 checkpoints" as three seconds. A cloud game listed next to a video task was started through the local game simulator instead of the cloud-game path, and a real Stream listed next to a video task was counted as a game quest and took the account's game slot. Every one of those questions is now asked of the task the app actually drives.
+- **The list promised something the button did not do.** A quest that needs the attached Discord client — a checkpoint Activity — was listed as ready to run on a machine without CDP, because the list judged it by its video task. The list, the card and the batch now read the same task, so what the list promises is what the button does.
+- **A quest of another account ran on a different task than the same quest here.** The account panel posts with that account's own token and picked its task by its own rule, so the same quest could bank its progress on two different tasks in two places. It now drives the task the local batch drives.
+- **Stopping a simulated game could take a real game with it.** On Windows, Stop killed every process that shared the simulated file name, so a game the player had open was closed as well — and when the kill failed, the runner kept running while the app reported it as stopped. The app now holds the handle of the process it started, stops exactly that one, and keeps the record when a stop fails so it can be retried or cleaned up when the app exits.
+- **A closed Discord no longer takes the runner down.** Connecting to Discord's local socket panicked when the client was not running, which killed the task that was supposed to roll the simulation back. The connection now reports the problem, waits at most ten seconds for Discord to answer, and returns the error to the caller instead of tearing the task down.
+- **A dead debugger socket no longer hangs a stop.** Every connection to the Discord client's debugger now has a time limit, so a socket that accepts the connection but never answers fails with a clear message instead of leaving the window waiting forever.
+- **The idle panel no longer holds its own lock while it talks to the window.** Publishing the status ran while the shared state was locked, so one lane waiting on the window held up every other lane. The status is now copied, the lock is released, and only then is it sent.
+- **The floating progress panel no longer re-measures itself on every mouse move.** Dragging it read the window layout after writing the new position, which forced a reflow per pointer event. The size is measured once when the drag starts and reused afterwards.
+
+### Changed
+
+- **A new quest row.** The list is a dense row instead of a stack of tall cards: a colored rail on the left edge carries the state, the game's icon and a small type chip sit at the top left, the title and the task sit under them, the bar and the reward share one line, and the actions sit at the bottom right. The Home list is two columns wide, the account panel follows the same rhythm, and the floating progress panel lists the running quests with the same icons.
+- **Checkpoint quests count in squares.** One square is one checkpoint, and an empty square is one still to be submitted — a bar hides how many are left. A quest that lists a play task next to a checkpoint Activity runs the game, so it counts in seconds and keeps the bar.
+- **The list arrives as rows, not as a spinner.** While the first list is loading, the placeholders copy the shape of a quest row, so the window fills in instead of standing empty.
+- **The window does far less work between updates.** A running bar advanced sixty times a second and redrew every card that was on screen; it now advances twice a second and the bar's own transition does the easing. Each card no longer runs a second animation on top of that. Dates and relative times are formatted once per language instead of once per row, the quest list is sorted by a value that is parsed once per quest instead of twice per comparison, and rows only slide into place while the list is short enough for the movement to be readable.
+- **The game picker resolves each row once.** The list of detected games read the same executable list six times per row per render; the rows are now prepared once and the panel's clock only ticks while a session is running.
+
+### Removed
+
+- **Files and helpers nothing used.** An unused Discord gateway module, two dialog triggers and a progress primitive the app never renders, duplicated icon files and two unused badge images, seventeen translation keys with no caller, a handful of API wrappers and helpers, and the debug logging that ran on every quest start and stop.
 
 ### Checks
 
-- The Rust suite covers the random-duration range, the crash-config validation gate and the crash plan inside a play window; the frontend gained store tests for the post-quest connection timer and for the release-list cache window.
-- Release runs now cache the Linux `.deb` archives, which removes the apt step that used to sit for 13 minutes while every other job finished in three.
+- New frontend tests cover the task a quest is measured on, the task it is started on, the percentage of a banked value, the checkpoint unit, the legacy stream counter, the rule that a quest never borrows another task's number, and what a quest needs — manual, automatable or batchable — read from that same task.
+- The translation check runs over both shipped languages, and the Rust unit tests cover the history file, the game simulator and the quest task registry.
 
-**Full Changelog**: https://github.com/ninokiru/Auto-Quest-Complete-Discord/compare/0.0.5-L1.2...0.0.5-L1.3
+**Full Changelog**: https://github.com/ninokiru/Auto-Quest-Complete-Discord/compare/0.0.5-L1.3...0.0.5-L2.1
 
 ### How the in-app update works
 
@@ -42,8 +63,8 @@ These binaries are **not code-signed**. The app rewrites its own process identit
 
 | File | Use |
 | --- | --- |
-| `auto-quest-complete-discord-Windows-x64-0.0.5-L1.3-setup.exe` | Windows installer (NSIS) |
-| `auto-quest-complete-discord-Windows-x64-0.0.5-L1.3-portable.zip` | Windows portable, no installation |
+| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.1-setup.exe` | Windows installer (NSIS) |
+| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.1-portable.zip` | Windows portable, no installation |
 
 This release publishes **Windows x64 only**. macOS (Apple Silicon) and Linux (x86_64 `.deb` / AppImage) builds are still fully supported by the source tree and are compiled and tested in CI — only their release publishing is temporarily switched off to keep a release run on one runner. They will return in a later release. If you need one of them now, build it from source (`pnpm tauri:build`).
 

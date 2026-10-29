@@ -39,7 +39,7 @@ pub struct SimulationHistoryStatus {
     pub segments: Vec<SimulationHistorySegment>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct PersistedHistory {
     #[serde(default = "history_version")]
     version: u32,
@@ -140,13 +140,14 @@ impl SimulationHistory {
         Ok(())
     }
 
-    fn save_locked(runtime: &HistoryRuntime, path: &Path) -> Result<(), String> {
+    /// Write the history to disk and replace the previous file atomically.
+    fn save_data(data: &PersistedHistory, path: &Path) -> Result<(), String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|error| format!("Failed to create history directory: {error}"))?;
         }
         let temporary = path.with_extension("json.tmp");
-        let bytes = serde_json::to_vec_pretty(&runtime.data)
+        let bytes = serde_json::to_vec_pretty(data)
             .map_err(|error| format!("Failed to serialize game simulation history: {error}"))?;
         {
             let mut file = std::fs::File::create(&temporary)
@@ -156,6 +157,21 @@ impl SimulationHistory {
                 .map_err(|error| format!("Failed to flush game simulation history: {error}"))?;
         }
         replace_file(&temporary, path)
+    }
+
+    /// Persist the history without blocking the async runtime.
+    ///
+    /// The snapshot is taken from the state the caller holds locked, so the
+    /// file always matches the state it was written from, but the write and
+    /// its fsync run on the blocking pool instead of stalling a worker.
+    async fn save(runtime: &HistoryRuntime, path: &Path) -> Result<(), String> {
+        let data = runtime.data.clone();
+        let path = path.to_path_buf();
+        tauri::async_runtime::spawn_blocking(move || {
+            Self::save_data(&data, &path)
+        })
+        .await
+        .map_err(|error| format!("Game simulation history save task failed: {error}"))?
     }
 
     fn add_elapsed(
@@ -220,7 +236,7 @@ impl SimulationHistory {
                 });
             entry.app_name = app_name.clone();
             entry.updated_at = chrono::Utc::now().to_rfc3339();
-            Self::save_locked(&runtime, &path)?;
+            Self::save(&runtime, &path).await?;
             runtime.next_usage_id = runtime.next_usage_id.saturating_add(1);
             let usage_id = runtime.next_usage_id;
             runtime.active.push(ActiveUsage {
@@ -310,7 +326,7 @@ impl SimulationHistory {
         // at the start of the unsaved interval, so the same duration is retried
         // (or captured by `finish`) instead of being silently dropped.
         let entry = Self::add_elapsed(&mut runtime, &user_id, &app_id, &app_name, seconds);
-        if let Err(error) = Self::save_locked(&runtime, path) {
+        if let Err(error) = Self::save(&runtime, path).await {
             // Revert the in-memory addition. `checkpoint_at` is deliberately not
             // advanced, so `finish` will measure this same interval again;
             // leaving the total inflated here would double-count it.
@@ -383,7 +399,7 @@ impl SimulationHistory {
             }
         }
 
-        if let Err(error) = Self::save_locked(&runtime, path) {
+        if let Err(error) = Self::save(&runtime, path).await {
             for (user_id, app_id, previous_entry) in previous_entries {
                 if let Some(apps) = runtime.data.accounts.get_mut(&user_id) {
                     match previous_entry {
@@ -451,7 +467,7 @@ impl SimulationHistory {
             .cloned();
 
         let entry = Self::add_elapsed(&mut runtime, &user_id, &segment_app_id, &app_name, seconds);
-        if let Err(error) = Self::save_locked(&runtime, path) {
+        if let Err(error) = Self::save(&runtime, path).await {
             if let Some(apps) = runtime.data.accounts.get_mut(&user_id) {
                 match previous_entry {
                     Some(previous) => {
@@ -634,7 +650,7 @@ mod tests {
             ));
             let _ = SimulationHistory::add_elapsed(&mut runtime, "account-a", "app-a", game, 125);
             runtime.active.clear();
-            SimulationHistory::save_locked(&runtime, &path).unwrap();
+            SimulationHistory::save_data(&runtime.data, &path).unwrap();
         }
 
         let recovered = SimulationHistory::default();

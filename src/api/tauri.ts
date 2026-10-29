@@ -36,7 +36,7 @@ export interface ProgramRewardsResponse {
   rewards?: Record<string, ProgramReward> | ProgramReward[] | null
 }
 
-export function normalizeProgramRewards(
+function normalizeProgramRewards(
   response: ProgramRewardsResponse | ProgramReward[] | null,
 ): ProgramReward[] {
   if (Array.isArray(response)) return response
@@ -233,11 +233,6 @@ export async function disconnectFromDiscordRpc(): Promise<void> {
   return await invoke('disconnect_from_discord_rpc')
 }
 
-// User status commands
-export async function getQuests(): Promise<Quest[]> {
-  return await invoke('get_quests')
-}
-
 export async function getQuestsFull(): Promise<CurrentUserQuestsResponse> {
   return await invoke('get_quests_full')
 }
@@ -245,11 +240,6 @@ export async function getQuestsFull(): Promise<CurrentUserQuestsResponse> {
 export async function getVirtualCurrencyBalance(): Promise<number> {
   const response = await invoke<{ balance?: number }>('get_virtual_currency_balance')
   return response.balance ?? 0
-}
-
-export async function getBillingSubscriptions(): Promise<BillingSubscription[]> {
-  const response = await invoke<BillingSubscription[]>('get_billing_subscriptions')
-  return response ?? []
 }
 
 /** Fetch Discord's authoritative reward-program countdown data. */
@@ -725,10 +715,6 @@ export interface RuntimeIdentityStatus {
   reasons: string[]
 }
 
-export async function getRuntimeIdentityStatus(): Promise<RuntimeIdentityStatus> {
-  return await invoke('get_runtime_identity_status')
-}
-
 /** Interactive debug export; see docs/runtime-identity-debug-audit.schema.json. */
 export interface RuntimeIdentityAudit {
   schemaVersion: number
@@ -990,14 +976,6 @@ export interface DiscordCdpLaunchResult {
   ownership: SessionOwnership
 }
 
-export async function isDiscordRunning(channel?: DiscordChannelArg): Promise<boolean> {
-  return await invoke('is_discord_running', { channel })
-}
-
-export async function listDesktopClients(port?: number): Promise<DesktopClientInventory> {
-  return await invoke('list_desktop_clients', { port })
-}
-
 export async function getDesktopClientState(port?: number): Promise<DesktopClientState> {
   return await invoke('get_desktop_client_state', { port })
 }
@@ -1022,22 +1000,6 @@ export async function launchDesktopClientCdp(port?: number, selection?: ClientSe
   return await invoke('launch_desktop_client_cdp', { port, selection, restartExisting })
 }
 
-export async function launchDiscordCdp(
-  port?: number,
-  channel?: DiscordChannelArg,
-  client?: DesktopClientArg,
-): Promise<DiscordCdpLaunchResult> {
-  return await invoke('launch_discord_cdp', { port, channel, client })
-}
-
-export async function restartDiscordCdp(
-  port?: number,
-  channel?: DiscordChannelArg,
-  client?: DesktopClientArg,
-): Promise<DiscordCdpLaunchResult> {
-  return await invoke('restart_discord_cdp', { port, channel, client })
-}
-
 export async function createDiscordCdpLauncherShortcut(
   port?: number,
   channel?: DiscordChannelArg,
@@ -1045,10 +1007,6 @@ export async function createDiscordCdpLauncherShortcut(
   installationPath?: string,
 ): Promise<string> {
   return await invoke('create_discord_cdp_launcher_shortcut', { port, channel, client, installationPath })
-}
-
-export async function createDiscordDebugShortcut(port?: number): Promise<string> {
-  return await invoke('create_discord_debug_shortcut', { port })
 }
 
 // SuperProperties Mode types and commands
@@ -1170,10 +1128,6 @@ export interface RunningDesktopCdpSession {
   port: number
   ownership: SessionOwnership
   executablePath: string | null
-}
-
-export async function listRunningDiscordCdpSessions(): Promise<RunningDiscordCdpSession[]> {
-  return await invoke('list_running_discord_cdp_sessions')
 }
 
 export async function listRunningDesktopCdpSessions(): Promise<RunningDesktopCdpSession[]> {

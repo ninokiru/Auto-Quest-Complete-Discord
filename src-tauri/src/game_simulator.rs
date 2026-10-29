@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
 #[cfg(target_os = "windows")]
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
@@ -9,15 +9,21 @@ use std::sync::Mutex;
 
 use once_cell::sync::Lazy;
 
-/// Global set that tracks image names of running simulated game processes.
-/// Entries are added in `run_simulated_game` and removed in `stop_simulated_game`.
-/// Used by `cleanup_all_simulated_games` to kill orphaned children on app exit.
+/// Names of the simulated games this app currently owns.
 ///
-/// Windows still tracks by image name. Unix platforms retain the exact child
-/// PID and executable path instead, so no fuzzy process-name termination is
-/// needed.
+/// Windows keeps the spawned `Child` handles in `RUNNING_WINDOWS_CHILDREN`; this
+/// set mirrors those keys and is what the activity guard and the frontend read.
+/// macOS/Linux keep PID + executable path in `RUNNING_UNIX_GAMES` instead.
 #[cfg(target_os = "windows")]
 static RUNNING_GAMES: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+
+/// Windows keeps the handle it spawned, so Stop terminates exactly that runner.
+/// Killing by image name (`taskkill /IM`) also took down a real game the user
+/// was playing under the same name, and a failed kill left a live runner with
+/// no record it could still be stopped through.
+#[cfg(target_os = "windows")]
+static RUNNING_WINDOWS_CHILDREN: Lazy<Mutex<HashMap<String, std::process::Child>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// A simulated-game child process tracked by exact PID on macOS/Linux.
 ///
@@ -244,13 +250,14 @@ pub fn run_simulated_game(
 
     use std::os::windows::process::CommandExt;
 
-    let _ = Command::new(&exe_to_run)
+    let child = Command::new(&exe_to_run)
         .creation_flags(simulated_game_spawn_flags())
         .spawn()
         .context("Could not start simulated game")?;
 
-    // Track the running process so we can clean it up on app exit
-    track_running_game(executable_name);
+    // Keep the handle so Stop terminates exactly this runner, never another
+    // process that happens to share its image name.
+    track_running_game(executable_name, child);
 
     println!("Simulated game {} started from {:?}", name, exe_to_run);
     Ok(())
@@ -312,34 +319,46 @@ pub fn run_simulated_game(
 /// Stop the simulated game
 #[cfg(target_os = "windows")]
 pub fn stop_simulated_game(exec_name: &str) -> Result<()> {
-    // taskkill /IM needs image name (filename), not path.
-    // Robustly handle both / and \\ separators
-    let file_name = exec_name.rsplit(['/', '\\']).next().unwrap_or(exec_name);
+    let key = file_name_key(exec_name);
 
-    println!(
-        "Stopping simulated game: Input='{}' -> Image='{}'",
-        exec_name, file_name
-    );
+    let child = match RUNNING_WINDOWS_CHILDREN.lock() {
+        Ok(mut children) => children.remove(&key),
+        Err(poisoned) => poisoned.into_inner().remove(&key),
+    };
 
-    // Use taskkill command to terminate process
-    let output = Command::new("taskkill")
-        .args(["/F", "/IM", file_name])
-        .output()
-        .context("Could not execute taskkill command")?;
+    let Some(mut child) = child else {
+        // Nothing was spawned under this name (or it was already stopped).
+        // Killing by image name here would also take down a real game the user
+        // is playing under the same executable name.
+        println!("No tracked simulated game for '{}'", key);
+        untrack_running_game(&key);
+        return Ok(());
+    };
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        // Don't error out, process may not exist
-        println!(
-            "taskkill returned non-zero, process may not exist: {}",
-            stderr
-        );
+    println!("Stopping simulated game '{}'", key);
+
+    if matches!(child.try_wait(), Ok(Some(_))) {
+        untrack_running_game(&key);
+        return Ok(());
     }
 
-    // Remove from tracking set
-    untrack_running_game(exec_name);
+    if let Err(error) = child.kill() {
+        // Put the handle back: the process is still alive, and a later Stop —
+        // or app exit — must still be able to reach it.
+        let mut children = match RUNNING_WINDOWS_CHILDREN.lock() {
+            Ok(children) => children,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        children.insert(key.clone(), child);
+        drop(children);
+        let message = format!("Could not stop simulated game '{}': {}", key, error);
+        return Err(anyhow::anyhow!(message));
+    }
 
-    println!("Simulated game {} stopped", exec_name);
+    let _ = child.wait();
+    untrack_running_game(&key);
+
+    println!("Simulated game {} stopped", key);
     Ok(())
 }
 
@@ -383,7 +402,7 @@ pub fn stop_simulated_game(_exec_name: &str) -> Result<()> {
 }
 
 /// Reduce an executable name/path to its bare file-name key.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 fn file_name_key(name: &str) -> String {
     name.rsplit(['/', '\\']).next().unwrap_or(name).to_string()
 }
@@ -604,27 +623,36 @@ fn try_reap_unix_game(game: &mut UnixManagedGame) {
 }
 
 /// Track a newly started simulated game process.
+///
+/// Re-launching the same name replaces the tracked handle; the superseded
+/// process is stopped so it can never be orphaned past app exit.
 #[cfg(target_os = "windows")]
-fn track_running_game(executable_name: &str) {
-    let file_name = executable_name
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(executable_name)
-        .to_string();
+fn track_running_game(executable_name: &str, child: std::process::Child) {
+    let file_name = file_name_key(executable_name);
+    let previous = match RUNNING_WINDOWS_CHILDREN.lock() {
+        Ok(mut children) => children.insert(file_name.clone(), child),
+        Err(poisoned) => poisoned.into_inner().insert(file_name.clone(), child),
+    };
     if let Ok(mut set) = RUNNING_GAMES.lock() {
         set.insert(file_name.clone());
         println!("Tracked running game: {} (total: {})", file_name, set.len());
+    }
+
+    // Kill and reap after releasing both locks; `wait` can block.
+    if let Some(mut previous) = previous {
+        println!(
+            "Replacing tracked '{}': stopping previous process",
+            file_name
+        );
+        let _ = previous.kill();
+        let _ = previous.wait();
     }
 }
 
 /// Remove a game from the tracking set (called after explicit stop).
 #[cfg(target_os = "windows")]
 fn untrack_running_game(executable_name: &str) {
-    let file_name = executable_name
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(executable_name)
-        .to_string();
+    let file_name = file_name_key(executable_name);
     if let Ok(mut set) = RUNNING_GAMES.lock() {
         set.remove(&file_name);
         println!(
@@ -769,25 +797,30 @@ pub fn cleanup_all_simulated_games() {
     cleanup_all_tracked_games();
 }
 
-/// Windows: stop every tracked game by image name.
+/// Windows: terminate every tracked game through the handle it was spawned with.
 #[cfg(target_os = "windows")]
 fn cleanup_all_tracked_games() {
-    let games: Vec<String> = match RUNNING_GAMES.lock() {
-        Ok(mut set) => set.drain().collect(),
+    let children: Vec<(String, std::process::Child)> = match RUNNING_WINDOWS_CHILDREN.lock() {
+        Ok(mut children) => children.drain().collect(),
         Err(poisoned) => poisoned.into_inner().drain().collect(),
     };
 
-    if games.is_empty() {
+    if let Ok(mut names) = RUNNING_GAMES.lock() {
+        names.clear();
+    }
+
+    if children.is_empty() {
         return;
     }
 
     println!(
         "Cleaning up {} simulated game process(es) on exit...",
-        games.len()
+        children.len()
     );
-    for name in &games {
+    for (name, mut child) in children {
         println!("  Stopping: {}", name);
-        let _ = stop_simulated_game(name);
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
 

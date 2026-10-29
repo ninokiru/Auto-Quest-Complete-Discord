@@ -225,6 +225,15 @@ async fn download_installer(client: &reqwest::Client, asset: &ReleaseAsset) -> R
         bail!("GitHub returned {status} while downloading the installer");
     }
 
+    // The declared size is checked before the body is read, so a file that is
+    // far too large to be an installer is rejected instead of being buffered.
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_INSTALLER_BYTES)
+    {
+        bail!("The installer is larger than an installer should be");
+    }
+
     let pending = response.bytes().await;
     let bytes = pending.context("The download was interrupted")?;
     if bytes.is_empty() {

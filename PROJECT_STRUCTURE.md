@@ -18,7 +18,6 @@ User clicks "Start Quest" (QuestCard.vue)
              └─ src/api/tauri.ts                 ← typed wrapper over Tauri IPC (invoke)
                   └─ src-tauri/src/lib.rs         ← #[tauri::command] registry
                        ├─ src-tauri/src/discord_api.rs      → Discord REST (quests, profile, rewards)
-                       ├─ src-tauri/src/discord_gateway.rs  → Discord Gateway WebSocket
                        ├─ src-tauri/src/cdp_quest.rs        → quest execution inside the client
                        ├─ src-tauri/src/cdp_client.rs       → CDP transport, target discovery/selection
                        └─ crates/discord-cdp-launch-core    → find + launch + supervise the client
@@ -97,12 +96,11 @@ GitHub's release API.
 | `home/QuestListHeader.vue` | 86 | Count, refresh, filter row |
 | `Toaster.vue` | 82 | Toast stack; toast actions can request a tab change |
 | `settings/SettingsNav.vue` | 64 | Left-hand section list inside Settings |
-| `QuestTaskBadges.vue` | 62 | Task-type chips (video, play, stream, activity, achievement) |
 | `AppNavigation.vue` | 49 | The tab row under the header: Home / Game Simulator / Settings / Debug (Debug only when unlocked) |
 | `home/QuestViewTabs.vue` | 48 | Preset views: Recommended, To Accept, Ready to Run, Ready to Claim, Completed, All |
 | `settings/AppearanceSettings.vue` | 45 | Theme + language |
 | `settings/SettingsSwitch.vue`, `settings/AdvancedDisclosure.vue`, `settings/SettingsSectionCard.vue`, `settings/settingTones.ts` | ≤ 43 | Small Settings primitives: switch row, "unlock developer mode" easter-egg disclosure, section card wrapper, tone tokens |
-| `ui/` | — | shadcn-vue primitives (button, card, dialog, alert-dialog, dropdown-menu, input, label, progress, avatar, badge) on top of radix-vue. Do not hand-edit unless you are intentionally changing the primitive |
+| `ui/` | — | shadcn-vue primitives (button, card, dialog, alert-dialog, dropdown-menu, input, label, avatar, badge) on top of radix-vue. Do not hand-edit unless you are intentionally changing the primitive |
 
 ### Stores (`src/stores/`) — Pinia
 
@@ -159,7 +157,6 @@ both files.
 | `logger.rs` | 402 | Structured logging with sanitization; feeds the log export |
 | `stealth_pe.rs` | 339 | Process identity rewriting so Discord's detector accepts the simulated game — the main reason AV heuristics flag the build |
 | `rate_limit.rs` | 326 | Per-route pacing (600 ms gap), shared bucket accounting, 429 hold |
-| `discord_gateway.rs` | 292 | Gateway WebSocket: account/activity events |
 | `models.rs` | 169 | Shared serde models |
 | `platform_capabilities.rs` | 148 | What this OS can actually do (simulator vs CDP-only) |
 | `quest_notify.rs` | 140 | OS notifications on completion/failure |

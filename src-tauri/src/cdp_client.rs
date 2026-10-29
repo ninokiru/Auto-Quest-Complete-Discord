@@ -17,6 +17,10 @@ use zeroize::Zeroizing;
 /// Default CDP debugging port
 pub use discord_cdp_launch_core::DEFAULT_CDP_PORT;
 
+/// A debugger socket that accepts the TCP connection but never completes the
+/// WebSocket handshake must fail instead of hanging the calling command forever.
+const WS_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// SuperProperties result obtained via CDP
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CdpSuperProperties {
@@ -836,8 +840,9 @@ pub async fn fetch_super_properties_via_cdp(port: u16) -> Result<CdpSuperPropert
     );
 
     // Establish WebSocket connection
-    let (ws_stream, _) = connect_async(ws_url)
+    let (ws_stream, _) = tokio::time::timeout(WS_CONNECT_TIMEOUT, connect_async(ws_url))
         .await
+        .context("CDP WebSocket connection timed out")?
         .context("Failed to connect to CDP WebSocket")?;
 
     log(
@@ -1029,8 +1034,9 @@ pub async fn capture_discord_headers_via_cdp(
         None,
     );
 
-    let (ws_stream, _) = connect_async(ws_url)
+    let (ws_stream, _) = tokio::time::timeout(WS_CONNECT_TIMEOUT, connect_async(ws_url))
         .await
+        .context("CDP WebSocket connection timed out")?
         .context("Failed to connect to CDP WebSocket")?;
     let (mut write, mut read) = ws_stream.split();
 
@@ -1423,8 +1429,9 @@ pub async fn capture_discord_auth_via_cdp(
         None,
     );
 
-    let (ws_stream, _) = connect_async(ws_url)
+    let (ws_stream, _) = tokio::time::timeout(WS_CONNECT_TIMEOUT, connect_async(ws_url))
         .await
+        .context("CDP WebSocket connection timed out")?
         .context("Failed to connect to CDP WebSocket")?;
     let (mut write, mut read) = ws_stream.split();
 
@@ -1727,12 +1734,6 @@ fn describe_activity_miss(targets: &[CdpTarget], application_id: Option<&str>) -
     }
 
     format!("Activity host listed but unusable: {}", listed.join(", "))
-}
-
-/// Find the activity iframe CDP target (discordsays.com).
-#[allow(dead_code)]
-pub async fn find_activity_iframe_target(port: u16) -> Result<CdpTarget> {
-    find_activity_iframe_target_for_application(port, None).await
 }
 
 /// Find the activity iframe CDP target for a specific Discord application.
@@ -2085,8 +2086,10 @@ async fn execute_js_via_ws(
 }
 
 async fn bring_target_to_front_via_ws(ws_url: &str, timeout_secs: u64) -> Result<()> {
-    let (ws_stream, _) = connect_async(ws_url)
+    let connect_timeout = Duration::from_secs(timeout_secs);
+    let (ws_stream, _) = tokio::time::timeout(connect_timeout, connect_async(ws_url))
         .await
+        .context("CDP WebSocket connection timed out")?
         .context("Failed to connect to CDP WebSocket")?;
     let (mut write, mut read) = ws_stream.split();
 
