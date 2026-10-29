@@ -824,7 +824,9 @@ export const useQuestsStore = defineStore('quests', () => {
   // A real quest length moves the bar a fraction of a percent per second, so a
   // 60 fps write only re-rendered every running card; 500 ms still feeds the
   // 300 ms width transition the bar already uses.
-  let simTimer: number | null = null
+  // The timer is the plain global one, not `window.setInterval`: the store is
+  // also exercised outside a browser window, where `window` does not exist.
+  let simTimer: ReturnType<typeof setInterval> | null = null
   let simLastTime = 0
   const PROGRESS_TICK_MS = 500
 
@@ -1699,7 +1701,7 @@ export const useQuestsStore = defineStore('quests', () => {
       }
     }
 
-    simTimer = window.setInterval(tick, PROGRESS_TICK_MS)
+    simTimer = setInterval(tick, PROGRESS_TICK_MS)
   }
 
   function stopProgressSimulation() {

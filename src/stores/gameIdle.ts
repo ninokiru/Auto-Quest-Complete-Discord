@@ -281,11 +281,12 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
         // Only the picked games are handed to the backend, which shuffles and
         // filters them again (process mode drops entries without a native exe).
         const pool = candidateGames(games)
-        if (pool.length === 0) {
+        // A picked list that no longer matches Discord's list is the one case
+        // the frontend can explain on its own. An empty detectable list is the
+        // backend's business: it says which mode has nothing to run.
+        if (selectedGameIds.value.length > 0 && pool.length === 0 && games.length > 0) {
           throw new Error(
-            selectedGameIds.value.length > 0
-              ? 'The games picked for game idle are no longer in Discord\'s detectable list. Pick them again.'
-              : 'Discord returned no detectable games or applications.'
+            'The games picked for game idle are no longer in Discord\'s detectable list. Pick them again.'
           )
         }
         persistConfig()
