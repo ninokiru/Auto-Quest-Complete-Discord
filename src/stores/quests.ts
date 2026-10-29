@@ -1678,12 +1678,20 @@ export const useQuestsStore = defineStore('quests', () => {
       const averageCheckpointSeconds =
         (activityCheckpointMin.value + activityCheckpointMax.value) / 2
 
+      let advancing = false
       for (const slot of runningQuests.value) {
         // Never trail the blue (server) bar and never pass 100%.
         if (slot.targetDuration <= 0) {
           slot.localProgress = Math.max(slot.localProgress, slot.serverProgress)
           continue
         }
+        if (slot.serverProgress >= 100) {
+          // The quest is done: the bar has reached the end and there is
+          // nothing left for this timer to move.
+          slot.localProgress = 100
+          continue
+        }
+        advancing = true
         const speed = slot.type === 'video' && gameQuestMode.value !== 'cdp'
           ? speedMultiplier.value
           : 1.0
@@ -1698,6 +1706,13 @@ export const useQuestsStore = defineStore('quests', () => {
           100,
           Math.max(slot.localProgress + addedPercent, slot.serverProgress)
         )
+      }
+
+      // A finished quest can sit in a keep-alive hold for hours. Waking up for
+      // it every half second would burn the CPU for nothing, so the timer stops
+      // once no bar can move any more.
+      if (!advancing) {
+        stopProgressSimulation()
       }
     }
 
