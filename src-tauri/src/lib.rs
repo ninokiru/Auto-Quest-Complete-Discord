@@ -2945,6 +2945,24 @@ async fn claim_quest_reward(
         .map_err(|e| format!("Failed to claim quest reward: {}", e))
 }
 
+/// Read the reward code of a claimed quest.
+///
+/// The code is only shown: nothing here redeems it, and the balance is not
+/// touched. A quest without a code reports the API's own error.
+#[tauri::command]
+async fn get_quest_reward_code(
+    quest_id: String,
+    account_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let (client, _) = quest_client_for(&state, account_id.as_deref())?;
+
+    client
+        .get_quest_reward_code(&quest_id)
+        .await
+        .map_err(|e| format!("Failed to get the quest reward code: {}", e))
+}
+
 /// Raise an operating-system notification. Only the frontend knows the quest
 /// name, so the text is passed through instead of being looked up here.
 #[tauri::command]
@@ -3440,6 +3458,7 @@ pub fn run() {
             get_quest_decision_debug,
             get_quest_decisions_debug,
             claim_quest_reward,
+            get_quest_reward_code,
             notify_quest_finished,
             connect_to_discord_rpc,
             disconnect_from_discord_rpc,

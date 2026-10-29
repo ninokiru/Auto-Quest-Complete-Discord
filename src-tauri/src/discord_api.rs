@@ -877,6 +877,27 @@ impl DiscordApiClient {
         serde_json::from_str(&body).context("Failed to parse claim reward response")
     }
 
+    /// Read the redeemable code of a claimed quest.
+    ///
+    /// This only reads: the code is shown in the app and redeemed wherever the
+    /// reward came from. Nothing here touches the balance or redeems anything.
+    pub async fn get_quest_reward_code(&self, quest_id: &str) -> Result<serde_json::Value> {
+        let url = format!("{}/quests/{}/reward-code", DISCORD_API_BASE, quest_id);
+
+        let response = self
+            .send_respecting_rate_limit(self.request(Method::GET, &url))
+            .await
+            .context("Request for the quest reward code failed")?;
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            anyhow::bail!("Failed to read the quest reward code: {} - {}", status, body);
+        }
+
+        serde_json::from_str(&body).context("Failed to parse the quest reward code")
+    }
+
     /// Update video watch progress
     pub async fn update_video_progress(&self, quest_id: &str, timestamp: f64) -> Result<bool> {
         let url = format!("{}/quests/{}/video-progress", DISCORD_API_BASE, quest_id);

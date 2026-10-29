@@ -165,6 +165,17 @@ The app never marks a quest claimed until Discord's own API agrees. When a quest
 **Claim Reward**; rewards that require a browser flow redirect the Discord client to the quest page
 and ask you to finish there yourself.
 
+### Reward codes
+
+Some quests pay out a code instead of Orbs or an item. A claimed quest of that kind shows a
+**Show reward code** line under its reward row. Pressing it asks Discord for the code and shows it
+next to a **Copy** button — the code is copied to the clipboard, never redeemed by the app, and
+nothing is taken from your balance. The code belongs to the account that owns the quest, so a quest
+in another account's row shows that account's code.
+
+The request is made on demand: a list of twenty quests never spends a request per row, and a quest
+that was never claimed has no code to ask for.
+
 ## How progress is counted
 
 This is the most commonly misread part of the interface, so it is worth stating plainly:

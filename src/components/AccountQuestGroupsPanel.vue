@@ -373,6 +373,7 @@ onBeforeUnmount(stopTimer)
             :quest="row.quest"
             :quest-type="row.questType"
             foreign
+            :account-id="group.account.user.id"
             :busy="row.busy"
           >
             <template #actions>

@@ -264,6 +264,24 @@ export async function claimQuestReward(
   return await invoke('claim_quest_reward', { questId, platform, accountId })
 }
 
+/** The redeemable code Discord issues for a quest whose reward was claimed. */
+export interface QuestRewardCode {
+  quest_id?: string
+  code?: string
+  platform?: string | number | null
+  user_id?: string
+  claimed_at?: string | null
+  tier?: string | number | null
+}
+
+/** Read the reward code of a claimed quest. Reading only: nothing is redeemed. */
+export async function getQuestRewardCode(
+  questId: string,
+  accountId?: string | null
+): Promise<QuestRewardCode> {
+  return await invoke('get_quest_reward_code', { questId, accountId })
+}
+
 /** Raise an operating-system notification. The text arrives already translated:
  *  the backend knows quest ids, the page knows the quest name and the locale. */
 export async function notifyQuestFinished(title: string, body: string): Promise<void> {

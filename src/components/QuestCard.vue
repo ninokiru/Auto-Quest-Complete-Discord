@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { Quest } from '@/api/tauri'
+import { getQuestRewardCode, type QuestRewardCode } from '@/api/tauri'
 import { useQuestsStore } from '@/stores/quests'
 import { useAuthStore } from '@/stores/auth'
 import QuestDeveloperDetails from '@/components/QuestDeveloperDetails.vue'
 import TokenIcon from '@/components/icons/TokenIcon.vue'
 import { Card } from '@/components/ui/card'
-import { Activity, Clock, Cloud, Gamepad2, Gift, MonitorPlay } from 'lucide-vue-next'
+import { Button } from '@/components/ui/button'
+import { Activity, Check, Clock, Cloud, Copy, Gamepad2, Gift, KeyRound, Loader2, MonitorPlay } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import {
   getQuestKind,
@@ -38,6 +40,8 @@ const props = defineProps<{
    * target — its own `user_status` is the only truth it has.
    */
   foreign?: boolean
+  /** The account that owns this quest, when it is not the signed-in one. */
+  accountId?: string
 }>()
 
 const questsStore = useQuestsStore()
@@ -306,6 +310,46 @@ const progressText = computed(() => {
 const requiredTargetText = computed(() =>
   formatRequiredTarget(targetDuration.value, runningProgressUnit.value)
 )
+
+// A claimed quest can carry a redeemable code. It is read on demand: the
+// endpoint only answers for a claimed quest, and one request per row of a
+// long list would cost more than the code is worth.
+const rewardCode = ref<QuestRewardCode | null>(null)
+const rewardCodeLoading = ref(false)
+const rewardCodeFailed = ref(false)
+const rewardCodeCopied = ref(false)
+
+async function loadRewardCode() {
+  if (rewardCodeLoading.value) return
+  rewardCodeLoading.value = true
+  rewardCodeFailed.value = false
+  try {
+    const response = await getQuestRewardCode(props.quest.id, props.accountId ?? null)
+    const code = response?.code?.trim() ?? ''
+    if (!code) {
+      rewardCodeFailed.value = true
+      return
+    }
+    rewardCode.value = { ...response, code }
+  } catch (error) {
+    console.warn('Failed to read the quest reward code:', error)
+    rewardCodeFailed.value = true
+  } finally {
+    rewardCodeLoading.value = false
+  }
+}
+
+async function copyRewardCode() {
+  const code = rewardCode.value?.code
+  if (!code) return
+  try {
+    await navigator.clipboard.writeText(code)
+    rewardCodeCopied.value = true
+    setTimeout(() => { rewardCodeCopied.value = false }, 2000)
+  } catch (error) {
+    console.error('Failed to copy the quest reward code:', error)
+  }
+}
 </script>
 
 <template>
@@ -441,6 +485,38 @@ const requiredTargetText = computed(() =>
         </span>
         <slot name="actions"></slot>
       </div>
+    </div>
+
+    <!-- A claimed quest can carry a redeemable code. The code is read on
+         demand, so a list of quests never spends a request per row. -->
+    <div v-if="isClaimed" class="border-t border-border/40 px-4 py-2">
+      <button
+        v-if="!rewardCode"
+        type="button"
+        class="inline-flex items-center gap-1.5 rounded-md text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+        :disabled="rewardCodeLoading"
+        @click="loadRewardCode"
+      >
+        <Loader2 v-if="rewardCodeLoading" class="h-3 w-3 animate-spin" />
+        <KeyRound v-else class="h-3 w-3" />
+        {{ rewardCodeFailed ? t('quest.reward_code_retry') : t('quest.reward_code_show') }}
+      </button>
+      <div v-else class="flex items-center gap-2">
+        <code class="min-w-0 flex-1 truncate rounded-md bg-secondary px-2 py-1 font-mono text-[11px] text-foreground">{{ rewardCode.code }}</code>
+        <Button
+          variant="ghost"
+          size="sm"
+          class="h-7 shrink-0 px-2 text-[11px]"
+          @click="copyRewardCode"
+        >
+          <Check v-if="rewardCodeCopied" class="h-3 w-3" />
+          <Copy v-else class="h-3 w-3" />
+          {{ rewardCodeCopied ? t('quest.reward_code_copied') : t('quest.reward_code_copy') }}
+        </Button>
+      </div>
+      <p v-if="rewardCodeFailed" class="mt-1 text-[11px] text-error">
+        {{ t('quest.reward_code_failed') }}
+      </p>
     </div>
 
     <QuestDeveloperDetails v-if="showDeveloperDetails" class="mx-4 mb-3.5" :quest="quest" />

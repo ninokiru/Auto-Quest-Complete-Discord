@@ -9,6 +9,7 @@ Everything that shipped in 0.0.5 and in L1#1 to L1#3 is still here. This patch r
 ### Added
 
 - **Pick the games the idle mode hangs.** The Game Idle panel now has a **Games** button that opens the list Discord detected, with a search box, a "use all games" shortcut and a checkbox per game. The selection is remembered between runs, the number of compatible executables is shown per game, and a game with no usable executable is greyed out with the reason instead of failing when it is started.
+- **A claimed quest shows its reward code.** Some quests pay out a code instead of Orbs. A claimed quest of that kind now has a **Show reward code** line under its reward row; pressing it reads the code from Discord and shows it next to a **Copy** button. The app only reads the code — it never redeems it and never touches the balance — and it asks for the code when you press the line, so a list of twenty quests does not spend a request per row.
 
 ### Fixed
 
