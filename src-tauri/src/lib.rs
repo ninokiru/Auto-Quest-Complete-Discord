@@ -2457,12 +2457,10 @@ async fn run_simulated_game(
 async fn stop_simulated_game(exec_name: String, state: State<'_, AppState>) -> Result<(), String> {
     let _gate = state.activity_gate.lock().await;
     state.game_idle.ensure_idle().await?;
-    tauri::async_runtime::spawn_blocking(move || {
-        game_simulator::stop_simulated_game(&exec_name)
-    })
-    .await
-    .map_err(|e| format!("Game simulator task failed: {}", e))?
-    .map_err(|e| format!("Failed to stop simulated game: {}", e))
+    tauri::async_runtime::spawn_blocking(move || game_simulator::stop_simulated_game(&exec_name))
+        .await
+        .map_err(|e| format!("Game simulator task failed: {}", e))?
+        .map_err(|e| format!("Failed to stop simulated game: {}", e))
 }
 
 #[tauri::command]

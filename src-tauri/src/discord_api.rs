@@ -892,7 +892,11 @@ impl DiscordApiClient {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         if !status.is_success() {
-            anyhow::bail!("Failed to read the quest reward code: {} - {}", status, body);
+            anyhow::bail!(
+                "Failed to read the quest reward code: {} - {}",
+                status,
+                body
+            );
         }
 
         serde_json::from_str(&body).context("Failed to parse the quest reward code")

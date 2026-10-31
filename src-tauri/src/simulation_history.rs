@@ -167,11 +167,9 @@ impl SimulationHistory {
     async fn save(runtime: &HistoryRuntime, path: &Path) -> Result<(), String> {
         let data = runtime.data.clone();
         let path = path.to_path_buf();
-        tauri::async_runtime::spawn_blocking(move || {
-            Self::save_data(&data, &path)
-        })
-        .await
-        .map_err(|error| format!("Game simulation history save task failed: {error}"))?
+        tauri::async_runtime::spawn_blocking(move || Self::save_data(&data, &path))
+            .await
+            .map_err(|error| format!("Game simulation history save task failed: {error}"))?
     }
 
     fn add_elapsed(
