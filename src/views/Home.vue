@@ -1636,7 +1636,6 @@ async function startQuest(quest: Quest) {
     await questsStore.startVideo(quest.id, secondsNeeded, initialProgress)
   } else if (isPlayQuest) {
     // Play quests - use Game Simulator logic (one-click)
-    const gameName = quest.config.messages.game_title || quest.config.messages.quest_name
     try {
         // Check if there are multiple simulator-compatible executables — let
         // user choose. Skip exe selection entirely for CDP mode (doesn't need

@@ -56,6 +56,7 @@ function slot(questId: string, hasBackendTask: boolean): RunningQuest {
     type: 'video',
     targetDuration: 60,
     progressUnit: 'time',
+    taskKey: null,
     serverProgress: 0,
     localProgress: 0,
     gameExe: null,

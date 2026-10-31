@@ -2048,7 +2048,6 @@ export const useQuestsStore = defineStore('quests', () => {
       }
       const checkpointTimes = allCheckpointTimes.slice(completedCheckpoints)
       const totalSeconds = allCheckpointTimes.reduce((sum, t) => sum + t, 0)
-      const remainingSeconds = checkpointTimes.reduce((sum, t) => sum + t, 0)
       // The server's own checkpoint count is the only honest seed: a resumed
       // quest must open its bar there, not at zero.
       const progressPct = playActivityProgressPercentage(completedCheckpoints, checkpointCount)
