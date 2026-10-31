@@ -4,6 +4,10 @@ name: CI
 # Pushes to `main` are covered by verify.yml (fast, single runner): the release
 # workflow only fires when public/version.txt changes, so main commits would
 # otherwise reach no gate at all. Release bundling stays in build-release.yml.
+#
+# The pull-request checks run on Windows only: it is the platform the releases
+# are published from, and one runner is enough to gate a branch. The Linux and
+# macOS packages are still built and smoke-tested by the release workflow.
 on:
   pull_request:
     branches:
@@ -37,10 +41,6 @@ jobs:
         include:
           - platform: 'windows-latest'
             cdp_target: 'x86_64-pc-windows-msvc'
-          - platform: 'macos-14' # Apple Silicon
-            cdp_target: 'aarch64-apple-darwin'
-          - platform: 'ubuntu-22.04'
-            cdp_target: 'x86_64-unknown-linux-gnu'
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -62,47 +62,6 @@ jobs:
         with:
           toolchain: stable
           components: clippy, rustfmt
-          targets: ${{ matrix.platform == 'macos-14' && 'aarch64-apple-darwin' || '' }}
-
-      # Tauri 2 build dependencies for Debian/Ubuntu (WebKitGTK 4.1 baseline).
-      #
-      # The WebKitGTK chain is a few hundred MB and the mirror is the slowest
-      # step of the whole pipeline: one release run sat in apt for 13 minutes
-      # while every other job was finished in three. The runner image deletes
-      # downloaded .deb files right after the install, so the archives are kept
-      # and cached here — a warm cache installs from the local archive in
-      # seconds and never touches the mirror.
-      - name: Cache apt archives
-        if: matrix.platform == 'ubuntu-22.04'
-        uses: actions/cache@v5
-        with:
-          path: /var/cache/apt/archives/*.deb
-          key: apt-${{ runner.os }}-webkit-4.1-v1
-
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo rm -f /etc/apt/apt.conf.d/docker-clean
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libxdo-dev \
-            libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            desktop-file-utils \
-            xdg-utils \
-            xvfb \
-            xdotool \
-            x11-utils \
-            weston \
-            dbus-x11 \
-            libfuse2
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -223,122 +182,3 @@ jobs:
           TAURI_TARGET_TRIPLE: ${{ matrix.cdp_target }}
         run: pnpm run build:cdp-launcher
 
-      - name: Build Linux DEB and AppImage identity smoke artifacts
-        if: matrix.platform == 'ubuntu-22.04'
-        run: pnpm exec tauri build --bundles deb,appimage
-
-      - name: Audit and smoke-test Linux desktop identities
-        if: matrix.platform == 'ubuntu-22.04'
-        shell: bash
-        run: |
-          # Everything in scripts/ is committed as mode 100644, so calling
-          # "scripts/x.sh" directly dies with exit 126; bash reads them anyway.
-          deb_dir=target/release/bundle/deb
-          appimage_dir=target/release/bundle/appimage
-          for dir in "$deb_dir" "$appimage_dir"; do
-            if [ ! -d "$dir" ]; then
-              echo "::error::Missing $dir"
-              find target/release/bundle -maxdepth 1 2>/dev/null || true
-              exit 1
-            fi
-          done
-          deb="$(find "$deb_dir" -maxdepth 1 -name '*.deb' -type f | head -n 1 || true)"
-          appimage="$(find "$appimage_dir" -maxdepth 1 -name '*.AppImage' -type f | head -n 1 || true)"
-          if [ -z "$deb" ] || [ -z "$appimage" ]; then
-            echo "::error::Missing .deb or .AppImage (deb='$deb' appimage='$appimage')"
-            exit 1
-          fi
-          node scripts/audit-packaged-identity.mjs \
-            --platform linux --artifact "$deb" \
-            --output target/release/bundle/identity-manifest-linux-deb.json
-          node scripts/audit-packaged-identity.mjs \
-            --platform linux --artifact "$appimage" \
-            --output target/release/bundle/identity-manifest-linux-appimage.json
-          mkdir -p "$RUNNER_TEMP/deb-root"
-          dpkg-deb -x "$deb" "$RUNNER_TEMP/deb-root"
-          main_binary="$(node -p 'JSON.parse(require("fs").readFileSync("scripts/runtime-identity-tokens.json", "utf8")).identity.mainBinary')"
-          binary="$RUNNER_TEMP/deb-root/usr/bin/$main_binary"
-          # The GUI smoke launches the packaged app under Xvfb/Weston, which is
-          # the least reliable check in CI: report it, never block the branch.
-          smoke() {
-            label="$1"
-            shift
-            log="$RUNNER_TEMP/$label.log"
-            timeout 300 "$@" >"$log" 2>&1 && rc=0 || rc=$?
-            if [ "$rc" -eq 0 ]; then
-              echo "::notice::$label passed"
-              return 0
-            fi
-            echo "::warning::$label failed with exit $rc"
-            chunk="$(tail -n 25 "$log" | sed -e 's/%/%25/g' -e 's/$/%0A/' | tr -d '\n')"
-            echo "::warning::$label:$chunk"
-          }
-          smoke linux-deb-x11 dbus-run-session -- xvfb-run -a bash \
-            scripts/smoke-linux-runtime-identity.sh \
-            x11 --kind binary "$binary" \
-            target/release/bundle/identity-smoke-linux-deb-x11.json
-          smoke linux-deb-wayland dbus-run-session -- bash \
-            scripts/smoke-linux-runtime-identity.sh \
-            wayland --kind binary "$binary" \
-            target/release/bundle/identity-smoke-linux-deb-wayland.json
-          smoke linux-appimage-x11 dbus-run-session -- xvfb-run -a bash \
-            scripts/smoke-linux-runtime-identity.sh \
-            x11 --kind appimage "$appimage" \
-            target/release/bundle/identity-smoke-linux-appimage-x11.json
-          smoke linux-appimage-wayland dbus-run-session -- bash \
-            scripts/smoke-linux-runtime-identity.sh \
-            wayland --kind appimage "$appimage" \
-            target/release/bundle/identity-smoke-linux-appimage-wayland.json
-
-      - name: Build unsigned macOS app and DMG identity smoke artifacts
-        if: matrix.platform == 'macos-14'
-        run: pnpm exec tauri build --no-sign --target ${{ matrix.cdp_target }} --bundles app,dmg
-
-      - name: Audit and smoke-test unsigned macOS bundle
-        if: matrix.platform == 'macos-14'
-        shell: bash
-        run: |
-          # Search all of target/: a hardcoded target/<triple>/ guess costs a
-          # whole run when cargo's layout differs, and scripts/ is mode 100644
-          # so the checks below must go through bash.
-          app="$(find target -maxdepth 8 -type d -name '*.app' 2>/dev/null | head -n 1 || true)"
-          if [ -z "$app" ]; then
-            echo "::error::No .app bundle anywhere under target/"
-            find target -maxdepth 6 -type d -name bundle 2>/dev/null || true
-            exit 1
-          fi
-          echo "Verified bundle: $app"
-          manifest_dir=target/${{ matrix.cdp_target }}/release/bundle
-          mkdir -p "$manifest_dir"
-          bash scripts/verify-macos-bundle.sh "$app"
-          node scripts/audit-packaged-identity.mjs \
-            --platform macos --artifact "$app" \
-            --output "$manifest_dir/identity-manifest-macos-smoke.json"
-          smoke() {
-            label="$1"
-            shift
-            log="$RUNNER_TEMP/$label.log"
-            timeout 300 "$@" >"$log" 2>&1 && rc=0 || rc=$?
-            if [ "$rc" -eq 0 ]; then
-              echo "::notice::$label passed"
-              return 0
-            fi
-            echo "::warning::$label failed with exit $rc"
-            chunk="$(tail -n 25 "$log" | sed -e 's/%/%25/g' -e 's/$/%0A/' | tr -d '\n')"
-            echo "::warning::$label:$chunk"
-          }
-          smoke macos-bundle bash scripts/smoke-macos-runtime-identity.sh "$app" \
-            target/${{ matrix.cdp_target }}/release/bundle/identity-smoke-macos.json
-          renamed_root="$(mktemp -d "$RUNNER_TEMP/runtime-identity-renamed.XXXXXX")"
-          renamed_app="$renamed_root/DQH.app"
-          cp -R "$app" "$renamed_app"
-          smoke macos-renamed bash scripts/smoke-macos-runtime-identity.sh "$renamed_app" \
-            target/${{ matrix.cdp_target }}/release/bundle/identity-smoke-macos-renamed.json
-
-      - name: Upload desktop identity manifests
-        if: always() && (matrix.platform == 'ubuntu-22.04' || matrix.platform == 'macos-14')
-        uses: actions/upload-artifact@v7
-        with:
-          name: runtime-identity-${{ matrix.cdp_target }}
-          path: |
-            target/**/bundle/identity-*.json
