@@ -6,7 +6,6 @@ mod cdp_game_spoof;
 mod cdp_quest;
 mod discord_api;
 mod discord_cdp_commands;
-mod discord_gateway;
 mod game_idle;
 mod game_simulator;
 mod keep_awake;
@@ -2284,7 +2283,8 @@ async fn stop_account_work_internal(
 }
 
 async fn await_quest_task(join: tokio::task::JoinHandle<()>) {
-    match tokio::time::timeout(QUEST_STOP_WAIT, join).await {
+    let mut join = join;
+    match tokio::time::timeout(QUEST_STOP_WAIT, &mut join).await {
         Ok(Ok(())) => {}
         Ok(Err(error)) => {
             eprintln!("Quest task ended with a join error after cancel: {error}");
@@ -2293,6 +2293,13 @@ async fn await_quest_task(join: tokio::task::JoinHandle<()>) {
             eprintln!(
                 "Quest task did not finish within {QUEST_STOP_WAIT:?} after cancel; leftover Discord activity may still be cleaned up in the background"
             );
+            // The handle is kept alive so the task is still observed instead of
+            // being detached silently: a late panic is reported, not swallowed.
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = join.await {
+                    eprintln!("Quest task ended with a join error after cancel: {error}");
+                }
+            });
         }
     }
 }
@@ -2410,8 +2417,12 @@ async fn create_simulated_game(
     executable_name: String,
     app_id: String,
 ) -> Result<(), String> {
-    game_simulator::create_simulated_game(&path, &executable_name, &app_id)
-        .map_err(|e| format!("Failed to create simulated game: {}", e))
+    tauri::async_runtime::spawn_blocking(move || {
+        game_simulator::create_simulated_game(&path, &executable_name, &app_id)
+    })
+    .await
+    .map_err(|e| format!("Game simulator task failed: {}", e))?
+    .map_err(|e| format!("Failed to create simulated game: {}", e))
 }
 
 /// Run simulated game
@@ -2446,7 +2457,9 @@ async fn run_simulated_game(
 async fn stop_simulated_game(exec_name: String, state: State<'_, AppState>) -> Result<(), String> {
     let _gate = state.activity_gate.lock().await;
     state.game_idle.ensure_idle().await?;
-    game_simulator::stop_simulated_game(&exec_name)
+    tauri::async_runtime::spawn_blocking(move || game_simulator::stop_simulated_game(&exec_name))
+        .await
+        .map_err(|e| format!("Game simulator task failed: {}", e))?
         .map_err(|e| format!("Failed to stop simulated game: {}", e))
 }
 
@@ -2483,8 +2496,10 @@ async fn start_manual_cdp_game_simulation(
     ensure_no_active_quest(&state).await?;
     ensure_no_running_simulated_game()?;
 
-    let mut sessions = state.manual_cdp_game.lock().await;
-    sessions.ensure_idle()?;
+    // The activity gate already serializes session starts, so the session lock
+    // is only held for the state check and the final activation — never across
+    // the network calls below, which can take seconds.
+    state.manual_cdp_game.lock().await.ensure_idle()?;
 
     let status = cdp_client::check_cdp_available(cdp_port).await;
     if !status.connected {
@@ -2514,7 +2529,7 @@ async fn start_manual_cdp_game_simulation(
         cdp_port,
         owner_account_id: active_account_id(&state),
     };
-    sessions.activate(session.clone());
+    state.manual_cdp_game.lock().await.activate(session.clone());
     Ok(session)
 }
 
@@ -2926,6 +2941,24 @@ async fn claim_quest_reward(
         .claim_quest_reward(&quest_id, platform)
         .await
         .map_err(|e| format!("Failed to claim quest reward: {}", e))
+}
+
+/// Read the reward code of a claimed quest.
+///
+/// The code is only shown: nothing here redeems it, and the balance is not
+/// touched. A quest without a code reports the API's own error.
+#[tauri::command]
+async fn get_quest_reward_code(
+    quest_id: String,
+    account_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let (client, _) = quest_client_for(&state, account_id.as_deref())?;
+
+    client
+        .get_quest_reward_code(&quest_id)
+        .await
+        .map_err(|e| format!("Failed to get the quest reward code: {}", e))
 }
 
 /// Raise an operating-system notification. Only the frontend knows the quest
@@ -3423,6 +3456,7 @@ pub fn run() {
             get_quest_decision_debug,
             get_quest_decisions_debug,
             claim_quest_reward,
+            get_quest_reward_code,
             notify_quest_finished,
             connect_to_discord_rpc,
             disconnect_from_discord_rpc,

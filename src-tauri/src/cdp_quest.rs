@@ -1771,7 +1771,8 @@ async fn cdp_cleanup_with_attempts(port: u16, max_attempts: u32) -> Result<()> {
     let budget_start = Instant::now();
 
     for attempt in 1..=max_attempts {
-        if attempt > 1 && budget_start.elapsed() >= CDP_CLEANUP_BUDGET {
+        let remaining = CDP_CLEANUP_BUDGET.saturating_sub(budget_start.elapsed());
+        if attempt > 1 && remaining.is_zero() {
             log(
                 LogLevel::Warn,
                 LogCategory::TokenExtraction,
@@ -1785,9 +1786,21 @@ async fn cdp_cleanup_with_attempts(port: u16, max_attempts: u32) -> Result<()> {
             break;
         }
 
+        // The attempt's own calls are capped by what is left of the budget (with
+        // a one-second floor), so the cleanup cannot run a whole attempt past it
+        // the way an uncapped call could.
+        let cleanup_timeout = remaining.as_secs().clamp(1, 15);
+
         let mut cleanup_success_count = 0usize;
 
-        match cdp_client::execute_js_via_all_discord_targets(port, &cleanup_js, true, 15).await {
+        match cdp_client::execute_js_via_all_discord_targets(
+            port,
+            &cleanup_js,
+            true,
+            cleanup_timeout,
+        )
+        .await
+        {
             Ok(results) => {
                 let mut error_count = 0usize;
 
@@ -1851,11 +1864,15 @@ async fn cdp_cleanup_with_attempts(port: u16, max_attempts: u32) -> Result<()> {
             }
         }
 
+        let verify_remaining = CDP_CLEANUP_BUDGET.saturating_sub(budget_start.elapsed());
+        let verify_timeout = verify_remaining
+            .as_secs()
+            .clamp(1, CDP_CLEANUP_VERIFY_TIMEOUT_SECS);
         match cdp_client::execute_js_via_all_discord_targets(
             port,
             &verify_js,
             false,
-            CDP_CLEANUP_VERIFY_TIMEOUT_SECS,
+            verify_timeout,
         )
         .await
         {

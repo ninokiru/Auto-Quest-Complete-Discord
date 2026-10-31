@@ -576,11 +576,6 @@ impl DiscordApiClient {
             .with_context(|| "Discord API request failed")
     }
 
-    #[allow(dead_code)]
-    pub fn get_token(&self) -> &str {
-        &self.token
-    }
-
     /// Get current user info
     pub async fn get_current_user(&self) -> Result<DiscordUser> {
         use crate::logger::{log, LogCategory, LogLevel};
@@ -882,6 +877,31 @@ impl DiscordApiClient {
         serde_json::from_str(&body).context("Failed to parse claim reward response")
     }
 
+    /// Read the redeemable code of a claimed quest.
+    ///
+    /// This only reads: the code is shown in the app and redeemed wherever the
+    /// reward came from. Nothing here touches the balance or redeems anything.
+    pub async fn get_quest_reward_code(&self, quest_id: &str) -> Result<serde_json::Value> {
+        let url = format!("{}/quests/{}/reward-code", DISCORD_API_BASE, quest_id);
+
+        let response = self
+            .send_respecting_rate_limit(self.request(Method::GET, &url))
+            .await
+            .context("Request for the quest reward code failed")?;
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            anyhow::bail!(
+                "Failed to read the quest reward code: {} - {}",
+                status,
+                body
+            );
+        }
+
+        serde_json::from_str(&body).context("Failed to parse the quest reward code")
+    }
+
     /// Update video watch progress
     pub async fn update_video_progress(&self, quest_id: &str, timestamp: f64) -> Result<bool> {
         let url = format!("{}/quests/{}/video-progress", DISCORD_API_BASE, quest_id);
@@ -1140,93 +1160,6 @@ impl DiscordApiClient {
 
         Ok(all_items)
     }
-}
-
-#[allow(dead_code)]
-fn convert_api_quest_to_quest(quest_json: &serde_json::Value) -> Option<Quest> {
-    let id = quest_json.get("id")?.as_str()?.to_string();
-    let config = quest_json.get("config")?;
-    let messages = config.get("messages");
-    let application = config.get("application");
-    let user_status = quest_json.get("user_status");
-
-    // Get quest name
-    let name = messages
-        .and_then(|m| m.get("quest_name"))
-        .and_then(|n| n.as_str())
-        .unwrap_or("Unknown Quest")
-        .to_string();
-
-    // Get task config and extract task info
-    let task_config = config
-        .get("task_config_v2")
-        .or_else(|| config.get("task_config"));
-    let (seconds_needed, task_type) = task_config
-        .and_then(|tc| tc.get("tasks"))
-        .and_then(|tasks| tasks.as_object())
-        .map(|tasks| {
-            for (task_name, task_data) in tasks {
-                if let Some(target) = task_data.get("target").and_then(|t| t.as_u64()) {
-                    return (target as u32, task_name.clone());
-                }
-            }
-            (0u32, String::new())
-        })
-        .unwrap_or((0, String::new()));
-
-    // Calculate progress
-    let progress = user_status
-        .and_then(|us| us.get("progress"))
-        .and_then(|p| p.as_object())
-        .map(|progress_map| {
-            for (_, v) in progress_map {
-                if let Some(val) = v.get("value").and_then(|v| v.as_f64()) {
-                    return if seconds_needed > 0 {
-                        (val / seconds_needed as f64 * 100.0).min(100.0)
-                    } else {
-                        0.0
-                    };
-                }
-            }
-            0.0
-        })
-        .unwrap_or(0.0);
-
-    Some(Quest {
-        id,
-        name,
-        description: messages
-            .and_then(|m| m.get("game_publisher"))
-            .and_then(|n| n.as_str())
-            .unwrap_or("")
-            .to_string(),
-        progress,
-        seconds_needed,
-        task_type,
-        application_id: application
-            .and_then(|a| a.get("id"))
-            .and_then(|i| i.as_str())
-            .unwrap_or("")
-            .to_string(),
-        application_name: application
-            .and_then(|a| a.get("name"))
-            .and_then(|n| n.as_str())
-            .unwrap_or("")
-            .to_string(),
-        application_icon: None, // Icon handling would require additional logic
-        expires_at: config
-            .get("expires_at")
-            .and_then(|e| e.as_str())
-            .map(|s| s.to_string()),
-        enrolled: user_status
-            .and_then(|us| us.get("enrolled_at"))
-            .map(|e| !e.is_null())
-            .unwrap_or(false),
-        completed: user_status
-            .and_then(|us| us.get("completed_at"))
-            .map(|c| !c.is_null())
-            .unwrap_or(false),
-    })
 }
 
 #[cfg(test)]

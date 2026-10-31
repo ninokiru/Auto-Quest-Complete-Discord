@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { Gift, Loader2, RotateCw, Users } from 'lucide-vue-next'
 import type { AccountQuestGroup, Quest } from '@/api/tauri'
 import type { ForeignQuestBlocker } from '@/utils/questTasks'
-import { foreignQuestBlocker, getQuestKind } from '@/utils/questTasks'
+import { foreignQuestBlocker, getQuestKind, isGameQuest } from '@/utils/questTasks'
 import { useAuthStore } from '@/stores/auth'
 import { useQuestsStore } from '@/stores/quests'
 import { useToastStore } from '@/stores/toast'
@@ -80,30 +80,56 @@ function actionOf(quest: Quest, running: boolean): RowAction {
  *  under the button: a row that simply vanishes reads as a quest that went missing.
  *  A failed click is a different note — it names what the backend said and leaves
  *  the button working, because the reason to retry is usually a changed Discord side. */
-function noteOf(blocker: ForeignQuestBlocker | null, failure: string | undefined): {
+function noteOf(
+  blocker: ForeignQuestBlocker | null,
+  failure: string | undefined,
+  gameBusy: boolean
+): {
   note: string
   isError: boolean
 } {
   if (failure) return { note: failure, isError: true }
   if (blocker === 'manual') return { note: t('quest.foreign_blocked_manual'), isError: false }
   if (blocker === 'no-task') return { note: t('quest.foreign_blocked_no_task'), isError: false }
+  if (gameBusy) return { note: t('quest.foreign_blocked_game'), isError: false }
   return { note: '', isError: false }
+}
+
+/** Whether this account already runs a game quest. A game quest holds the
+ *  account's single game slot, so a second one is refused by the backend. */
+function gameSlotBusy(accountId: string, group: AccountQuestGroup): boolean {
+  return group.quests.some(quest => isRunning(accountId, quest.id) && isGameQuest(quest))
 }
 
 /** Eligible for the group's Run all: unfinished, not already running and drivable
  *  through the direct API, up to the same per-account cap the backend enforces so
  *  a batch cannot queue starts it would reject. An unenrolled quest counts, because
- *  Run all accepts it first. */
+ *  Run all accepts it first.
+ *
+ *  One game quest runs at a time per account: the account already running one
+ *  leaves no room for another, and a batch that is not already running one starts
+ *  exactly one of them. The quests it leaves out are not failures — they wait for
+ *  the running game to end. */
 function runnableQuests(group: AccountQuestGroup): Quest[] {
   const accountId = group.account.user.id
   const running = group.quests.filter(quest => isRunning(accountId, quest.id)).length
   const free = questsStore.maxParallelQuests - running
   if (free <= 0) return []
-  return group.quests
+  const candidates = group.quests
     .filter(quest => !quest.user_status?.completed_at)
     .filter(quest => !isRunning(accountId, quest.id))
     .filter(quest => foreignQuestBlocker(quest) === null)
-    .slice(0, free)
+  let gameTaken = gameSlotBusy(accountId, group)
+  const queue: Quest[] = []
+  for (const quest of candidates) {
+    if (isGameQuest(quest)) {
+      if (gameTaken) continue
+      gameTaken = true
+    }
+    queue.push(quest)
+    if (queue.length >= free) break
+  }
+  return queue
 }
 
 const groups = computed<ForeignGroupView[]>(() => {
@@ -112,12 +138,14 @@ const groups = computed<ForeignGroupView[]>(() => {
     if (group.quests.length === 0 && !group.error) continue
     const accountId = group.account.user.id
     const user = group.account.user
+    const gameBusy = gameSlotBusy(accountId, group)
     const rows: ForeignRow[] = group.quests.map(quest => {
       const key = `${accountId}|${quest.id}`
       const running = isRunning(accountId, quest.id)
       const action = actionOf(quest, running)
       const blocker = action === 'start' ? foreignQuestBlocker(quest) : null
-      const note = noteOf(blocker, attemptErrors.value.get(key))
+      const gameBlocked = action === 'start' && blocker === null && gameBusy && isGameQuest(quest)
+      const note = noteOf(blocker, attemptErrors.value.get(key), gameBlocked)
       return {
         key,
         accountId,
@@ -126,7 +154,7 @@ const groups = computed<ForeignGroupView[]>(() => {
         action,
         note: note.note,
         noteIsError: note.isError,
-        blocked: blocker !== null,
+        blocked: blocker !== null || gameBlocked,
         busy: busyKeys.value.has(key),
       }
     })
@@ -199,6 +227,13 @@ async function handleRunAll(group: ForeignGroupView): Promise<void> {
   if (!source) return
   const queue = runnableQuests(source)
   if (queue.length === 0) return
+  // The game quests the batch leaves out are not failures: one game quest runs at
+  // a time per account, so the rest wait for the one that started.
+  const eligible = source.quests
+    .filter(quest => !quest.user_status?.completed_at)
+    .filter(quest => !isRunning(group.accountId, quest.id))
+    .filter(quest => foreignQuestBlocker(quest) === null)
+  const waitingGames = eligible.filter(isGameQuest).length - queue.filter(isGameQuest).length
   busyKeys.value.add(key)
   const failures: string[] = []
   try {
@@ -228,6 +263,10 @@ async function handleRunAll(group: ForeignGroupView): Promise<void> {
     toast.error({
       title: t('quest.foreign_run_all_partial', { count: failures.length }),
       description: failures[0],
+    })
+  } else if (waitingGames > 0) {
+    toast.info({
+      title: t('quest.foreign_run_all_waiting', { count: waitingGames }),
     })
   }
 }
@@ -327,18 +366,18 @@ onBeforeUnmount(stopTimer)
           {{ `${t('quest.foreign_read_failed')}: ${group.readError}` }}
         </p>
 
-        <div class="mt-2.5 space-y-2.5 px-4">
+        <div class="mt-2.5 grid gap-2.5 px-4 sm:grid-cols-2">
           <QuestCard
             v-for="row in group.rows"
             :key="row.key"
             :quest="row.quest"
             :quest-type="row.questType"
-            density="compact"
             foreign
+            :account-id="group.accountId"
             :busy="row.busy"
           >
             <template #actions>
-              <div class="flex max-w-[26rem] flex-col items-end gap-1">
+              <div class="flex flex-col items-end gap-1">
                 <Button
                   v-if="row.action === 'accept'"
                   variant="default"
@@ -389,7 +428,7 @@ onBeforeUnmount(stopTimer)
 
                 <p
                   v-if="row.note"
-                  class="break-words text-right text-[10px] leading-relaxed"
+                  class="max-w-[15rem] break-words text-right text-[10px] leading-relaxed"
                   :class="row.noteIsError ? 'text-error' : 'text-muted-foreground'"
                 >
                   {{ row.note }}

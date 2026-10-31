@@ -1,6 +1,7 @@
 import { computed, ref, watch, type Ref } from 'vue'
 import { defineStore } from 'pinia'
 import type {
+  DetectableGame,
   GameIdleCrashConfig,
   GameIdleDuration,
   GameIdleMode,
@@ -31,6 +32,9 @@ const CONCURRENT_GAMES_KEY = 'questHelper_gameIdleConcurrentGames'
 const CRASH_ENABLED_KEY = 'questHelper_gameIdleCrashEnabled'
 const CRASH_AFTER_KEY = 'questHelper_gameIdleCrashAfterMinutes'
 const REOPEN_DELAY_KEY = 'questHelper_gameIdleReopenDelaySeconds'
+// An empty list is stored as "no key": that is what lets a fresh install, and a
+// user who resets the picker, keep cycling whatever Discord currently lists.
+const SELECTED_GAMES_KEY = 'questHelper_gameIdleSelectedGames'
 const DEFAULT_PLAY_DURATION: GameIdleDuration = { mode: 'fixed', fixed: 60, min: 60, max: 60 }
 const DEFAULT_REST_DURATION: GameIdleDuration = { mode: 'fixed', fixed: 0, min: 0, max: 0 }
 const DEFAULT_CRASH_AFTER_DURATION: GameIdleDuration = { mode: 'random', fixed: 10, min: 5, max: 15 }
@@ -62,6 +66,18 @@ function clearStoppedQueue(value: GameIdleStatus | null): GameIdleStatus | null 
   }
 }
 
+/** The picker's saved ids, de-duplicated. A malformed entry is dropped rather
+ *  than failing the whole selection back to "all games". */
+function readSelectedGameIds(): string[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SELECTED_GAMES_KEY) ?? '[]')
+    if (!Array.isArray(parsed)) return []
+    return [...new Set(parsed.filter((id): id is string => typeof id === 'string' && id !== ''))]
+  } catch {
+    return []
+  }
+}
+
 export function formatSimulationDuration(totalSeconds: number): { hours: number; minutes: number } {
   const totalMinutes = Math.floor(Math.max(0, totalSeconds) / 60)
   return {
@@ -80,6 +96,9 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
   const reopenDelaySeconds = ref(loadGameIdleDuration(REOPEN_DELAY_KEY, DEFAULT_REOPEN_DELAY_DURATION, 0))
   const savedMode = localStorage.getItem(MODE_KEY)
   const mode = ref<GameIdleMode>(savedMode === 'process' || savedMode === 'cdp' ? savedMode : 'process')
+  // Games the user narrowed the idle cycle to. Empty is not "nothing": it is
+  // "every game Discord lists", which is the behaviour the page shipped with.
+  const selectedGameIds = ref<string[]>(readSelectedGameIds())
   const status = ref<GameIdleStatus | null>(null)
   const history = ref<Record<string, GameSimulationHistoryEntry>>({})
   const loading = ref(false)
@@ -117,12 +136,42 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
     }, { flush: 'sync' })
   }
 
+  /** Replace the picked games. An empty list (or one holding every id) is saved
+   *  as "all games" so the cycle keeps following Discord's catalog. */
+  function setSelectedGames(ids: string[]) {
+    const unique = [...new Set(ids.filter(id => typeof id === 'string' && id !== ''))]
+    selectedGameIds.value = unique
+    try {
+      if (unique.length > 0) localStorage.setItem(SELECTED_GAMES_KEY, JSON.stringify(unique))
+      else localStorage.removeItem(SELECTED_GAMES_KEY)
+    } catch {
+      // The selection still applies to this session; only the memory of it failed.
+    }
+  }
+
+  /** The slice of the catalog the idle cycle may use. */
+  function candidateGames(games: DetectableGame[]): DetectableGame[] {
+    if (selectedGameIds.value.length === 0) return games
+    const picked = new Set(selectedGameIds.value)
+    return games.filter(game => picked.has(game.id))
+  }
+
   watchClampedDuration(playDuration, 1)
   watchClampedDuration(restDuration, 0)
   watchClampedDuration(crashAfterMinutes, 1, CRASH_AFTER_KEY)
   watchClampedDuration(reopenDelaySeconds, 0, REOPEN_DELAY_KEY)
   watch(crashEnabled, (enabled) => {
     localStorage.setItem(CRASH_ENABLED_KEY, String(enabled))
+  }, { flush: 'sync' })
+  // A mode or lane-count change used to be remembered only after a start, so a
+  // user who switched to CDP and left the page came back to Process mode.
+  watch(mode, (value) => {
+    localStorage.setItem(MODE_KEY, value)
+  }, { flush: 'sync' })
+  watch(concurrentGames, (value) => {
+    if (Number.isSafeInteger(value) && value >= 1) {
+      localStorage.setItem(CONCURRENT_GAMES_KEY, String(value))
+    }
   }, { flush: 'sync' })
 
   function persistConfig() {
@@ -229,6 +278,17 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
           quests.initSimulationPath(),
         ])
         if (generation !== accountGeneration) return
+        // Only the picked games are handed to the backend, which shuffles and
+        // filters them again (process mode drops entries without a native exe).
+        const pool = candidateGames(games)
+        // A picked list that no longer matches Discord's list is the one case
+        // the frontend can explain on its own. An empty detectable list is the
+        // backend's business: it says which mode has nothing to run.
+        if (selectedGameIds.value.length > 0 && pool.length === 0 && games.length > 0) {
+          throw new Error(
+            'The games picked for game idle are no longer in Discord\'s detectable list. Pick them again.'
+          )
+        }
         persistConfig()
         const crashSimulation: GameIdleCrashConfig = {
           enabled: crashEnabled.value,
@@ -245,7 +305,7 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
             cdpPort: quests.cdpPort,
             simulationPath,
           },
-          games
+          pool
         )
         // A stop click can arrive while candidates/path are still being loaded.
         // The backend session is created by the time this resolves, so finish
@@ -326,6 +386,7 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
     reopenDelaySeconds,
     concurrentGames,
     mode,
+    selectedGameIds,
     status,
     history,
     loading,
@@ -334,6 +395,8 @@ export const useGameIdleStore = defineStore('gameIdle', () => {
     error,
     isActive,
     effectiveConcurrentGames,
+    setSelectedGames,
+    candidateGames,
     initialize,
     refreshHistory,
     start,

@@ -10,7 +10,14 @@ pub struct Client {
     pub user: ds::user::User,
 }
 
-pub async fn make_client(app_id: ds::AppId, subs: ds::Subscriptions) -> Client {
+/// Connect to Discord's local RPC socket.
+///
+/// Every failure is returned instead of panicking: callers run inside lane
+/// tasks, where a panic would kill the task after a game process was already
+/// spawned and skip its rollback. Discord being closed is an ordinary case, so
+/// the handshake is also bounded — a socket that never answers must not hang a
+/// Stop.
+pub async fn make_client(app_id: ds::AppId, subs: ds::Subscriptions) -> Result<Client, String> {
     println!("Creating Discord client with app ID: {}", app_id);
     let (wheel, handler) = ds::wheel::Wheel::new(Box::new(|err| {
         println!("Error: {:?}", err);
@@ -19,19 +26,24 @@ pub async fn make_client(app_id: ds::AppId, subs: ds::Subscriptions) -> Client {
     let mut user = wheel.user();
 
     let discord = ds::Discord::new(ds::DiscordApp::PlainId(app_id), subs, Box::new(handler))
-        .expect("unable to create discord client");
-    user.0.changed().await.unwrap();
+        .map_err(|error| format!("Discord client error: {error}"))?;
+    tokio::time::timeout(std::time::Duration::from_secs(10), user.0.changed())
+        .await
+        .map_err(|_| "Discord did not accept the client".to_string())?
+        .map_err(|error| format!("Discord connection closed: {error}"))?;
 
     let user = match &*user.0.borrow() {
         ds::wheel::UserState::Connected(user) => user.clone(),
-        ds::wheel::UserState::Disconnected(err) => panic!("failed to connect to Discord: {}", err),
+        ds::wheel::UserState::Disconnected(err) => {
+            return Err(format!("Failed to connect to Discord: {err}"));
+        }
     };
 
     println!("connected to Discord, local user is {:#?}", user);
 
-    Client {
+    Ok(Client {
         discord,
         wheel,
         user,
-    }
+    })
 }

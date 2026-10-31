@@ -11,7 +11,7 @@ const props = defineProps<{
   <div
     :class="
       cn(
-        'flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2',
+        'flex flex-col-reverse flex-wrap gap-2 sm:flex-row sm:justify-end',
         props.class,
       )
     "

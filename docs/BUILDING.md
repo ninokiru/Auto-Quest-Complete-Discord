@@ -151,9 +151,12 @@ A fix that lands between milestones still gets its own GitHub Release, tagged
 
 | Workflow | Trigger | Result |
 | --- | --- | --- |
-| `verify.yml` | Every push to `main`, plus manual dispatch | All the gates in section 6 on one Linux runner, no bundling. Fastest feedback |
-| `ci.yml` | Pull requests to `main`/`develop`, pushes to `develop` | The same gates across Windows, macOS arm64, Ubuntu 22.04 |
+| `verify.yml` | Every push to `main`, plus manual dispatch | All the gates in section 6 on one Windows runner, no bundling. Fastest feedback |
+| `ci.yml` | Pull requests to `main`/`develop`, pushes to `develop` | The same gates on Windows |
 | `build-release.yml` | A push that changes `public/version.txt`, plus manual dispatch | Builds and publishes Windows x64 `.exe` + portable `.zip`, audits packaged identity, opens the draft release |
+
+The pull-request and `main` gates run on **Windows only** — it is the platform the releases are
+published from, and one runner is enough to gate a branch.
 
 Release publishing is **Windows-only right now**. The macOS and Linux jobs are still in
 `build-release.yml`, commented out behind `TEMP` markers, because the Apple Silicon bundle is the

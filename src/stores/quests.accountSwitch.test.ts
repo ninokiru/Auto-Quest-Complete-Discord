@@ -56,6 +56,7 @@ function slot(questId: string, hasBackendTask: boolean): RunningQuest {
     type: 'video',
     targetDuration: 60,
     progressUnit: 'time',
+    taskKey: null,
     serverProgress: 0,
     localProgress: 0,
     gameExe: null,
@@ -217,12 +218,15 @@ describe('quest tasks across an account switch', () => {
 
   it('leaves no polling tick or quest listener running', async () => {
     const store = useQuestsStore()
+    const timersBefore = vi.getTimerCount()
     await store.startVideo('video-quest', 60, 0)
 
     store.resetForAccountSwitch('leaving-account')
 
     expect(mocks.unlisten).toHaveBeenCalledTimes(3)
-    expect(mocks.cancelAnimationFrame).toHaveBeenCalled()
+    // The local progress advances on an interval now, so the test counts the
+    // timers that are left instead of watching a cancelled animation frame.
+    expect(vi.getTimerCount()).toBeLessThanOrEqual(timersBefore)
     // Two whole polling windows later, the account being left must stay silent.
     await vi.advanceTimersByTimeAsync(240_000)
     expect(mocks.getQuestTaskStatuses).not.toHaveBeenCalled()

@@ -279,6 +279,9 @@ struct IdleShared {
     consecutive_failures: usize,
 }
 
+/// The state every lane of one idle session shares.
+type SharedIdleState = Arc<tokio::sync::Mutex<IdleShared>>;
+
 impl IdleShared {
     fn refresh_status_lists(&mut self) {
         self.status.recent = self.recent.iter().cloned().collect();
@@ -670,17 +673,20 @@ impl GameIdleManager {
             .as_ref()
             .map(|session| Arc::clone(&session.shared))
             .ok_or_else(|| "Game idle mode is not running".to_string())?;
-        let mut shared = shared.lock().await;
-        if shared.status.session_id != session_id {
-            return Err("The game idle session has changed".to_string());
-        }
-        // A lane's game is no longer in `upcoming`, so it cannot be removed
-        // here; the running simulation stays owned by its worker and Stop.
-        if !shared.remove_upcoming_item(app_id, occurrence_id) {
-            return Err("Only upcoming games can be removed".to_string());
-        }
-        emit_status(app, &shared.status);
-        Ok(shared.status.clone())
+        let status = {
+            let mut shared = shared.lock().await;
+            if shared.status.session_id != session_id {
+                return Err("The game idle session has changed".to_string());
+            }
+            // A lane's game is no longer in `upcoming`, so it cannot be removed
+            // here; the running simulation stays owned by its worker and Stop.
+            if !shared.remove_upcoming_item(app_id, occurrence_id) {
+                return Err("Only upcoming games can be removed".to_string());
+            }
+            shared.status.clone()
+        };
+        emit_status(app, &status);
+        Ok(status)
     }
 
     pub async fn stop(
@@ -688,25 +694,27 @@ impl GameIdleManager {
         history: Arc<SimulationHistory>,
         app: &tauri::AppHandle,
     ) -> Result<Option<GameIdleStatus>, String> {
-        let (shared, joins) = {
+        let (shared, joins, stopping_status) = {
             let mut active = self.active.lock().await;
             let Some(session) = active.as_mut() else {
                 return Ok(None);
             };
-            {
+            let stopping_status = {
                 let mut shared = session.shared.lock().await;
                 shared.status.phase = GameIdlePhase::Stopping;
                 shared.sync_lanes();
-                emit_status(app, &shared.status);
-            }
+                shared.status.clone()
+            };
             if let Some(cancel) = session.cancel.take() {
                 let _ = cancel.send(true);
             }
             (
                 Arc::clone(&session.shared),
                 session.joins.drain(..).collect::<Vec<_>>(),
+                stopping_status,
             )
         };
+        emit_status(app, &stopping_status);
 
         // Do not abort an in-flight spawn_blocking call: Tokio cannot cancel
         // that OS work, and a cancelled lane could otherwise launch a child
@@ -716,20 +724,26 @@ impl GameIdleManager {
         }
 
         if let Err(error) = stop_remaining_lanes(&shared, app).await {
-            let mut shared = shared.lock().await;
-            shared.status.phase = GameIdlePhase::Error;
-            shared.sync_lanes();
-            shared.status.warning = Some(error.clone());
-            emit_status(app, &shared.status);
+            let status = {
+                let mut shared = shared.lock().await;
+                shared.status.phase = GameIdlePhase::Error;
+                shared.sync_lanes();
+                shared.status.warning = Some(error.clone());
+                shared.status.clone()
+            };
+            emit_status(app, &status);
             return Err(error);
         }
 
         if let Err(error) = history.finish_active(Some(app)).await {
-            let mut shared = shared.lock().await;
-            shared.status.phase = GameIdlePhase::Error;
-            shared.sync_lanes();
-            shared.status.warning = Some(error.clone());
-            emit_status(app, &shared.status);
+            let status = {
+                let mut shared = shared.lock().await;
+                shared.status.phase = GameIdlePhase::Error;
+                shared.sync_lanes();
+                shared.status.warning = Some(error.clone());
+                shared.status.clone()
+            };
+            emit_status(app, &status);
             // Keep the manager entry so the user can retry Stop. Its native
             // resources are already gone, while the history segments remain
             // active until their final intervals are durably persisted.
@@ -739,9 +753,9 @@ impl GameIdleManager {
             let mut shared = shared.lock().await;
             shared.status.phase = GameIdlePhase::Stopped;
             shared.status.lanes = Vec::new();
-            emit_status(app, &shared.status);
             shared.status.clone()
         };
+        emit_status(app, &final_status);
         *self.active.lock().await = None;
         Ok(Some(final_status))
     }
@@ -822,7 +836,7 @@ async fn run_lane(
             }
             continue;
         };
-        emit_status(&app, &shared.lock().await.status);
+        publish_status(&shared, &app).await;
 
         let mut running = None;
         let mut last_error = String::new();
@@ -874,7 +888,7 @@ async fn run_lane(
                     candidate.name, last_error
                 ))
             };
-            emit_status(&app, &shared.lock().await.status);
+            publish_status(&shared, &app).await;
             if tripped {
                 set_error(
                     &shared,
@@ -926,7 +940,7 @@ async fn run_lane(
             state.mark_playing(slot, play_minutes);
             state.status.play_minutes = play_minutes;
         }
-        emit_status(&app, &shared.lock().await.status);
+        publish_status(&shared, &app).await;
 
         let play_duration_secs = u64::from(play_minutes) * 60;
         // `live_simulation` degrades to None while a simulated crash has closed
@@ -960,7 +974,7 @@ async fn run_lane(
                     frozen_ends_at = state.park_lane_countdown(slot);
                     closed_at = Instant::now();
                 }
-                emit_status(&app, &shared.lock().await.status);
+                publish_status(&shared, &app).await;
                 cancelled = wait_cancellable(Duration::from_secs(reopen_after), &mut cancel).await;
                 if cancelled {
                     crash_window = closed_at.elapsed();
@@ -972,10 +986,12 @@ async fn run_lane(
                             remaining_secs = play_duration_secs.saturating_sub(crash_at);
                             live_simulation = Some(restarted.clone());
                             let window_millis = window.as_millis() as i64;
-                            let mut state = shared.lock().await;
-                            state.set_lane_running(slot, restarted);
-                            state.rebase_lane_window(slot, window_millis, frozen_ends_at);
-                            emit_status(&app, &state.status);
+                            {
+                                let mut state = shared.lock().await;
+                                state.set_lane_running(slot, restarted);
+                                state.rebase_lane_window(slot, window_millis, frozen_ends_at);
+                            }
+                            publish_status(&shared, &app).await;
                         }
                         Err(error) => {
                             if let Some(orphan) = error.running {
@@ -1029,7 +1045,7 @@ async fn run_lane(
                 rest_minutes,
             );
         }
-        emit_status(&app, &shared.lock().await.status);
+        publish_status(&shared, &app).await;
         if let Err(error) = history
             .finish_one(&history_path, Some(&app), &candidate.id)
             .await
@@ -1233,20 +1249,27 @@ fn shuffle<T>(values: &mut [T]) {
     values.shuffle(&mut rand::rng());
 }
 
-async fn set_error(
-    shared: &Arc<tokio::sync::Mutex<IdleShared>>,
-    app: &tauri::AppHandle,
-    error: String,
-) {
-    let mut state = shared.lock().await;
-    state.status.phase = GameIdlePhase::Error;
-    state.status.warning = Some(error);
-    state.sync_lanes();
-    emit_status(app, &state.status);
+async fn set_error(shared: &SharedIdleState, app: &tauri::AppHandle, error: String) {
+    let status = {
+        let mut state = shared.lock().await;
+        state.status.phase = GameIdlePhase::Error;
+        state.status.warning = Some(error);
+        state.sync_lanes();
+        state.status.clone()
+    };
+    emit_status(app, &status);
 }
 
 fn emit_status(app: &tauri::AppHandle, status: &GameIdleStatus) {
     let _ = app.emit("game-idle-status-changed", status.clone());
+}
+
+/// Publish the current status without holding the lock. Emitting serializes
+/// the payload and hands it to the webview, so doing that under the lock
+/// would stall every other lane that wants to update its own state.
+async fn publish_status(shared: &SharedIdleState, app: &tauri::AppHandle) {
+    let status = shared.lock().await.status.clone();
+    emit_status(app, &status);
 }
 
 fn now_millis() -> i64 {

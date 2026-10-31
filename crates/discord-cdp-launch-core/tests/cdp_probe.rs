@@ -543,3 +543,46 @@ fn same_url_is_selected_by_runtime_not_route_or_login() {
         1
     );
 }
+
+/// Chromium's DevTools server answers an HTTP/1.0 request by dropping the
+/// connection without a response. The probe must speak HTTP/1.1, or the empty
+/// reply looks like a foreign process holding the port.
+#[test]
+fn a_server_that_drops_http_1_0_requests_is_still_listed() {
+    let _guard = serialize_socket_test();
+    let body = r#"[{"id":"1","type":"page","title":"Friends","url":"https://discord.com/channels/@me","webSocketDebuggerUrl":"ws://placeholder"}]"#;
+    let response = response_owned("200 OK", body);
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(4);
+        while Instant::now() < deadline {
+            let Ok((mut stream, _)) = listener.accept() else {
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            };
+            stream.set_nonblocking(false).unwrap();
+            let read_timeout = Duration::from_secs(1);
+            stream.set_read_timeout(Some(read_timeout)).unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 512];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                match stream.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => request.extend_from_slice(&buffer[..read]),
+                }
+            }
+            let request_line = String::from_utf8_lossy(&request);
+            if request_line.starts_with("GET /json HTTP/1.1") {
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        }
+    });
+    let listed =
+        list_cdp_targets_with_timeouts(port, Duration::from_secs(1), Duration::from_secs(2))
+            .unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].title, "Friends");
+}

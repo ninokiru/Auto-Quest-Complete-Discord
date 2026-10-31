@@ -16,14 +16,14 @@ pub(crate) const CLIENT_MOD_DETECTION_BITS: u128 = 0b000000001000000000010000000
 // hardcoding their own values.
 // ─────────────────────────────────────────────────────────────────────────────
 /// Fallback build number when CDP extraction and remote JS fetch both fail.
-/// Updated: October 17th, 2026
-pub(crate) const DEFAULT_CLIENT_VERSION: &str = "1.0.9262";
-pub(crate) const DEFAULT_CHROME_VERSION: &str = "148.0.7778.280";
-pub(crate) const DEFAULT_ELECTRON_VERSION: &str = "42.11.11";
+/// Updated: October 31st, 2026
+pub(crate) const DEFAULT_CLIENT_VERSION: &str = "1.0.9266";
+pub(crate) const DEFAULT_CHROME_VERSION: &str = "152.0.7977.167";
+pub(crate) const DEFAULT_ELECTRON_VERSION: &str = "44.9.3";
 pub(crate) const DEFAULT_OS_VERSION: &str = "10.0.19045";
 pub(crate) const DEFAULT_OS_SDK_VERSION: &str = "19045";
-pub(crate) const DEFAULT_CLIENT_BUILD_NUMBER: u64 = 641004;
-pub(crate) const DEFAULT_NATIVE_BUILD_NUMBER: u64 = 94186;
+pub(crate) const DEFAULT_CLIENT_BUILD_NUMBER: u64 = 657850;
+pub(crate) const DEFAULT_NATIVE_BUILD_NUMBER: u64 = 97026;
 
 pub(crate) fn discord_user_agent(client_version: &str) -> String {
     format!(
@@ -257,52 +257,6 @@ impl Default for SuperProperties {
             client_heartbeat_session_id: None,
             client_app_state: Some("focused".to_string()),
         }
-    }
-}
-
-impl SuperProperties {
-    /// Builds a Gateway Identify payload (op 2) from the current properties.
-    /// The `token` parameter is the user's authentication token.
-    pub fn to_gateway_identify_payload(&self, token: &str) -> serde_json::Value {
-        serde_json::json!({
-            "op": 2,
-            "d": {
-                "token": token,
-                "capabilities": 30717,
-                "properties": {
-                    "os": &self.os,
-                    "browser": &self.browser,
-                    "device": "",
-                    "system_locale": &self.system_locale,
-                    "browser_user_agent": &self.browser_user_agent,
-                    "browser_version": &self.browser_version,
-                    "os_version": &self.os_version,
-                    "referrer": "",
-                    "referring_domain": "",
-                    "referrer_current": "",
-                    "referring_domain_current": "",
-                    "release_channel": &self.release_channel,
-                    "client_build_number": self.client_build_number,
-                    "client_event_source": &self.client_event_source
-                },
-                "presence": {
-                    "status": "online",
-                    "since": 0,
-                    "activities": [],
-                    "afk": false
-                },
-                "compress": false,
-                "client_state": {
-                    "guild_versions": {},
-                    "highest_last_message_id": "0",
-                    "read_state_version": 0,
-                    "user_guild_settings_version": -1,
-                    "user_settings_version": -1,
-                    "private_channels_version": "0",
-                    "api_code_version": 0
-                }
-            }
-        })
     }
 }
 
