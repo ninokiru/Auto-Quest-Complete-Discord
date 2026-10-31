@@ -213,7 +213,7 @@ pub fn create_simulated_game(path: &str, executable_name: &str, _app_id: &str) -
     println!("Writing embedded runner to {:?}", target_exe);
     ensure_runner_bytes(&target_exe).map_err(|e| {
         anyhow::anyhow!(
-            "Could not write runner executable to {:?}: {}",
+            "Could not write runner executable to {:?}: {}. A simulated game left behind by an earlier session may still hold the file; stop it and try again.",
             target_exe,
             e
         )

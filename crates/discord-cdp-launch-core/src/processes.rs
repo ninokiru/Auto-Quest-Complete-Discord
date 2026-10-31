@@ -1023,6 +1023,13 @@ mod tests {
         let executable = directory.join("Discord");
         std::fs::File::create(&executable).unwrap();
         let wrapper = directory.join("discord");
+        if wrapper.exists() {
+            // A case-insensitive filesystem (the macOS default) resolves
+            // "discord" and "Discord" to the same file, so the wrapper cannot
+            // be a symlink there and the scenario cannot be set up.
+            let _ = std::fs::remove_dir_all(&directory);
+            return;
+        }
         std::os::unix::fs::symlink(&executable, &wrapper).unwrap();
 
         // Discovery reads the wrapper name from `/usr/bin` while the running process

@@ -1786,8 +1786,9 @@ async fn cdp_cleanup_with_attempts(port: u16, max_attempts: u32) -> Result<()> {
             break;
         }
 
-        // Neither call of an attempt may outlive the remaining budget, so the
-        // whole cleanup stays inside it instead of running one attempt past.
+        // The attempt's own calls are capped by what is left of the budget (with
+        // a one-second floor), so the cleanup cannot run a whole attempt past it
+        // the way an uncapped call could.
         let cleanup_timeout = remaining.as_secs().clamp(1, 15);
 
         let mut cleanup_success_count = 0usize;
