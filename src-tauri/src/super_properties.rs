@@ -260,52 +260,6 @@ impl Default for SuperProperties {
     }
 }
 
-impl SuperProperties {
-    /// Builds a Gateway Identify payload (op 2) from the current properties.
-    /// The `token` parameter is the user's authentication token.
-    pub fn to_gateway_identify_payload(&self, token: &str) -> serde_json::Value {
-        serde_json::json!({
-            "op": 2,
-            "d": {
-                "token": token,
-                "capabilities": 30717,
-                "properties": {
-                    "os": &self.os,
-                    "browser": &self.browser,
-                    "device": "",
-                    "system_locale": &self.system_locale,
-                    "browser_user_agent": &self.browser_user_agent,
-                    "browser_version": &self.browser_version,
-                    "os_version": &self.os_version,
-                    "referrer": "",
-                    "referring_domain": "",
-                    "referrer_current": "",
-                    "referring_domain_current": "",
-                    "release_channel": &self.release_channel,
-                    "client_build_number": self.client_build_number,
-                    "client_event_source": &self.client_event_source
-                },
-                "presence": {
-                    "status": "online",
-                    "since": 0,
-                    "activities": [],
-                    "afk": false
-                },
-                "compress": false,
-                "client_state": {
-                    "guild_versions": {},
-                    "highest_last_message_id": "0",
-                    "read_state_version": 0,
-                    "user_guild_settings_version": -1,
-                    "user_settings_version": -1,
-                    "private_channels_version": "0",
-                    "api_code_version": 0
-                }
-            }
-        })
-    }
-}
-
 /// Generates a clean launch_signature (clears detection bits)
 pub fn generate_clean_launch_signature() -> String {
     let uuid = Uuid::new_v4();
