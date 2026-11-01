@@ -2,24 +2,20 @@
 
 Auto-complete Discord **video, stream and game quests** from one window. Tauri 2 + Rust behind the scenes, Vue 3 on the surface, and no cloud service in between: everything runs on your machine.
 
-## v0.0.5 L2#4 — Discord updates stop breaking the launcher
+## v0.0.5 L2#5 — the portable build updates into the installed one
 
-Everything in L2#1 to L2#3 is still here. This patch is about the three places where a working setup could go dead on its own: a Discord update that moved the client, a cleanup that outlived the quest it belonged to, and a progress poll that kept failing behind a quest that looked alive.
-
-### Changed
-
-- **The saved Discord install finds itself again after an update.** Discord's updater replaces `app-<version>\Discord.exe` while the installation keeps the same identity, so the saved path pointed at a file that no longer existed and the launch stopped with "the selected installation must be relocated" until the client was picked again by hand. The launch now walks the installation root and uses the executable the update left behind, and the client list prefers the freshly scanned path over a saved one that stopped validating. A path you added yourself is never rewritten.
+Everything in L2#1 to L2#4 is still here. This patch is the remaining half of the update fix: the installed build restarted correctly since L2#2, but a copy started from the `portable.zip` kept coming back as the old file.
 
 ### Fixed
 
-- **A stopped quest's cleanup could break the quest started right after it.** Stopping a quest waits up to 45 seconds; when the wait expired the task was detached while its final cleanup was still running, and that cleanup removes every bridge the app injected. If the next CDP quest had already initialized, the late cleanup took its bridge and the quest died with "Modules not initialized". Cleanups are now counted, and a start waits for the previous one to finish (up to 90 seconds) before it initializes.
-- **A CDP play or stream quest no longer sits at 0% forever.** A single failed progress poll was retried on the next tick, but a run of failures left the quest reporting nothing at all until Stop was pressed. Eight failed polls in a row (about two minutes) now end the quest with a clear "progress could not be read" message and its cleanup, instead of pretending it is still watching.
+- **Updating from the portable build now lands on the new version.** The update helper was told to restart the executable it was launched from. For an installed build that is the file the installer had just replaced, but for a portable copy it is the extracted file the installer never touches — so the window reopened on the old build while the new one sat unused in `%LOCALAPPDATA%`. The helper now receives both paths, prefers the installed executable once the installer has created it, and falls back to the launcher only when it does not exist. Your portable folder is left as it was; from now on the app runs from the installed copy.
 
 ### Checks
 
 - The translation check, the frontend test suite, the runtime identity checks, and the full Rust test suite run on Windows for this release.
+- The helper script's shape (no machine paths, CRLF, both restart targets) is pinned by a unit test.
 
-**Full Changelog**: https://github.com/ninokiru/Auto-Quest-Complete-Discord/compare/0.0.5-L2.3...0.0.5-L2.4
+**Full Changelog**: https://github.com/ninokiru/Auto-Quest-Complete-Discord/compare/0.0.5-L2.4...0.0.5-L2.5
 
 ### How the in-app update works
 
@@ -41,8 +37,8 @@ These binaries are **not code-signed**. The app rewrites its own process identit
 
 | File | Use |
 | --- | --- |
-| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.4-setup.exe` | Windows installer (NSIS) |
-| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.4-portable.zip` | Windows portable, no installation |
+| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.5-setup.exe` | Windows installer (NSIS) |
+| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.5-portable.zip` | Windows portable, no installation |
 
 This release publishes **Windows x64 only**. macOS (Apple Silicon) and Linux (x86_64 `.deb` / AppImage) builds are still fully supported by the source tree and are compiled and tested in CI — only their release publishing is temporarily switched off to keep a release run on one runner. They will return in a later release. If you need one of them now, build it from source (`pnpm tauri:build`).
 
