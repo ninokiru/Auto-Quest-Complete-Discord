@@ -343,10 +343,13 @@ fn fetch_cdp_http_response(
     let _ = stream.set_write_timeout(Some(
         io_timeout.min(deadline.saturating_duration_since(Instant::now())),
     ));
-    // HTTP/1.0 on purpose: the server cannot answer with chunked encoding, so
-    // the body is always delimited by Content-Length or by the connection close.
+    // HTTP/1.1 is required: Chromium's DevTools server answers an HTTP/1.0
+    // request by closing the connection without a response, which reads as an
+    // empty reply and made the probe report the port as held by a foreign
+    // process. The body is delimited by Content-Length, so the reader stops on
+    // the declared length instead of waiting for the connection to close.
     let request =
-        format!("GET /json HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+        format!("GET /json HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
     stream
         .write_all(request.as_bytes())
         .map_err(|source| CdpListError::ConnectionFailed { port, source })?;

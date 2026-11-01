@@ -92,7 +92,7 @@ pub async fn set_activity(activity_json: String) -> Result<Client, String> {
     let app_id: i64 = activity_result.app_id as i64;
     let activity_builder = activity_result.activity;
 
-    let client = rpc::make_client(app_id, rpc::ds::Subscriptions::ACTIVITY).await;
+    let client = rpc::make_client(app_id, rpc::ds::Subscriptions::ACTIVITY).await?;
     client
         .discord
         .update_activity(activity_builder)

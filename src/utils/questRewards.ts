@@ -34,11 +34,11 @@ export interface QuestRewardView {
   icon: 'orbs' | 'asset' | 'gift'
 }
 
-export function isOrbReward(reward: QuestReward): boolean {
+function isOrbReward(reward: QuestReward): boolean {
   return reward.type === 4 || reward.orb_quantity != null
 }
 
-export function isCollectibleReward(reward: QuestReward): boolean {
+function isCollectibleReward(reward: QuestReward): boolean {
   const name = (reward.messages?.name || '').toLowerCase()
   return reward.type === 3
     || name.includes('decoration')
@@ -46,11 +46,11 @@ export function isCollectibleReward(reward: QuestReward): boolean {
     || name.includes('profile')
 }
 
-export function isInGameReward(reward: QuestReward): boolean {
+function isInGameReward(reward: QuestReward): boolean {
   return reward.type === 2 || (!!reward.asset && !isOrbReward(reward) && !isCollectibleReward(reward))
 }
 
-export function getPremiumMultiplier(reward: QuestReward): number | null {
+function getPremiumMultiplier(reward: QuestReward): number | null {
   if (!reward.orb_quantity || !reward.premium_orb_quantity) return null
   if (reward.premium_orb_quantity <= reward.orb_quantity) return null
   return reward.premium_orb_quantity / reward.orb_quantity

@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
+  Check,
   ChevronDown,
   Clock3,
   Gamepad2,
@@ -10,11 +11,13 @@ import {
   MoreHorizontal,
   Play,
   RotateCcw,
+  Search,
   Square,
   TimerReset,
   Trash2,
 } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import DurationSettingInput from '@/components/DurationSettingInput.vue'
@@ -27,7 +30,7 @@ import {
 } from '@/stores/gameIdle'
 import { useQuestsStore } from '@/stores/quests'
 import { getSimulationExecutables } from '@/utils/executables'
-import type { GameIdleItem, GameIdleLane, GameIdlePhase } from '@/api/tauri'
+import type { DetectableGame, GameIdleItem, GameIdleLane, GameIdlePhase } from '@/api/tauri'
 
 const { t } = useI18n()
 const auth = useAuthStore()
@@ -48,17 +51,135 @@ const canEditQueue = computed(() => {
   return active.value && phase !== 'stopping' && phase !== 'error'
 })
 const games = computed(() => quests.detectableGames)
-const uniqueGameCount = computed(() => new Set(games.value.map(game => game.id)).size)
-const processCandidateCount = computed(() => {
+
+// Only the games the picker allows reach the cycle: the picked subset when the
+// user narrowed it, otherwise the whole catalog (the page's original behaviour).
+const poolGames = computed(() => idle.candidateGames(games.value))
+const allGameIds = computed(() => [...new Set(games.value.map(game => game.id))])
+
+/** Executables the process simulator can launch for a game on this host, or
+ *  null while the capability descriptor is still loading. */
+function compatibleExeCount(game: DetectableGame): number | null {
   const capabilities = quests.platformCapabilities
-  if (!capabilities) return 0
-  return new Set(games.value.filter(game => getSimulationExecutables(
-      game.executables,
-      capabilities.os,
-      capabilities.executableOsPriority
-    ).length > 0).map(game => game.id)).size
+  if (!capabilities) return null
+  return getSimulationExecutables(
+    game.executables,
+    capabilities.os,
+    capabilities.executableOsPriority
+  ).length
+}
+
+/** Process mode can only spawn a game that ships a native executable; CDP
+ *  spoofs the application id, so every catalog entry is usable there. While the
+ *  capability descriptor is still loading nothing is ruled out. */
+function isSelectable(game: DetectableGame): boolean {
+  if (idle.mode === 'cdp') return true
+  const count = compatibleExeCount(game)
+  return count === null || count > 0
+}
+
+const processCandidateCount = computed(() => {
+  if (!quests.platformCapabilities) return 0
+  return new Set(poolGames.value.filter(game => isSelectable(game)).map(game => game.id)).size
 })
-const candidateCount = computed(() => idle.mode === 'cdp' ? uniqueGameCount.value : processCandidateCount.value)
+const candidateCount = computed(() => idle.mode === 'cdp' ? poolGames.value.length : processCandidateCount.value)
+
+const usingAllGames = computed(() => idle.selectedGameIds.length === 0)
+const pickedGameIds = computed(() => new Set(idle.selectedGameIds))
+const selectionSummary = computed(() =>
+  usingAllGames.value
+    ? t('game_idle.all_games', { count: allGameIds.value.length })
+    : t('game_idle.picked_games', { picked: poolGames.value.length, total: allGameIds.value.length })
+)
+
+const showGamePicker = ref(false)
+const gameSearch = ref('')
+const gamesLoading = ref(false)
+const gamesLoadFailed = ref(false)
+
+// Rendering every detectable game at once costs more than the dialog can show;
+// the search box narrows the catalog before the cap applies.
+const PICKER_LIMIT = 200
+
+// Each row reads its executable list once here. Calling the helpers from the
+// template made every row resolve the same list six times per render.
+interface PickerEntry {
+  game: DetectableGame
+  picked: boolean
+  selectable: boolean
+  hint: string
+  warn: boolean
+}
+
+function executableHint(game: DetectableGame, compatible: number | null): string {
+  const typeLabel = game.type_name === 'App' ? t('game_sim.type_app') : t('game_sim.type_game')
+  if (idle.mode === 'cdp' || compatible === null) return typeLabel
+  if (compatible === 0) return t('game_idle.no_compatible_executable')
+  return t('game_sim.exe_count', { count: compatible })
+}
+
+const visiblePickerGames = computed<PickerEntry[]>(() => {
+  const query = gameSearch.value.trim().toLowerCase()
+  const matches = query
+    ? games.value.filter(game => game.name.toLowerCase().includes(query))
+    : [...games.value]
+  if (!usingAllGames.value) {
+    // A narrowed selection shows the games already in the cycle first, so a
+    // game below the cap can still be ticked off.
+    const picked = pickedGameIds.value
+    matches.sort((a, b) => Number(picked.has(b.id)) - Number(picked.has(a.id)))
+  }
+  const picked = pickedGameIds.value
+  const everything = usingAllGames.value
+  return matches.slice(0, PICKER_LIMIT).map(game => {
+    const compatible = idle.mode === 'cdp' ? null : compatibleExeCount(game)
+    const selectable = idle.mode === 'cdp' || compatible === null || compatible > 0
+    return {
+      game,
+      selectable,
+      picked: selectable && (everything || picked.has(game.id)),
+      hint: executableHint(game, compatible),
+      warn: idle.mode === 'process' && compatible === 0,
+    }
+  })
+})
+
+/** Tick or untick one game. "Everything ticked" collapses back to the empty
+ *  sentinel so the cycle keeps following Discord's catalog as it changes. */
+function toggleGame(game: DetectableGame) {
+  if (active.value || !isSelectable(game)) return
+  const current = usingAllGames.value ? allGameIds.value : idle.selectedGameIds
+  const next = current.includes(game.id)
+    ? current.filter(id => id !== game.id)
+    : [...current, game.id]
+  const nextIds = new Set(next)
+  const coversCatalog = allGameIds.value.every(id => nextIds.has(id))
+  idle.setSelectedGames(coversCatalog ? [] : next)
+}
+
+function resetGameSelection() {
+  if (active.value) return
+  idle.setSelectedGames([])
+  gameSearch.value = ''
+}
+
+function openGamePicker() {
+  if (active.value || idle.loading) return
+  gameSearch.value = ''
+  showGamePicker.value = true
+}
+
+async function loadGames(force = false) {
+  gamesLoading.value = true
+  gamesLoadFailed.value = false
+  try {
+    await quests.getDetectableGames(force)
+  } catch {
+    gamesLoadFailed.value = true
+  } finally {
+    gamesLoading.value = false
+  }
+}
 
 const maxVisibleDistance = computed(() => {
   if (stageWidth.value >= 1050) return 5
@@ -195,7 +316,11 @@ function handleDocumentKeydown(event: KeyboardEvent) {
 }
 
 onMounted(async () => {
-  clockTimer = setInterval(() => { now.value = Date.now() }, 1000)
+  clockTimer = setInterval(() => {
+    // Only a running session has countdowns on screen; without one the tick would
+    // re-render the whole panel every second for nothing.
+    if (idle.status) now.value = Date.now()
+  }, 1000)
   resizeObserver = new ResizeObserver(entries => {
     stageWidth.value = entries[0]?.contentRect.width ?? stageWidth.value
   })
@@ -210,7 +335,10 @@ onMounted(async () => {
   await idle.initialize().catch(cause => {
     idle.error = cause instanceof Error ? cause.message : String(cause)
   })
-  await quests.getDetectableGames().catch(() => undefined)
+  // The catalog feeds both the picker and the start request, so a failed load
+  // is kept as a retryable state instead of leaving "0 games" on screen with a
+  // disabled Start button and no explanation.
+  await loadGames()
 })
 
 onBeforeUnmount(() => {
@@ -318,6 +446,22 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </div>
+      <div class="space-y-1.5">
+        <Label class="text-xs">{{ t('game_idle.games') }}</Label>
+        <Button
+          variant="outline"
+          class="h-10 w-60 justify-between gap-2 px-3"
+          :disabled="active || idle.loading"
+          :aria-label="selectionSummary"
+          @click="openGamePicker"
+        >
+          <span class="flex min-w-0 items-center gap-2">
+            <Gamepad2 class="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span class="truncate text-sm">{{ selectionSummary }}</span>
+          </span>
+          <ChevronDown class="h-4 w-4 shrink-0 text-muted-foreground" />
+        </Button>
+      </div>
     </div>
 
     <div v-if="!immersive" class="space-y-3">
@@ -360,6 +504,20 @@ onBeforeUnmount(() => {
       <span v-else-if="idle.mode === 'cdp' && !quests.cdpAvailable" class="text-amber-700 dark:text-amber-300">{{ t('game_idle.cdp_unavailable') }}</span>
       <span v-else-if="idle.mode === 'cdp' && idle.concurrentGames > 1">{{ t('game_idle.concurrent_games_cdp_hint') }}</span>
       <span v-else-if="idle.mode === 'process' && idle.concurrentGames > candidateCount">{{ t('game_idle.concurrent_games_pool_hint', { count: candidateCount }) }}</span>
+    </div>
+
+    <div v-if="gamesLoadFailed" class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed px-3 py-2 text-xs">
+      <span class="text-error">{{ t('game_idle.games_load_failed') }}</span>
+      <Button variant="outline" class="h-7 px-2 text-xs" :disabled="gamesLoading" @click="loadGames(true)">
+        <Loader2 v-if="gamesLoading" class="mr-1.5 h-3.5 w-3.5 animate-spin" />
+        {{ t('toast.retry') }}
+      </Button>
+    </div>
+    <div v-else-if="!usingAllGames && poolGames.length === 0" class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed px-3 py-2 text-xs">
+      <span class="text-error">{{ t('game_idle.picked_games_missing') }}</span>
+      <Button variant="outline" class="h-7 px-2 text-xs" :disabled="active" @click="resetGameSelection">
+        {{ t('game_idle.reset_all_games') }}
+      </Button>
     </div>
 
     <div v-if="idle.error || idle.status?.warning" class="idle-warning" role="status">
@@ -489,6 +647,92 @@ onBeforeUnmount(() => {
         </div>
       </Transition>
     </Teleport>
+
+    <Dialog :open="showGamePicker" @update:open="showGamePicker = $event">
+      <DialogContent class="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{{ t('game_idle.pick_games_title') }}</DialogTitle>
+          <DialogDescription>{{ t('game_idle.pick_games_desc') }}</DialogDescription>
+        </DialogHeader>
+        <div class="space-y-3">
+          <div class="flex items-center gap-2">
+            <div class="relative min-w-0 flex-1">
+              <Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+              <Input
+                v-model="gameSearch"
+                class="pl-9"
+                :placeholder="t('game_idle.pick_games_search')"
+                :aria-label="t('game_idle.pick_games_search')"
+              />
+            </div>
+            <Button
+              variant="outline"
+              class="h-9 shrink-0 px-3 text-xs"
+              :disabled="usingAllGames"
+              @click="resetGameSelection"
+            >
+              {{ t('game_idle.reset_all_games') }}
+            </Button>
+          </div>
+          <p class="text-xs text-muted-foreground" aria-live="polite">{{ selectionSummary }}</p>
+          <div v-if="gamesLoadFailed" class="space-y-2 rounded-md border border-dashed px-3 py-3 text-xs">
+            <p class="text-error">{{ t('game_idle.games_load_failed') }}</p>
+            <Button variant="outline" class="h-7 px-2 text-xs" :disabled="gamesLoading" @click="loadGames(true)">
+              <Loader2 v-if="gamesLoading" class="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              {{ t('toast.retry') }}
+            </Button>
+          </div>
+          <div
+            v-else
+            class="max-h-72 divide-y overflow-y-auto rounded-md border"
+            role="group"
+            :aria-label="t('game_idle.pick_games_title')"
+          >
+            <button
+              v-for="entry in visiblePickerGames"
+              :key="entry.game.id"
+              type="button"
+              class="flex w-full items-center gap-3 px-3 py-2 text-left outline-none transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent"
+              :aria-pressed="entry.picked"
+              :disabled="!entry.selectable"
+              @click="toggleGame(entry.game)"
+            >
+              <span class="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-md bg-muted/50">
+                <img
+                  v-if="entry.game.icon"
+                  :src="`https://cdn.discordapp.com/app-icons/${entry.game.id}/${entry.game.icon}.png?size=64`"
+                  alt=""
+                  loading="lazy"
+                  class="h-full w-full object-cover"
+                  @error="($event.target as HTMLImageElement).style.display = 'none'"
+                />
+                <Gamepad2 v-else class="h-4 w-4 text-muted-foreground/60" />
+              </span>
+              <span class="min-w-0 flex-1">
+                <span class="block truncate text-sm font-medium">{{ entry.game.name }}</span>
+                <span
+                  class="block text-xs"
+                  :class="entry.warn ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground'"
+                >{{ entry.hint }}</span>
+              </span>
+              <span
+                class="grid h-4 w-4 shrink-0 place-items-center rounded-[4px] border"
+                :class="entry.picked ? 'border-primary bg-primary text-primary-foreground' : 'border-input'"
+                aria-hidden="true"
+              >
+                <Check v-if="entry.picked" class="h-3 w-3" />
+              </span>
+            </button>
+            <p v-if="visiblePickerGames.length === 0" class="px-3 py-6 text-center text-sm text-muted-foreground">
+              {{ games.length === 0 ? t('game_idle.no_games_available') : t('game_idle.pick_games_no_match') }}
+            </p>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button @click="showGamePicker = false">{{ t('game_idle.picker_done') }}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </section>
 </template>
 

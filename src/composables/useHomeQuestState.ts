@@ -1,6 +1,6 @@
 import { computed, onScopeDispose, ref, type Ref } from 'vue'
 import type { Quest } from '@/api/tauri'
-import { firstStartableTask, isActivityTask, isPlayActivityTask } from '@/utils/questTasks'
+import { isActivityTask, isPlayActivityTask, questRunTask } from '@/utils/questTasks'
 
 export type QuestViewPreset =
   | 'recommended'
@@ -79,7 +79,11 @@ export function isEnrollmentBlocked(blockedUntil: string | null | undefined, now
 
 export function canQuestStart(quest: Quest, cdpAvailable = false): boolean {
   if (quest.user_status?.completed_at) return false
-  const startableTask = firstStartableTask(quest)
+  // The task the app drives decides what the quest needs: a quest that lists a
+  // video task beside a checkpoint Activity runs the Activity, so it needs the
+  // attached client — judging it by the video task would list it as ready to
+  // run on a machine that cannot run it.
+  const startableTask = questRunTask(quest)
   if (!startableTask) return false
 
   if (isActivityTask(startableTask)) {

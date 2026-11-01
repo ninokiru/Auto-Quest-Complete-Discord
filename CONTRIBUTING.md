@@ -89,7 +89,6 @@ auto-quest-complete-discord/
 │       ├── cdp_client.rs             # Chrome DevTools Protocol client
 │       ├── cdp_quest.rs              # CDP-based quest completion
 │       ├── discord_api.rs            # Discord HTTP API client
-│       ├── discord_gateway.rs        # WebSocket gateway connection
 │       ├── discord_cdp_launcher.rs   # CDP launcher management
 │       ├── quest_completer.rs        # Quest completion logic
 │       ├── game_simulator.rs         # Game simulation & process management

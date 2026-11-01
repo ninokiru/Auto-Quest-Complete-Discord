@@ -351,16 +351,6 @@ pub fn export_logs() -> anyhow::Result<String> {
         .map_err(|e| anyhow::anyhow!("Failed to serialize logs: {}", e))
 }
 
-/// Get the number of log entries currently stored
-#[allow(dead_code)]
-pub fn log_count() -> usize {
-    if let Ok(storage) = LOG_STORAGE.lock() {
-        storage.len()
-    } else {
-        0
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

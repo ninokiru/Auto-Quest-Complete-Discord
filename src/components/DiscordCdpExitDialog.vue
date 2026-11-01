@@ -82,12 +82,17 @@ onUnmounted(() => unlisten?.())
         <Button
           v-if="hasExternalSessions"
           variant="outline"
+          class="h-auto max-w-[15rem] whitespace-normal text-left"
           :disabled="state.checking || state.closing"
           @click="guard.restoreManagedAndClose"
         >
           {{ t('desktop_clients.restore_managed_and_close') }}
         </Button>
-        <Button :disabled="state.checking || state.closing" @click="guard.restoreAndClose">
+        <Button
+          class="h-auto max-w-[15rem] whitespace-normal text-left"
+          :disabled="state.checking || state.closing"
+          @click="guard.restoreAndClose"
+        >
           <LoaderCircle v-if="state.checking" class="mr-2 h-4 w-4 animate-spin" />
           {{ hasExternalSessions ? t('desktop_clients.restore_all_and_close') : t('exit_cdp.restore_and_close') }}
         </Button>

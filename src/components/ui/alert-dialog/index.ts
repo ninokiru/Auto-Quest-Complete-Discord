@@ -1,5 +1,4 @@
 export { default as AlertDialog } from './AlertDialog.vue'
-export { default as AlertDialogTrigger } from './AlertDialogTrigger.vue'
 export { default as AlertDialogContent } from './AlertDialogContent.vue'
 export { default as AlertDialogHeader } from './AlertDialogHeader.vue'
 export { default as AlertDialogTitle } from './AlertDialogTitle.vue'

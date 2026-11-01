@@ -2,9 +2,10 @@
 import { computed, nextTick, onMounted, ref, watch, onUnmounted } from 'vue'
 import { useQuestsStore } from '@/stores/quests'
 import type { RunningQuest } from '@/stores/quests'
+import type { Quest } from '@/api/tauri'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { AlertCircle, ChevronUp, ListChecks, Timer, X } from 'lucide-vue-next'
+import { Activity, AlertCircle, ChevronUp, Cloud, Gamepad2, ListChecks, MonitorPlay, Timer, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { formatClockTime, formatSlotProgress } from '@/utils/questProgressDisplay'
 
@@ -23,16 +24,20 @@ let dragState: {
   startY: number
   originLeft: number
   originTop: number
+  // Captured at pointerdown: measuring inside pointermove read layout right
+  // after writing left/top, which forced a reflow on every move event.
+  width: number
+  height: number
 } | null = null
 
 // Local progress is now managed by the store. Up to `maxParallelQuests` quests
 // can run at once; the first entry is the "primary" one the collapsed bubble and
 // the animated bar follow.
 const runningSlots = computed(() =>
-  questsStore.runningQuests.map(slot => ({
-    slot,
-    quest: questsStore.quests.find(quest => quest.id === slot.questId) ?? null,
-  }))
+  questsStore.runningQuests.map(slot => {
+    const quest = questsStore.quests.find(candidate => candidate.id === slot.questId) ?? null
+    return { slot, quest, appIcon: appIconFor(quest) }
+  })
 )
 
 const runningIds = computed(() => new Set(questsStore.runningQuests.map(slot => slot.questId)))
@@ -80,10 +85,12 @@ const floatingStyle = computed(() => {
   }
 })
 
-function clampPosition(left: number, top: number) {
-  const rect = floatingRef.value?.getBoundingClientRect()
-  const width = rect?.width ?? 384
-  const height = rect?.height ?? 80
+function clampPosition(left: number, top: number, width?: number, height?: number) {
+  if (width === undefined || height === undefined) {
+    const rect = floatingRef.value?.getBoundingClientRect()
+    width = rect?.width ?? 384
+    height = rect?.height ?? 80
+  }
   const maxLeft = Math.max(EDGE_MARGIN, window.innerWidth - width - EDGE_MARGIN)
   const maxTop = Math.max(EDGE_MARGIN, window.innerHeight - height - EDGE_MARGIN)
 
@@ -117,6 +124,8 @@ function startDrag(event: PointerEvent) {
     startY: event.clientY,
     originLeft: rect.left,
     originTop: rect.top,
+    width: rect.width,
+    height: rect.height,
   }
   draggedDuringPointer.value = false
 
@@ -139,7 +148,12 @@ function handleDragMove(event: PointerEvent) {
     draggedDuringPointer.value = true
   }
 
-  floatingPosition.value = clampPosition(dragState.originLeft + dx, dragState.originTop + dy)
+  floatingPosition.value = clampPosition(
+    dragState.originLeft + dx,
+    dragState.originTop + dy,
+    dragState.width,
+    dragState.height
+  )
 }
 
 function stopDrag(event: PointerEvent) {
@@ -173,6 +187,29 @@ function handleCollapsedClick() {
  */
 function slotSubmittedText(slot: RunningQuest): string {
   return formatSlotProgress(slot.serverProgress, slot.targetDuration, slot.progressUnit)
+}
+
+/** The app icon of the quest a slot runs, so a row reads like the list it came
+ *  from instead of a bare number. */
+function appIconFor(quest: Quest | null): string | null {
+  const app = quest?.config.application
+  if (!app?.icon) return null
+  return `https://cdn.discordapp.com/app-icons/${app.id}/${app.icon}.png?size=64`
+}
+
+/** The kind of work a slot does, as the icon that says it without a word. */
+function slotTypeIcon(slot: RunningQuest) {
+  if (slot.type === 'video') return MonitorPlay
+  if (slot.type === 'activity') return Activity
+  if (slot.type === 'stream') return Cloud
+  return Gamepad2
+}
+
+function slotTypeIconClass(slot: RunningQuest): string {
+  if (slot.type === 'video') return 'text-sky-600 dark:text-sky-400'
+  if (slot.type === 'activity') return 'text-amber-600 dark:text-amber-400'
+  if (slot.type === 'stream') return 'text-violet-600 dark:text-violet-400'
+  return 'text-indigo-600 dark:text-indigo-400'
 }
 
 async function handleStop() {
@@ -304,12 +341,13 @@ const keepAliveRemainingText = computed(() => {
         v-if="!expanded"
         key="collapsed"
         type="button"
-        class="w-full cursor-grab rounded-lg border bg-card px-4 py-3 text-left shadow-lg transition-all hover:-translate-y-0.5 hover:shadow-xl active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        class="relative w-full cursor-grab overflow-hidden rounded-xl border border-border/60 bg-card px-4 py-3 text-left shadow-[0_16px_32px_-24px_hsl(var(--foreground)/0.65)] transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-[0_20px_38px_-24px_hsl(var(--foreground)/0.75)] active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         @pointerdown="startDrag"
         @click="handleCollapsedClick"
       >
+      <span class="pointer-events-none absolute inset-y-0 left-0 w-[3px] bg-primary" aria-hidden="true" />
       <div class="flex items-center gap-3">
-        <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+        <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
           <AlertCircle v-if="questsStore.error && questsStore.runningQuests.length === 0" class="h-4 w-4" />
           <ListChecks v-else class="h-4 w-4" />
         </div>
@@ -340,43 +378,81 @@ const keepAliveRemainingText = computed(() => {
       </div>
     </button>
 
-    <Card v-else key="expanded" class="border-border/50 shadow-xl">
+    <Card v-else key="expanded" class="overflow-hidden border-border/60 shadow-[0_22px_48px_-28px_hsl(var(--foreground)/0.7)]">
       <CardHeader
-        class="flex cursor-grab flex-row items-center justify-between space-y-0 pb-3 active:cursor-grabbing"
+        class="flex cursor-grab flex-row items-center justify-between space-y-0 border-b border-border/50 px-4 py-3 active:cursor-grabbing"
         @pointerdown="startDrag"
       >
-        <CardTitle class="min-w-0 truncate text-base">
-          {{ floatingTitle }}
-          <span v-if="queuedBehindCount > 0" class="ml-2 rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">
-            {{ t('home.queue_count', { count: queuedBehindCount }) }}
+        <div class="flex min-w-0 items-center gap-2.5">
+          <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+            <AlertCircle v-if="questsStore.error && questsStore.runningQuests.length === 0" class="h-3.5 w-3.5 text-error" />
+            <ListChecks v-else class="h-3.5 w-3.5 text-primary" />
           </span>
-        </CardTitle>
-        <Button variant="ghost" size="icon" class="h-8 w-8 shrink-0" @pointerdown.stop @click="expanded = false">
+          <CardTitle class="min-w-0 truncate text-sm">
+            {{ floatingTitle }}
+            <span v-if="queuedBehindCount > 0" class="ml-2 rounded-full bg-secondary px-2 py-0.5 text-[11px] font-medium text-secondary-foreground">
+              {{ t('home.queue_count', { count: queuedBehindCount }) }}
+            </span>
+          </CardTitle>
+        </div>
+        <Button variant="ghost" size="icon" class="h-7 w-7 shrink-0" @pointerdown.stop @click="expanded = false">
           <X class="h-4 w-4" />
         </Button>
       </CardHeader>
-      <CardContent>
-        <div v-if="runningSlots.length > 0" class="space-y-4">
-          <TransitionGroup name="slot-row" tag="div" class="max-h-[320px] space-y-3 overflow-y-auto pr-1">
+      <CardContent class="p-3">
+        <div v-if="runningSlots.length > 0" class="space-y-2">
+          <TransitionGroup name="slot-row" tag="div" class="max-h-[320px] space-y-2 overflow-y-auto pr-1">
             <div
               v-for="entry in runningSlots"
               :key="entry.slot.questId"
-              class="space-y-2 rounded-lg border border-border/60 p-3"
+              class="relative overflow-hidden rounded-lg border border-border/60 bg-background/60 py-2.5 pl-3.5 pr-3"
             >
-              <div class="flex items-end justify-between gap-4 text-sm">
-                <div class="min-w-0">
-                  <div class="truncate font-medium">{{ entry.quest?.config.messages.quest_name ?? entry.slot.questId }}</div>
-                  <div class="truncate text-xs text-muted-foreground">{{ entry.quest?.config.messages.game_title }}</div>
-                  <span class="font-mono text-xs text-muted-foreground">
-                    {{ slotSubmittedText(entry.slot) }}
+              <span class="pointer-events-none absolute inset-y-0 left-0 w-[3px] bg-primary" aria-hidden="true" />
+              <div class="flex items-center gap-3">
+                <div class="relative shrink-0">
+                  <img
+                    v-if="entry.appIcon"
+                    :src="entry.appIcon"
+                    class="h-8 w-8 rounded-lg object-cover"
+                    alt=""
+                  />
+                  <div v-else class="flex h-8 w-8 items-center justify-center rounded-lg bg-secondary">
+                    <component :is="slotTypeIcon(entry.slot)" class="h-4 w-4 text-muted-foreground" />
+                  </div>
+                  <span
+                    class="absolute -bottom-1 -right-1 flex h-[15px] w-[15px] items-center justify-center rounded border bg-card"
+                    :class="slotTypeIconClass(entry.slot)"
+                  >
+                    <component :is="slotTypeIcon(entry.slot)" class="h-[9px] w-[9px]" />
                   </span>
                 </div>
-                <div class="flex shrink-0 flex-col items-end gap-1">
-                  <span class="text-lg font-medium">{{ Math.floor(entry.slot.serverProgress) }}%</span>
+
+                <div class="min-w-0 flex-1">
+                  <p class="truncate text-[13px] font-semibold leading-tight">
+                    {{ entry.quest?.config.messages.quest_name ?? entry.slot.questId }}
+                  </p>
+                  <p class="mt-0.5 truncate text-[11px] text-muted-foreground">
+                    {{ entry.quest?.config.messages.game_title }}
+                  </p>
+                  <div class="mt-1.5 flex items-center gap-2">
+                    <div class="relative h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-secondary">
+                      <div
+                        class="absolute inset-y-0 left-0 rounded-full transition-[width] duration-300"
+                        :style="slotBarStyle(entry.slot)"
+                      />
+                    </div>
+                    <span class="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
+                      {{ slotSubmittedText(entry.slot) }}
+                    </span>
+                  </div>
+                </div>
+
+                <div class="flex shrink-0 flex-col items-end gap-0.5">
+                  <span class="font-mono text-sm font-medium tabular-nums">{{ Math.floor(entry.slot.serverProgress) }}%</span>
                   <Button
                     variant="ghost"
                     size="sm"
-                    class="h-7 shrink-0 gap-1.5 px-2 text-xs text-error hover:bg-destructive/10 hover:text-error"
+                    class="h-6 shrink-0 px-2 text-[11px] text-error hover:bg-destructive/10 hover:text-error"
                     :disabled="questsStore.stopping"
                     @click="handleStopQuest(entry.slot.questId)"
                   >
@@ -384,22 +460,15 @@ const keepAliveRemainingText = computed(() => {
                   </Button>
                 </div>
               </div>
-
-              <div class="relative h-1.5 w-full rounded-full bg-secondary">
-                <div
-                  class="absolute inset-y-0 left-0 rounded-full transition-all duration-300"
-                  :style="slotBarStyle(entry.slot)"
-                />
-              </div>
             </div>
           </TransitionGroup>
 
           <div class="flex justify-between px-1 text-[10px] text-muted-foreground">
-            <div class="flex items-center gap-1">
+            <div class="flex items-center gap-1.5">
               <div class="h-2 w-2 rounded-full bg-primary"></div>
               <span>{{ t('quest.submitted') }}</span>
             </div>
-            <div class="flex items-center gap-1">
+            <div class="flex items-center gap-1.5">
               <div class="h-2 w-2 rounded-full bg-green-400"></div>
               <span>{{ t('quest.pending') }}</span>
             </div>
@@ -407,7 +476,7 @@ const keepAliveRemainingText = computed(() => {
 
           <div
             v-if="questsStore.keepAliveEndsAt"
-            class="flex items-center gap-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-sm"
+            class="flex items-center gap-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-[13px]"
             role="status"
           >
             <Timer class="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
@@ -424,7 +493,7 @@ const keepAliveRemainingText = computed(() => {
           </Button>
         </div>
 
-        <div v-if="queuedUpcoming.length > 0" :class="runningSlots.length > 0 && 'mt-6 border-t pt-4'">
+        <div v-if="queuedUpcoming.length > 0" :class="runningSlots.length > 0 && 'mt-3 border-t border-border/50 pt-3'">
           <div class="mb-2 flex items-center justify-between">
             <h4 class="text-sm font-semibold">{{ t('quest.up_next') }} ({{ queuedUpcoming.length }})</h4>
             <Button
@@ -437,16 +506,18 @@ const keepAliveRemainingText = computed(() => {
             </Button>
           </div>
 
-          <div class="max-h-[260px] space-y-2 overflow-y-auto pr-1">
+          <div class="max-h-[260px] space-y-1.5 overflow-y-auto pr-1">
             <div
               v-for="(quest, index) in queuedUpcoming"
               :key="quest.id"
-              class="flex items-center gap-2 rounded bg-muted/50 p-2 text-sm"
+              class="flex items-center gap-2.5 rounded-lg border border-border/50 bg-background/60 px-2.5 py-2"
             >
-              <span class="w-4 shrink-0 text-xs text-muted-foreground">{{ index + 1 }}.</span>
+              <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-secondary text-[10px] font-medium tabular-nums text-muted-foreground">
+                {{ index + 1 }}
+              </span>
               <div class="min-w-0 flex-1">
-                <div class="truncate font-medium">{{ quest.config.messages.quest_name }}</div>
-                <div class="truncate text-xs text-muted-foreground">{{ quest.config.messages.game_title }}</div>
+                <div class="truncate text-[13px] font-medium leading-tight">{{ quest.config.messages.quest_name }}</div>
+                <div class="truncate text-[11px] text-muted-foreground">{{ quest.config.messages.game_title }}</div>
               </div>
             </div>
           </div>

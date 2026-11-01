@@ -43,11 +43,3 @@ export function writeString(key: string, value: string): boolean {
     return false
   }
 }
-
-export function removeKey(key: string) {
-  try {
-    localStorage.removeItem(key)
-  } catch {
-    // Storage already unavailable; nothing left to clean.
-  }
-}

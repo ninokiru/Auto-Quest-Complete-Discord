@@ -107,14 +107,24 @@ export function isPlayActivityTask(task: QuestTaskView): boolean {
 }
 
 /**
- * True when a quest's startable task is a real Stream task (`*_STREAM*`), not a
+ * A checkpoint Activity (`ACHIEVEMENT_IN_ACTIVITY`): its checkpoints only
+ * register while the user keeps the Activity window open, so it needs a human.
+ */
+function isCheckpointActivityTask(task: QuestTaskView): boolean {
+  return isActivityTask(task) && !isPlayActivityTask(task)
+}
+
+/**
+ * True when a quest's routed task is a real Stream task (`*_STREAM*`), not a
  * desktop-play quest. `getQuestKind` collapses both PLAY and STREAM into the
  * `'stream'` kind, so this distinguishes the manual, non-automatable Stream
  * quests (which require actually broadcasting and cannot run through the
- * game-simulation queue) from automatable Play quests.
+ * game-simulation queue) from automatable Play quests. The routed task decides,
+ * not the first task in the list: a quest listing a video task beside a Stream
+ * still runs the Stream, so it still needs a broadcast.
  */
 export function isManualStreamQuest(quest: Quest): boolean {
-  const task = firstStartableTask(quest)
+  const task = questRunTask(quest)
   return !!task && isStreamTask(task) && !isDesktopPlayTask(task)
 }
 
@@ -122,9 +132,12 @@ export function isManualStreamQuest(quest: Quest): boolean {
  * True when the quest's routed task is a cloud-game Activity (`PLAY_ACTIVITY`).
  * Its progress accrues from the backend heartbeat loop alone, so unlike a
  * checkpoint Activity it needs nothing from the user and is fully automatable.
+ * A cloud game listed beside a video task is still a cloud game: the routed
+ * task is the one the app drives, and it is the one that has to be started
+ * through the heartbeat path rather than the local game simulator.
  */
 export function isPlayActivityQuest(quest: Quest): boolean {
-  const task = firstStartableTask(quest)
+  const task = questRunTask(quest)
   return !!task && isPlayActivityTask(task)
 }
 
@@ -147,11 +160,13 @@ export function isGameQuest(quest: Quest): boolean {
  * keeps the Activity window open in the attached Discord client. `getQuestKind`
  * collapses these together with `PLAY_ACTIVITY` into the `'activity'` kind, so
  * batch flows must test this predicate instead of the kind to keep automatable
- * cloud games from disappearing from a batch.
+ * cloud games from disappearing from a batch. The routed task decides, not the
+ * first task in the list: a quest listing a video task beside a checkpoint
+ * Activity runs the checkpoint, and a checkpoint count is not a duration.
  */
 export function isManualActivityQuest(quest: Quest): boolean {
-  const task = firstStartableTask(quest)
-  return !!task && isActivityTask(task) && !isPlayActivityTask(task)
+  const task = questRunTask(quest)
+  return !!task && isCheckpointActivityTask(task)
 }
 
 /**
@@ -167,11 +182,11 @@ export function isManualQuest(quest: Quest): boolean {
 /**
  * The batch rule Home's bulk actions apply: a quest belongs in a batch only when
  * the store has a task it can drive, and driving it needs no human. Without the
- * startable-task check, an Activity quest whose checkpoint target is missing
- * would look automatable and be queued with a zero duration.
+ * task check, an Activity quest whose checkpoint target is missing would look
+ * automatable and be queued with a zero duration.
  */
 export function isBatchCompletableQuest(quest: Quest): boolean {
-  return firstStartableTask(quest) !== null && !isManualQuest(quest)
+  return questRunTask(quest) !== null && !isManualQuest(quest)
 }
 
 /** Why a quest cannot be started for an account the page is not on. */
@@ -185,7 +200,7 @@ export type ForeignQuestBlocker = 'manual' | 'no-task'
  * on this machine is signed into.
  */
 export function foreignQuestBlocker(quest: Quest): ForeignQuestBlocker | null {
-  const task = firstStartableTask(quest)
+  const task = questRunTask(quest)
   if (!task) return 'no-task'
   if (isManualQuest(quest)) return 'manual'
   return null
@@ -214,16 +229,93 @@ export function firstProgressValue(quest: Quest, taskKey?: string): number {
   const progress = quest.user_status?.progress
   if (!progress || typeof progress !== 'object') return 0
 
-  if (taskKey && progress[taskKey]?.value != null) {
-    return progress[taskKey].value ?? 0
+  // A named task's own value, or nothing. Every task counts in its own unit —
+  // checkpoints against seconds — so another task's value is not a substitute:
+  // it is a number that belongs to a task this quest is not running.
+  if (taskKey) {
+    const own = progress[taskKey]?.value
+    if (own != null) return own
+    // Discord keys the map by its own task names, which do not always match the
+    // config's keys. A quest that runs a single task can still be read: the lone
+    // entry has to be that task. A quest listing several tasks cannot — the
+    // entry may belong to a task counting in another unit, and a checkpoint
+    // count read as seconds is the number that made a card jump.
+    const entries = Object.values(progress)
+    if (entries.length === 1 && getQuestTasks(quest).length === 1) {
+      return entries[0]?.value ?? 0
+    }
+    return 0
   }
 
   const first = Object.values(progress)[0]
   return first?.value ?? 0
 }
 
-export function firstTargetTask(quest: Quest): QuestTaskView | null {
-  return getQuestTasks(quest).find(task => task.target != null && task.target > 0) ?? null
+/**
+ * The task whose progress this quest is measured on: the one the app actually
+ * drives. The batch routes on `getQuestKind`, so a quest that lists a game task
+ * beside a video task runs through the game path and banks its progress on the
+ * game task — reading the video task here would report a quest that is halfway
+ * through as one that never started.
+ */
+export function questProgressTask(quest: Quest): QuestTaskView | null {
+  const tasks = getQuestTasks(quest)
+  const kind = getQuestKind(quest)
+  if (kind === 'video') {
+    return tasks.find(isVideoTask) ?? null
+  }
+  // Every quest that is not a video quest runs down the game path, and that path
+  // drives the play task when the quest lists one: a play task next to a
+  // checkpoint Activity runs the game, and a game counts in seconds while the
+  // Activity counts in checkpoints.
+  const play = tasks.find(isDesktopPlayTask)
+  if (play) return play
+  // A checkpoint Activity comes before the cloud game: the checkpoint is the
+  // part only a human can finish, so it is what the quest is judged on — and
+  // what keeps the quest out of the automatic batch. A cloud game next to it
+  // would otherwise hide the checkpoint behind a duration in seconds.
+  const checkpoint = tasks.find(isCheckpointActivityTask)
+  if (checkpoint) return checkpoint
+  const cloudGame = tasks.find(isPlayActivityTask)
+  if (cloudGame) return cloudGame
+  const stream = tasks.find(isStreamTask)
+  if (stream) return stream
+  return tasks.find(isActivityTask) ?? null
+}
+
+/**
+ * How far along a quest is, as a percentage of its own target. The value is
+ * read from the task the app drives and divided by that task's own target: a
+ * checkpoint count divided by a duration is not a percentage, and that mismatch
+ * is what made a card jump between numbers while the quest kept its progress.
+ */
+export function questProgressPercent(quest: Quest): number {
+  const progress = quest.user_status?.progress
+  const hasMap = !!progress && typeof progress === 'object' && Object.keys(progress).length > 0
+  const task = questProgressTask(quest)
+  const target = task?.target ?? 0
+  if (target <= 0) return 0
+
+  if (!hasMap) {
+    // A quest that reports no progress map at all still carries the legacy
+    // stream counter, which counts seconds like the time-based tasks do.
+    const seconds = quest.user_status?.stream_progress_seconds ?? 0
+    return Math.min(100, Math.max(0, (seconds / target) * 100))
+  }
+
+  const value = firstProgressValue(quest, task?.key)
+  return Math.min(100, Math.max(0, (value / target) * 100))
+}
+
+/**
+ * The task the app runs for a quest, with the duration it needs. The driven
+ * task wins when it carries a target; otherwise the first targeted task does,
+ * so a quest whose driven task has no duration can still be started.
+ */
+export function questRunTask(quest: Quest): QuestTaskView | null {
+  const driven = questProgressTask(quest)
+  if (driven?.target != null && driven.target > 0) return driven
+  return firstStartableTask(quest)
 }
 
 export function firstStartableTask(quest: Quest): QuestTaskView | null {
@@ -245,7 +337,7 @@ export function questApplicationId(quest?: Quest | null): string | undefined {
   const fromConfig = quest?.config.application?.id
   if (fromConfig) return fromConfig
   if (!quest) return undefined
-  const startable = firstStartableTask(quest)
-  return startable?.applications?.[0]?.id
+  const routed = questRunTask(quest)
+  return routed?.applications?.[0]?.id
     ?? getQuestTasks(quest).find(task => task.applications?.[0]?.id)?.applications?.[0]?.id
 }

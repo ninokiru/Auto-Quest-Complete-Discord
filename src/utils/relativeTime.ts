@@ -15,15 +15,44 @@ const RELATIVE_STEPS: Array<{ unit: Intl.RelativeTimeFormatUnit; seconds: number
 
 const DAY_SECONDS = 86_400
 
-function absoluteDate(timestamp: number, locale: string, withTime: boolean): string {
+// Formatters are expensive to construct and the quest list asks for one per card
+// on every render, poll and keystroke; the app ships a handful of locales, so
+// they are built once. A malformed tag is cached as null and degrades the same
+// way every time.
+const dateTimeFormats = new Map<string, Intl.DateTimeFormat | null>()
+const relativeFormats = new Map<string, Intl.RelativeTimeFormat | null>()
+
+function dateTimeFormat(locale: string, withTime: boolean): Intl.DateTimeFormat | null {
+  const key = `${locale}|${withTime ? 1 : 0}`
+  const cached = dateTimeFormats.get(key)
+  if (cached !== undefined) return cached
+  let format: Intl.DateTimeFormat | null = null
   try {
-    return new Intl.DateTimeFormat(locale || 'en', withTime
+    format = new Intl.DateTimeFormat(locale || 'en', withTime
       ? { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
       : { year: 'numeric', month: 'short', day: 'numeric' })
-      .format(new Date(timestamp))
   } catch {
-    return ''
+    format = null
   }
+  dateTimeFormats.set(key, format)
+  return format
+}
+
+function relativeFormat(locale: string): Intl.RelativeTimeFormat | null {
+  const cached = relativeFormats.get(locale)
+  if (cached !== undefined) return cached
+  let format: Intl.RelativeTimeFormat | null = null
+  try {
+    format = new Intl.RelativeTimeFormat(locale || 'en', { numeric: 'auto' })
+  } catch {
+    format = null
+  }
+  relativeFormats.set(locale, format)
+  return format
+}
+
+function absoluteDate(timestamp: number, locale: string, withTime: boolean): string {
+  return dateTimeFormat(locale, withTime)?.format(new Date(timestamp)) ?? ''
 }
 
 /** "30 seconds ago", "5 minutes ago", "3 hours ago"; a date once it is a week old. */
@@ -40,12 +69,11 @@ export function formatRelativeTime(
     for (const candidate of RELATIVE_STEPS) {
       if (elapsedSeconds >= candidate.seconds) step = candidate
     }
-    try {
-      return new Intl.RelativeTimeFormat(locale || 'en', { numeric: 'auto' })
-        .format(-Math.round(elapsedSeconds / step.seconds), step.unit)
-    } catch {
-      return absoluteDate(timestamp, locale, elapsedSeconds < DAY_SECONDS)
+    const format = relativeFormat(locale)
+    if (format) {
+      return format.format(-Math.round(elapsedSeconds / step.seconds), step.unit)
     }
+    return absoluteDate(timestamp, locale, elapsedSeconds < DAY_SECONDS)
   }
   return absoluteDate(timestamp, locale, false)
 }

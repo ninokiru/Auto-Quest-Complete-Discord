@@ -200,39 +200,47 @@
         </div>
 
         <!-- The first fetch used to leave a lone spinner in an empty column, which
-             reads as a stalled window. These rows copy the compact quest card's own
-             measurements — banner, icon and title line, action row — so the list
-             appears to fill in instead of arriving all at once. -->
+             reads as a stalled window. These rows copy the quest row's own
+             measurements — icon, title line, progress line, action row — so the
+             list appears to fill in instead of arriving all at once. -->
         <div
           v-else-if="questsStore.loading && !questsStore.hasLoadedQuests && questsStore.quests.length === 0"
-          class="space-y-3"
+          class="grid gap-3 sm:grid-cols-2"
           role="status"
         >
           <div
             v-for="row in 4"
             :key="row"
-            class="animate-pulse overflow-hidden rounded-lg border border-border/50 bg-card shadow-sm motion-reduce:animate-none"
+            class="animate-pulse overflow-hidden rounded-xl border border-border/60 bg-card motion-reduce:animate-none"
             :style="{ animationDelay: `${(row - 1) * 140}ms` }"
             aria-hidden="true"
           >
-            <div class="h-12 bg-muted sm:h-16" />
-            <div class="flex items-center gap-3 px-5 pt-3">
-              <div class="h-9 w-9 shrink-0 rounded-md bg-muted" />
-              <div class="min-w-0 flex-1 space-y-1.5">
+            <div class="flex items-start gap-3 p-4">
+              <div class="h-10 w-10 shrink-0 rounded-lg bg-muted" />
+              <div class="min-w-0 flex-1 space-y-2">
                 <div class="h-3.5 rounded-full bg-muted" :class="row % 2 === 0 ? 'w-1/2' : 'w-2/3'" />
-                <div class="h-2.5 w-1/4 rounded-full bg-muted/70" />
+                <div class="h-2.5 w-2/5 rounded-full bg-muted/70" />
               </div>
             </div>
-            <div class="flex items-center justify-between gap-3 px-5 pb-4 pt-3">
-              <div class="h-3 w-28 rounded-full bg-muted/70" />
-              <div class="h-9 w-28 rounded-md bg-muted" />
+            <div class="flex items-center gap-3 px-4 pb-3">
+              <div class="h-1.5 flex-1 rounded-full bg-muted" />
+              <div class="h-3 w-8 rounded-full bg-muted/70" />
+            </div>
+            <div class="flex items-center justify-between gap-3 border-t border-border/50 px-4 py-3">
+              <div class="h-3 w-24 rounded-full bg-muted/70" />
+              <div class="h-8 w-24 rounded-md bg-muted" />
             </div>
           </div>
-          <p class="pt-1 text-center text-xs text-muted-foreground">{{ t('general.loading') }}</p>
+          <p class="col-span-full pt-1 text-center text-xs text-muted-foreground">{{ t('general.loading') }}</p>
         </div>
         
         <template v-else>
-          <TransitionGroup name="quest-list" tag="div" class="relative space-y-3">
+          <TransitionGroup
+            name="quest-list"
+            tag="div"
+            class="relative grid gap-3 sm:grid-cols-2"
+            :class="animateListMoves && 'quest-list-smooth'"
+          >
             <QuestCard
               v-for="quest in filteredQuests"
               :key="quest.id"
@@ -240,7 +248,6 @@
               :quest-type="getQuestType(quest)"
               :show-developer-details="props.debugModeEnabled"
               :busy="startingQuestId === quest.id || acceptingQuest === quest.id || acceptingAllQuestIds.has(quest.id) || claimingQuest === quest.id || isQuestStopping(quest.id)"
-              density="compact"
             >
               <template #actions>
                 <Transition name="quest-action" mode="out-in">
@@ -383,7 +390,7 @@
     </AlertDialog>
 
     <!-- Exe Selection Dialog for Play Quests with multiple win32 executables -->
-    <Dialog :open="showExeSelectDialog" @update:open="showExeSelectDialog = $event">
+    <Dialog :open="showExeSelectDialog" @update:open="(open: boolean) => { if (!open) cancelExeSelectDialog() }">
       <DialogContent class="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{{ t('home.exe_select_title') }}</DialogTitle>
@@ -403,7 +410,7 @@
           </Button>
         </div>
         <DialogFooter>
-          <Button variant="ghost" @click="showExeSelectDialog = false">{{ t('dialog.cancel') }}</Button>
+          <Button variant="ghost" @click="cancelExeSelectDialog">{{ t('dialog.cancel') }}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -693,7 +700,6 @@ import { useI18n } from 'vue-i18n'
 import { open } from '@tauri-apps/plugin-shell'
 import {
   firstProgressValue,
-  firstStartableTask,
   getQuestKind,
   getQuestTasks,
   isActivityTask,
@@ -704,6 +710,7 @@ import {
   isStreamTask,
   isVideoTask,
   questApplicationId,
+  questRunTask,
 } from '@/utils/questTasks'
 import { getQuestRewardCategory } from '@/utils/questRewards'
 import { formatDateTime } from '@/utils/relativeTime'
@@ -1083,7 +1090,7 @@ function batchQuestTypeLabel(quest: Quest): string {
 
 // Get button text based on quest type
 function getStartButtonText(quest: Quest): string {
-  const task = firstStartableTask(quest)
+  const task = questRunTask(quest)
   if (!task) return t('home.start_quest')
   if (isVideoTask(task)) return t('home.start_watching')
   if (isDesktopPlayTask(task)) return t('home.start_playing')
@@ -1103,10 +1110,20 @@ function visibleQuest(quest: Quest): boolean {
   return !isQuestExpired(quest) || !!quest.user_status?.claimed_at
 }
 
+// Sorting runs on every keystroke, poll and view switch, so the ISO string is
+// parsed once per quest object instead of twice per comparison.
+const questExpiry = new WeakMap<Quest, number>()
+function expiryMs(quest: Quest): number {
+  const cached = questExpiry.get(quest)
+  if (cached !== undefined) return cached
+  const parsed = quest.config.expires_at ? Date.parse(quest.config.expires_at) : Number.NaN
+  const value = Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER
+  questExpiry.set(quest, value)
+  return value
+}
+
 function sortByExpiry(a: Quest, b: Quest): number {
-  const aTime = a.config.expires_at ? new Date(a.config.expires_at).getTime() : Number.MAX_SAFE_INTEGER
-  const bTime = b.config.expires_at ? new Date(b.config.expires_at).getTime() : Number.MAX_SAFE_INTEGER
-  return aTime - bTime
+  return expiryMs(a) - expiryMs(b)
 }
 
 function uniqueQuests(quests: Quest[]): Quest[] {
@@ -1181,6 +1198,10 @@ const filteredQuests = computed(() => {
 
   return quests.sort(sortByExpiry)
 })
+
+// A FLIP move animation across a hundred cards is what made filtering feel
+// sticky; it is kept only for the short lists where it reads as motion.
+const animateListMoves = computed(() => filteredQuests.value.length <= 24)
 
 const unenrolledCount = computed(() => {
   return filteredQuests.value.filter(q => !q.user_status?.enrolled_at && !isQuestExpired(q)).length
@@ -1461,6 +1482,10 @@ function showBatchCustomExeDialogAsync(
   hostOs: string
 ): Promise<string | null> {
   return new Promise(resolve => {
+    // This dialog is shared with the single-quest flow. A quest left pending by
+    // a dismissed single-quest picker would otherwise surface its "switch to
+    // CDP" action inside a batch prompt and start the wrong quest.
+    pendingPlayQuest.value = null
     openCustomExeDialog(game, catalog, hostOs)
     // Reuse existing custom exe dialog with a different resolve
     // (settling any stale resolver first, as above).
@@ -1479,6 +1504,14 @@ function cancelBatchExeSelect() {
   showBatchExeSelectDialog.value = false
   batchExeSelectResolve.value?.(null)
   batchExeSelectResolve.value = null
+}
+
+/** Closing the exe picker without choosing also drops the quest it was opened
+ *  for: the shared custom-exe dialog reads that pending quest, so leaving it
+ *  behind would offer to start a quest the user already dismissed. */
+function cancelExeSelectDialog() {
+  showExeSelectDialog.value = false
+  pendingPlayQuest.value = null
 }
 
 function cancelCustomExeDialog() {
@@ -1569,7 +1602,7 @@ function getExpiryText(dateStr: string | null | undefined): string {
 function canStartQuest(quest: Quest): boolean {
   // Check if quest is already completed
   if (quest.user_status?.completed_at) return false
-  return firstStartableTask(quest) !== null
+  return questRunTask(quest) !== null
 }
 
 async function startQuest(quest: Quest) {
@@ -1583,7 +1616,10 @@ async function startQuest(quest: Quest) {
   
   preparingQuestId.value = quest.id
   try {
-  const task = firstStartableTask(quest)
+  // The task the app drives decides the route: the batch starts a quest that
+  // lists a game task beside a video task through the game path, so the card
+  // has to drive the same task the batch does.
+  const task = questRunTask(quest)
   if (!task?.target) return
   
   const secondsNeeded = task.target
@@ -1594,15 +1630,12 @@ async function startQuest(quest: Quest) {
   const isStreamQuest = isStreamTask(task)
   const isActivityQuest = isActivityTask(task)
   
-  console.log(`Starting quest: type=${task.type}, target=${secondsNeeded}s, progress=${initialProgress}s`)
   
   if (isVideoQuest) {
     // Video quest - uses video-progress API with timestamp
     await questsStore.startVideo(quest.id, secondsNeeded, initialProgress)
   } else if (isPlayQuest) {
     // Play quests - use Game Simulator logic (one-click)
-    const gameName = quest.config.messages.game_title || quest.config.messages.quest_name
-    console.log(`Starting play quest for ${gameName}`)
     try {
         // Check if there are multiple simulator-compatible executables — let
         // user choose. Skip exe selection entirely for CDP mode (doesn't need
@@ -1797,7 +1830,7 @@ async function claimReward(quest: Quest) {
   animation: noticeLifecycle 4s ease forwards;
 }
 
-.quest-list-move {
+.quest-list-smooth .quest-list-move {
   transition: transform 0.24s ease;
 }
 .quest-list-enter-active,
@@ -1808,6 +1841,13 @@ async function claimReward(quest: Quest) {
   position: absolute;
   width: 100%;
   pointer-events: none;
+}
+/* The list is two columns from 640px up, so a leaving card must not claim the
+   whole row or the remaining cards jump sideways on the way out. */
+@media (width >= 640px) {
+  .quest-list-leave-active {
+    width: calc(50% - 0.375rem);
+  }
 }
 .quest-list-enter-from,
 .quest-list-leave-to {
