@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useQuestsStore } from '@/stores/quests'
 import { useThemeStore, type ThemeMode } from '@/stores/theme'
-import OrbIcon from '@/components/icons/OrbIcon.vue'
+import OrbMedia from '@/components/icons/OrbMedia.vue'
 import SettingsSectionCard from './SettingsSectionCard.vue'
 import SettingsSwitch from './SettingsSwitch.vue'
 import { settingToneClass } from './settingTones'
@@ -67,7 +67,7 @@ const themeOptions: { value: ThemeMode; icon: typeof Sun; label: string }[] = [
     <div class="flex items-center justify-between gap-4 rounded-lg border border-border bg-card p-4 transition-colors hover:bg-muted/40">
       <div class="flex min-w-0 items-start gap-3">
         <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10">
-          <OrbIcon class="h-6 w-6 text-primary" />
+          <OrbMedia kind="game" animated class="h-8 w-8" />
         </div>
         <div class="min-w-0">
           <p class="flex flex-wrap items-center gap-2 text-sm font-semibold">

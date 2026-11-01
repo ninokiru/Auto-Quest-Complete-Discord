@@ -5,7 +5,7 @@ import { getQuestRewardCode, type QuestRewardCode } from '@/api/tauri'
 import { displayPercent, useQuestsStore } from '@/stores/quests'
 import { useAuthStore } from '@/stores/auth'
 import QuestDeveloperDetails from '@/components/QuestDeveloperDetails.vue'
-import OrbIcon from '@/components/icons/OrbIcon.vue'
+import OrbMedia from '@/components/icons/OrbMedia.vue'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Activity, Check, Clock, Cloud, Copy, Gamepad2, Gift, KeyRound, Loader2, MonitorPlay } from 'lucide-vue-next'
@@ -315,6 +315,12 @@ const requiredTargetText = computed(() =>
   formatRequiredTarget(targetDuration.value, runningProgressUnit.value)
 )
 
+/** Which Orbs artwork belongs to this quest: the video reward uses the video
+ *  orb, every other kind the game orb. */
+const rewardOrbKind = computed<'game' | 'video'>(() =>
+  getQuestKind(props.quest) === 'video' ? 'video' : 'game',
+)
+
 // A claimed quest can carry a redeemable code. It is read on demand: the
 // endpoint only answers for a claimed quest, and one request per row of a
 // long list would cost more than the code is worth.
@@ -466,9 +472,10 @@ async function copyRewardCode() {
               :alt="rewardName(reward)"
               class="h-full w-full object-contain"
             />
-            <OrbIcon
+            <OrbMedia
               v-else-if="reward.icon === 'orbs'"
-              class="h-5 w-5 text-primary"
+              :kind="rewardOrbKind"
+              class="h-5 w-5"
             />
             <Gift v-else class="h-4 w-4 text-pink-400" />
           </div>
