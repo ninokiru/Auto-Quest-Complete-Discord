@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch, onUnmounted } from 'vue'
-import { useQuestsStore } from '@/stores/quests'
+import { displayPercent, useQuestsStore } from '@/stores/quests'
 import type { RunningQuest } from '@/stores/quests'
 import type { Quest } from '@/api/tauri'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -298,6 +298,15 @@ const activeBarStyle = computed(() =>
   barStyleFor(questsStore.localProgress, animatedSubmitted.value)
 )
 
+/** Whether the green part of a bar means anything for what is on screen: it is
+ *  time this app counted and has not submitted yet, which only happens on the
+ *  direct-API paths. Discord counts a CDP game or Activity itself. */
+const showsLocalPendingLegend = computed(() =>
+  runningSlots.value.some(
+    slot => slot.type === 'video' && questsStore.gameQuestMode !== 'cdp',
+  ),
+)
+
 function slotBarStyle(slot: RunningQuest): Record<string, string> {
   return barStyleFor(slot.localProgress, slotSubmittedPercent(slot))
 }
@@ -448,7 +457,7 @@ const keepAliveRemainingText = computed(() => {
                 </div>
 
                 <div class="flex shrink-0 flex-col items-end gap-0.5">
-                  <span class="font-mono text-sm font-medium tabular-nums">{{ Math.floor(entry.slot.serverProgress) }}%</span>
+                  <span class="font-mono text-sm font-medium tabular-nums">{{ Math.floor(displayPercent(entry.slot)) }}%</span>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -468,7 +477,7 @@ const keepAliveRemainingText = computed(() => {
               <div class="h-2 w-2 rounded-full bg-primary"></div>
               <span>{{ t('quest.submitted') }}</span>
             </div>
-            <div class="flex items-center gap-1.5">
+            <div v-if="showsLocalPendingLegend" class="flex items-center gap-1.5">
               <div class="h-2 w-2 rounded-full bg-green-400"></div>
               <span>{{ t('quest.pending') }}</span>
             </div>

@@ -105,6 +105,15 @@ export interface RunningQuest {
   cdpPlay?: boolean
 }
 
+/** The percentage a card or the progress panel shows.
+ *
+ *  The bar runs on the local clock and fills the gap above what Discord banked,
+ *  so the number beside it has to end where the bar ends: reading only the
+ *  polled value made a CDP game show 92% while Discord already showed 99%. */
+export function displayPercent(slot: RunningQuest): number {
+  return Math.min(100, Math.max(slot.serverProgress, slot.localProgress))
+}
+
 /** The unit a slot counts its target and its polled progress in. */
 type SlotProgressUnit = RunningQuest['progressUnit']
 

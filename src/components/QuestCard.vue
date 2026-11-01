@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import type { Quest } from '@/api/tauri'
 import { getQuestRewardCode, type QuestRewardCode } from '@/api/tauri'
-import { useQuestsStore } from '@/stores/quests'
+import { displayPercent, useQuestsStore } from '@/stores/quests'
 import { useAuthStore } from '@/stores/auth'
 import QuestDeveloperDetails from '@/components/QuestDeveloperDetails.vue'
 import OrbIcon from '@/components/icons/OrbIcon.vue'
@@ -115,9 +115,11 @@ const targetDuration = computed(() => {
 const progress = computed(() => {
   if (props.quest.user_status?.completed_at) return 100
 
-  // If this quest is active, use real-time progress from its own slot (0-100)
+  // If this quest is active, use real-time progress from its own slot (0-100).
+  // The bar fills the gap a heartbeat has not banked yet, so the number reads
+  // the same value the bar ends at.
   if (runningSlot.value) {
-    return Math.min(100, runningSlot.value.serverProgress)
+    return displayPercent(runningSlot.value)
   }
 
   // A quest that is not running keeps the value it has banked. Every task is
