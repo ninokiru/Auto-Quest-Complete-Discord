@@ -9,8 +9,8 @@
 //! This is a clean-room Rust/CDP reimplementation; no source code was copied.
 
 use anyhow::{Context, Result};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 use tauri::Emitter;
 use tokio::time::{sleep, sleep_until, Instant};
@@ -2500,15 +2500,12 @@ pub async fn complete_play_quest_via_cdp(
 
     log_partial_target_failures("play quest spoof", &spoof_summary.target_failures);
 
-    let parsed = match spoof_summary
-        .successful_results
-        .iter()
-        .max_by_key(|value| {
-            value
-                .get("patchCount")
-                .and_then(|patches| patches.as_u64())
-                .unwrap_or(0)
-        }) {
+    let parsed = match spoof_summary.successful_results.iter().max_by_key(|value| {
+        value
+            .get("patchCount")
+            .and_then(|patches| patches.as_u64())
+            .unwrap_or(0)
+    }) {
         Some(parsed) => parsed,
         None => {
             finish_play_quest(
