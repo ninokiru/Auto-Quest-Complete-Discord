@@ -270,8 +270,8 @@ fn quest_slot_conflict(
             .filter(|slot| slot.game && slot.account_id == candidate.account_id)
             .collect();
         if !same_account_games.is_empty() {
-            let share_cdp_slots = candidate.cdp_play
-                && same_account_games.iter().all(|slot| slot.cdp_play);
+            let share_cdp_slots =
+                candidate.cdp_play && same_account_games.iter().all(|slot| slot.cdp_play);
             if !share_cdp_slots || same_account_games.len() >= CDP_PLAY_QUEST_LIMIT {
                 return Some(QuestSlotConflict::GameBusy);
             }
