@@ -14,7 +14,6 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::ipc::Channel;
-use tauri::Manager;
 
 /// Releases of this repository, addressed by tag.
 const RELEASE_TAG_API: &str =
