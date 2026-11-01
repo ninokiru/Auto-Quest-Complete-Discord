@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import gameOrbStill from '@/assets/orbs/orb-game.webp'
+import gameOrbVideo from '@/assets/orbs/orb-game.webm'
 import videoOrbStill from '@/assets/orbs/orb-video.webp'
+import videoOrbVideo from '@/assets/orbs/orb-video.webm'
 import OrbIcon from './OrbIcon.vue'
 
 /**
- * Discord's Orbs artwork. The still is bundled so the icon never depends on the
- * network; the animation streams from Discord's own CDN, which is the same host
- * the quest rows already load app icons from.
+ * Discord's Orbs artwork, bundled with the app so nothing here depends on the
+ * network: the still is the poster, the animation a short looping clip.
  *
  * `animated` is opt-in: a quest list can hold dozens of orbs, and one looping
  * video per row would cost more than the motion is worth.
@@ -17,17 +18,9 @@ const props = withDefaults(defineProps<{ kind?: 'game' | 'video'; animated?: boo
   animated: false,
 })
 
-const CDN = 'https://cdn.discordapp.com/assets/content'
-
 const artwork = {
-  game: {
-    still: gameOrbStill,
-    video: `${CDN}/864e5841fd9af8da3c50ad6d6220bee54e8c2da2d36d3c85d0a5ae95cdbf095e.webm`,
-  },
-  video: {
-    still: videoOrbStill,
-    video: `${CDN}/d4fc1c99b3e3044530f08ede0156d1d43a13bf78f0f539e240b63f2d4dad3554.webm`,
-  },
+  game: { still: gameOrbStill, video: gameOrbVideo },
+  video: { still: videoOrbStill, video: videoOrbVideo },
 } as const
 
 const still = computed(() => artwork[props.kind ?? 'game'].still)
