@@ -365,7 +365,10 @@ async fn perform_update(tag: &str, on_progress: &Channel<UpdateProgress>) -> Res
     let saved = tokio::fs::write(&dest, &bytes).await;
     saved.context("Could not save the verified installer")?;
 
-    let located = std::env::current_exe();
+    // Release builds run from a temporary copy that is deleted on exit, so the
+    // relaunch has to target the executable the user started.
+    let located = crate::runtime_identity::launcher_executable_path()
+        .or_else(|| std::env::current_exe().ok());
     let app_exe = located.context("Could not locate this application's file")?;
 
     let installing = UpdateProgress::phase(UpdatePhase::Installing);

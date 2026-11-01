@@ -29,6 +29,14 @@ const LEGACY_STEALTH_OWNERSHIP_MARKER_NAME: &str = ".runtime-owner";
 const STEALTH_OWNERSHIP_MARKER_NAME: &str = ".runtime-owner";
 const WEBVIEW_PROFILE_DIR_NAME: &str = "webview";
 
+/// Carries the executable the user started into the temporary copy.
+///
+/// Inside that copy `current_exe()` is the copy itself, which the update helper
+/// would restart after the installer replaced the real file — leaving the old
+/// build running and the update prompt in place. The name is deliberately
+/// product-neutral so the variable cannot fingerprint the process.
+const LAUNCHER_EXE_ENV: &str = "LAUNCHER_EXE_PATH";
+
 /// Flag indicating if current process is running in stealth mode
 static IS_STEALTH_MODE: AtomicBool = AtomicBool::new(false);
 
@@ -227,6 +235,18 @@ pub fn is_stealth_mode() -> bool {
     IS_STEALTH_MODE.load(Ordering::Relaxed)
 }
 
+/// The executable the user launched, or `None` when this process was started
+/// directly. A temporary copy is deleted when this process exits, so anything
+/// that restarts the application (the update helper) has to use this path.
+pub fn launcher_executable_path() -> Option<PathBuf> {
+    let path = PathBuf::from(env::var_os(LAUNCHER_EXE_ENV)?);
+    if path.is_file() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
 /// Window title for the stealth copy: the executable stem.
 pub fn generate_stealth_window_title() -> String {
     env::current_exe()
@@ -366,7 +386,7 @@ fn ensure_stealth_mode_impl() -> bool {
 
     let args: Vec<String> = env::args().skip(1).collect();
     // Keep the original cwd so sidecar lookup still finds the install directory.
-    match spawn_detached_process(&dest_exe, &args) {
+    match spawn_detached_process(&dest_exe, &args, &current_exe) {
         Ok(()) => {
             println!(
                 "[Stealth] Successfully spawned stealth process: {}",
@@ -384,7 +404,11 @@ fn ensure_stealth_mode_impl() -> bool {
 
 /// Spawn process in detached mode
 #[cfg(target_os = "windows")]
-fn spawn_detached_process(exe_path: &PathBuf, args: &[String]) -> io::Result<()> {
+fn spawn_detached_process(
+    exe_path: &PathBuf,
+    args: &[String],
+    launcher_exe: &Path,
+) -> io::Result<()> {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
@@ -392,6 +416,7 @@ fn spawn_detached_process(exe_path: &PathBuf, args: &[String]) -> io::Result<()>
 
     Command::new(exe_path)
         .args(args)
+        .env(LAUNCHER_EXE_ENV, launcher_exe)
         .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
         .spawn()?;
 
@@ -399,7 +424,11 @@ fn spawn_detached_process(exe_path: &PathBuf, args: &[String]) -> io::Result<()>
 }
 
 #[cfg(target_os = "macos")]
-fn spawn_detached_process(exe_path: &PathBuf, args: &[String]) -> io::Result<()> {
+fn spawn_detached_process(
+    exe_path: &PathBuf,
+    args: &[String],
+    _launcher_exe: &Path,
+) -> io::Result<()> {
     use std::process::Stdio;
 
     Command::new(exe_path)
@@ -413,7 +442,11 @@ fn spawn_detached_process(exe_path: &PathBuf, args: &[String]) -> io::Result<()>
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn spawn_detached_process(exe_path: &PathBuf, args: &[String]) -> io::Result<()> {
+fn spawn_detached_process(
+    exe_path: &PathBuf,
+    args: &[String],
+    _launcher_exe: &Path,
+) -> io::Result<()> {
     Command::new(exe_path).args(args).spawn()?;
 
     Ok(())
@@ -701,6 +734,20 @@ mod tests {
         assert!(!is_stealth_copy_path(&exe));
         assert_eq!(is_legacy_svc_file_name("svc_deadbeef.exe"), cfg!(windows));
         assert_eq!(is_legacy_svc_file_name("svc_deadbeef"), !cfg!(windows));
+    }
+
+    #[test]
+    fn launcher_path_is_only_reported_for_an_existing_file() {
+        let probe = env::temp_dir().join(format!("launcher-{}", generate_random_suffix(8)));
+        env::set_var(LAUNCHER_EXE_ENV, &probe);
+        assert!(launcher_executable_path().is_none());
+
+        fs::write(&probe, b"stub").unwrap();
+        assert_eq!(launcher_executable_path().as_deref(), Some(probe.as_path()));
+
+        let _ = fs::remove_file(&probe);
+        env::remove_var(LAUNCHER_EXE_ENV);
+        assert!(launcher_executable_path().is_none());
     }
 
     #[test]

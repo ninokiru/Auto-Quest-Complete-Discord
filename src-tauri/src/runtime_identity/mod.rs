@@ -149,6 +149,19 @@ pub fn uses_temporary_runtime() -> bool {
     }
 }
 
+/// Executable the user launched, when this process runs from a temporary copy.
+/// Restarting `current_exe()` there would relaunch the copy being deleted.
+pub fn launcher_executable_path() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        windows::launcher_executable_path()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
 pub fn runtime_window_title() -> String {
     #[cfg(target_os = "windows")]
     {
