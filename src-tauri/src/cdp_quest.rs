@@ -9,6 +9,7 @@
 //! This is a clean-room Rust/CDP reimplementation; no source code was copied.
 
 use anyhow::{Context, Result};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tauri::Emitter;
 use tokio::time::{sleep, sleep_until, Instant};
@@ -33,6 +34,48 @@ const CDP_CLEANUP_BUDGET: Duration = Duration::from_secs(45);
 /// seconds timed out the first quest after a client start; a page that cannot
 /// answer at all still fails within this window.
 const CDP_MODULE_INIT_BUDGET: Duration = Duration::from_secs(6);
+
+/// A cleanup can outlive the task that started it: a Stop that reaches
+/// `QUEST_STOP_WAIT` detaches the task while its final cleanup is still running.
+/// The cleanup script strips every injected bridge it finds, so one landing after
+/// the next quest's init would break that quest. Every cleanup is counted here
+/// and a start waits for the counter to drain before it initializes.
+static CLEANUPS_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+const CLEANUP_DRAIN_WAIT: Duration = Duration::from_secs(90);
+const CLEANUP_DRAIN_POLL: Duration = Duration::from_millis(100);
+/// A single failed poll is retried on the next tick, but a run of them means the
+/// page can no longer be read at all: the quest then says so instead of sitting
+/// at 0% until someone presses Stop.
+const CDP_POLL_MAX_CONSECUTIVE_FAILURES: u32 = 8;
+
+struct CleanupGuard;
+
+impl CleanupGuard {
+    fn acquire() -> Self {
+        CLEANUPS_IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for CleanupGuard {
+    fn drop(&mut self) {
+        CLEANUPS_IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Wait until no cleanup is running, so the modules a start installs are not
+/// stripped by a cleanup that belonged to the quest before it.
+async fn wait_for_prior_cleanup() -> Result<()> {
+    let deadline = Instant::now() + CLEANUP_DRAIN_WAIT;
+    while CLEANUPS_IN_FLIGHT.load(Ordering::SeqCst) > 0 {
+        if Instant::now() >= deadline {
+            anyhow::bail!("cdp_cleanup_pending: a previous cleanup is still running");
+        }
+        sleep(CLEANUP_DRAIN_POLL).await;
+    }
+    Ok(())
+}
+
 /// Discord only lists the Activity iframe once its renderer mounts, so one
 /// snapshot races the launch the user just confirmed. Discovery re-reads the
 /// read-only target list (no navigation, no route warmup) until this budget ends.
@@ -1759,6 +1802,9 @@ fn log_cdp_cleanup_failure(context: &str, err: &anyhow::Error) {
 }
 
 async fn cdp_cleanup_before_init(port: u16) -> Result<()> {
+    // A cleanup left behind by a detached stop still strips bridges, so this
+    // start waits it out instead of installing modules it would tear down.
+    wait_for_prior_cleanup().await?;
     cdp_cleanup_with_attempts(port, CDP_CLEANUP_ATTEMPTS)
         .await
         .context("Failed to clear existing CDP spoof state before initialization")
@@ -1779,6 +1825,10 @@ pub(crate) async fn cdp_cleanup_after_stop(port: u16, context: &str, cancelled: 
 async fn cdp_cleanup_with_attempts(port: u16, max_attempts: u32) -> Result<()> {
     use crate::logger::{log, LogCategory, LogLevel};
 
+    // Held for the whole cleanup, including the verification rounds: a start
+    // that waits in `wait_for_prior_cleanup` must not init while any of them
+    // can still strip a bridge.
+    let _cleanup_guard = CleanupGuard::acquire();
     let max_attempts = max_attempts.max(1);
     let cleanup_js = with_bridge(JS_CLEANUP_SPOOF);
     let verify_js = with_bridge(JS_VERIFY_CLEANUP_STATE);
@@ -2289,6 +2339,7 @@ pub async fn complete_play_quest_via_cdp(
     };
     let _ = app_handle.emit("quest-progress", initial_pct);
 
+    let mut consecutive_poll_failures = 0u32;
     loop {
         tokio::select! {
             _ = sleep(poll_interval) => {},
@@ -2337,6 +2388,14 @@ pub async fn complete_play_quest_via_cdp(
             None => match cdp_poll_progress(port, &quest_id).await {
                 Ok(r) => r,
                 Err(e) => {
+                    consecutive_poll_failures += 1;
+                    if consecutive_poll_failures >= CDP_POLL_MAX_CONSECUTIVE_FAILURES {
+                        cdp_cleanup_after_stop(port, "play quest poll failed", false).await;
+                        anyhow::bail!(
+                            "Progress could not be read for {} polls in a row: {e}",
+                            consecutive_poll_failures
+                        );
+                    }
                     log(
                         LogLevel::Warn,
                         LogCategory::TokenExtraction,
@@ -2347,6 +2406,7 @@ pub async fn complete_play_quest_via_cdp(
                 }
             },
         };
+        consecutive_poll_failures = 0;
 
         let pct = if seconds_needed > 0 {
             (progress_secs / seconds_needed as f64 * 100.0).min(100.0)
@@ -2454,6 +2514,7 @@ pub async fn complete_stream_quest_via_cdp(
     };
     let _ = app_handle.emit("quest-progress", initial_pct);
 
+    let mut consecutive_poll_failures = 0u32;
     loop {
         tokio::select! {
             _ = sleep(poll_interval) => {},
@@ -2501,6 +2562,14 @@ pub async fn complete_stream_quest_via_cdp(
             None => match cdp_poll_progress(port, &quest_id).await {
                 Ok(r) => r,
                 Err(e) => {
+                    consecutive_poll_failures += 1;
+                    if consecutive_poll_failures >= CDP_POLL_MAX_CONSECUTIVE_FAILURES {
+                        cdp_cleanup_after_stop(port, "stream quest poll failed", false).await;
+                        anyhow::bail!(
+                            "Progress could not be read for {} polls in a row: {e}",
+                            consecutive_poll_failures
+                        );
+                    }
                     log(
                         LogLevel::Warn,
                         LogCategory::TokenExtraction,
@@ -2511,6 +2580,7 @@ pub async fn complete_stream_quest_via_cdp(
                 }
             },
         };
+        consecutive_poll_failures = 0;
 
         let pct = if seconds_needed > 0 {
             (progress_secs / seconds_needed as f64 * 100.0).min(100.0)
@@ -4413,6 +4483,16 @@ mod tests {
         // The second script only installs the modules; a cached page is done.
         assert_eq!(scripts.len(), 1);
         assert!(scripts[0].contains("const discoverOnly = true"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_start_waits_out_a_cleanup_left_behind() {
+        let guard = CleanupGuard::acquire();
+        let error = wait_for_prior_cleanup().await.unwrap_err();
+        assert!(error.to_string().contains("cdp_cleanup_pending"));
+        drop(guard);
+        // With nothing left running the same call returns at once.
+        wait_for_prior_cleanup().await.unwrap();
     }
 
     #[tokio::test(start_paused = true)]

@@ -1,6 +1,5 @@
 use discord_cdp_launch_core as cdp_launch;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::Manager;
@@ -910,7 +909,8 @@ async fn launch_compat(
     let client = cdp_launch::parse_desktop_client_preference(client.as_deref())
         .map_err(|error| error.to_string())?;
     let config = load_config(&app).map_err(|error| error.message)?;
-    let installation = matching_saved_installation(&config, client);
+    let installation =
+        matching_saved_installation(&config, client).map_err(|error| error.message)?;
     let options = cdp_launch::LaunchOptions {
         port: port.unwrap_or(cdp_launch::DEFAULT_CDP_PORT),
         channel,
@@ -945,22 +945,34 @@ fn build_desktop_client_state_with_probe(
         .cloned()
         .map(cdp_launch::refresh_installation_validation)
         .collect();
-    let mut seen: HashSet<_> = installations
-        .iter()
-        .map(|install| install.id.clone())
-        .collect();
-
     #[cfg(windows)]
     for install in windows_registry_vesktop_installations() {
-        if seen.insert(install.id.clone()) {
+        if !installations
+            .iter()
+            .any(|existing| existing.id == install.id)
+        {
             installations.push(install);
         }
     }
 
     let (discovered, discovery_errors) = cdp_launch::discover_client_installations();
     for install in discovered {
-        if seen.insert(install.id.clone()) {
-            installations.push(install);
+        // A saved record can name an executable a Discord update replaced. The
+        // scan just found the live one under the same installation id, so the
+        // fresh path wins for as long as it validates; a valid saved record
+        // (a manual path) is kept as the user set it.
+        let saved = installations
+            .iter_mut()
+            .find(|existing| existing.id == install.id);
+        match saved {
+            Some(existing)
+                if existing.validation != cdp_launch::ValidationState::Valid
+                    && install.validation == cdp_launch::ValidationState::Valid =>
+            {
+                *existing = install;
+            }
+            Some(_) => {}
+            None => installations.push(install),
         }
     }
     issues.extend(
@@ -1077,7 +1089,7 @@ fn options_for_selector(
                         "The selected desktop client installation is no longer configured.",
                     )
                 })?;
-            let installation = cdp_launch::refresh_installation_validation(installation);
+            let installation = refreshed_installation(installation)?;
             if installation.validation != cdp_launch::ValidationState::Valid {
                 return Err(DesktopClientCommandError::new(
                     "installation_missing",
@@ -1108,28 +1120,55 @@ fn options_for_selector(
     })
 }
 
+/// Re-resolve a saved official installation before it is used.
+///
+/// Discord's updater replaces `app-<version>\Discord.exe` while the installation
+/// id, which is derived from the install root, stays the same. The saved path then
+/// points at a deleted file and the launch failed with "must be relocated"; this
+/// walks the root again and keeps a manual, non-standard path exactly as saved.
+fn refreshed_installation(
+    saved: cdp_launch::ClientInstallation,
+) -> Result<cdp_launch::ClientInstallation, DesktopClientCommandError> {
+    match cdp_launch::refresh_automatic_installation(&saved) {
+        Ok(Some(installation)) => Ok(installation),
+        // An I/O error means "unknown", not "uninstalled": keep the saved record.
+        Err(_) => Ok(cdp_launch::refresh_installation_validation(saved)),
+        Ok(None) => Err(DesktopClientCommandError::new(
+            "installation_missing",
+            serde_json::json!({ "installationId": saved.id }),
+            "The selected desktop client installation is no longer present.",
+        )),
+    }
+}
+
 fn matching_saved_installation(
     config: &DesktopClientsConfig,
     client: cdp_launch::DesktopClientPreference,
-) -> Option<cdp_launch::ClientInstallation> {
+) -> Result<Option<cdp_launch::ClientInstallation>, DesktopClientCommandError> {
     let cdp_launch::LaunchSelector::Installation { installation_id } = &config.selection else {
-        return None;
+        return Ok(None);
     };
-    config.installations.iter().find_map(|install| {
-        if &install.id != installation_id {
-            return None;
+    let Some(saved) = config
+        .installations
+        .iter()
+        .find(|install| &install.id == installation_id)
+        .cloned()
+    else {
+        return Ok(None);
+    };
+    let provider_matches = match client {
+        cdp_launch::DesktopClientPreference::Auto => true,
+        cdp_launch::DesktopClientPreference::Official => {
+            saved.provider_id == cdp_launch::ProviderId::official_discord()
         }
-        let provider_matches = match client {
-            cdp_launch::DesktopClientPreference::Auto => true,
-            cdp_launch::DesktopClientPreference::Official => {
-                install.provider_id == cdp_launch::ProviderId::official_discord()
-            }
-            cdp_launch::DesktopClientPreference::Vesktop => {
-                install.provider_id == cdp_launch::ProviderId::vesktop()
-            }
-        };
-        provider_matches.then(|| cdp_launch::refresh_installation_validation(install.clone()))
-    })
+        cdp_launch::DesktopClientPreference::Vesktop => {
+            saved.provider_id == cdp_launch::ProviderId::vesktop()
+        }
+    };
+    if !provider_matches {
+        return Ok(None);
+    }
+    refreshed_installation(saved).map(Some)
 }
 
 fn installation_executable_path(install: &cdp_launch::ClientInstallation) -> Option<&Path> {
