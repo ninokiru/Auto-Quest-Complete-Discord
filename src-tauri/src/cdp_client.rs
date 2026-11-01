@@ -21,6 +21,113 @@ pub use discord_cdp_launch_core::DEFAULT_CDP_PORT;
 /// WebSocket handshake must fail instead of hanging the calling command forever.
 const WS_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Gate automation separately from read-only CDP connectivity. Discord's web
+/// modules also exist inside unsupported wrappers such as Equibop.
+pub async fn ensure_supported_automation_client(port: u16) -> Result<(), String> {
+    supported_automation_endpoint(port).await.map(|_| ())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct AutomationEndpointIdentity {
+    browser_socket: String,
+    user_agent: String,
+}
+
+async fn supported_automation_endpoint(port: u16) -> Result<AutomationEndpointIdentity, String> {
+    let owner = tauri::async_runtime::spawn_blocking(move || {
+        discord_cdp_launch_core::inspect_cdp_port_owner(port)
+    })
+    .await
+    .map_err(|_| "Could not identify the CDP client".to_string())?;
+    ensure_supported_automation_endpoint(port, owner).await
+}
+
+async fn ensure_supported_automation_endpoint(
+    port: u16,
+    owner: discord_cdp_launch_core::CdpPortOwner,
+) -> Result<AutomationEndpointIdentity, String> {
+    use discord_cdp_launch_core::CdpPortOwner;
+    // A port argument is not proof that the process owns the listening socket:
+    // Discord and an unsupported wrapper can both request the same port. Always
+    // identify the responding endpoint, including for recognized process names.
+    let metadata = read_browser_metadata(port).await?;
+    let agent = metadata["User-Agent"].as_str().unwrap_or_default();
+    let products: Vec<_> = agent
+        .split_ascii_whitespace()
+        .filter_map(|token| {
+            token
+                .split_once('/')
+                .map(|(name, _)| name.to_ascii_lowercase())
+        })
+        .collect();
+    if products.iter().any(|name| name == "equibop") {
+        return Err(format!("Equibop is not currently supported for CDP quest automation (port {port}). Use official Discord or Vesktop. No quest code was injected."));
+    }
+    if owner != CdpPortOwner::Other
+        && products
+            .iter()
+            .any(|name| name == "discord" || name == "vesktop")
+    {
+        return endpoint_identity(&metadata);
+    }
+    Err(format!("Unsupported CDP client on port {port}. Quest automation supports official Discord and Vesktop. This client could not be identified; no quest code was injected."))
+}
+
+/// Ceiling for the `/json/version` body: a real answer is a few hundred bytes.
+const CDP_METADATA_MAX_BYTES: usize = 64 * 1024;
+
+async fn read_browser_metadata(port: u16) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(2))
+        .build()
+        .map_err(|error| format!("Could not inspect CDP client: {error}"))?;
+    let response = client
+        .get(format!("http://127.0.0.1:{port}/json/version"))
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|_| {
+            format!(
+                "Could not identify the client on CDP port {port}. Make sure Discord or Vesktop is running with CDP enabled."
+            )
+        })?;
+    if response
+        .content_length()
+        .is_some_and(|size| size > CDP_METADATA_MAX_BYTES as u64)
+    {
+        return Err(metadata_oversized());
+    }
+    let body = response
+        .bytes()
+        .await
+        .map_err(|error| format!("Could not read CDP client metadata: {error}"))?;
+    if body.len() > CDP_METADATA_MAX_BYTES {
+        return Err(metadata_oversized());
+    }
+    serde_json::from_slice(&body).map_err(|_| {
+        format!(
+            "Invalid CDP client information on port {port}. Use official Discord or Vesktop."
+        )
+    })
+}
+
+fn metadata_oversized() -> String {
+    format!("CDP client metadata exceeds the {CDP_METADATA_MAX_BYTES}-byte limit")
+}
+
+fn endpoint_identity(metadata: &serde_json::Value) -> Result<AutomationEndpointIdentity, String> {
+    let browser_socket = metadata["webSocketDebuggerUrl"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .ok_or("CDP client metadata has no browser identity")?;
+    Ok(AutomationEndpointIdentity {
+        browser_socket: browser_socket.into(),
+        user_agent: metadata["User-Agent"].as_str().unwrap_or_default().into(),
+    })
+}
+
 /// SuperProperties result obtained via CDP
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CdpSuperProperties {

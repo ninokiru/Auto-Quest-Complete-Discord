@@ -1592,6 +1592,10 @@ async fn ensure_cdp_account_consistency(
     state: &State<'_, AppState>,
     cdp_port: u16,
 ) -> Result<(), String> {
+    // Refuse a wrapper client before any code is injected: its modules exist but
+    // the native game bridge behind them does not.
+    cdp_client::ensure_supported_automation_client(cdp_port).await?;
+
     let expected = state
         .authenticated_user
         .lock()

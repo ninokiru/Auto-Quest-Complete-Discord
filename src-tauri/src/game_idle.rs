@@ -1165,9 +1165,13 @@ async fn start_simulation(
             Ok(RunningSimulation::Process { executable_name })
         }
         GameIdleMode::Cdp => {
-            crate::cdp_quest::start_manual_game_spoof(config.cdp_port, &game.id, &game.name)
-                .await
-                .map_err(|error| error.to_string())?;
+            // The manual spoof drives the same single window as a quest, so it
+            // runs inside the pinned session like every other CDP operation.
+            crate::cdp_client::with_pinned_discord_session(
+                crate::cdp_quest::start_manual_game_spoof(config.cdp_port, &game.id, &game.name),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
             Ok(RunningSimulation::Cdp {
                 port: config.cdp_port,
             })

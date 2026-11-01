@@ -320,6 +320,23 @@ const JS_INIT_QUEST_MODULES: &str = r#"
         modules.api = apiMatches.length === 1 ? apiMatches[0] : null;
         const missing = required.filter(([name, method]) => typeof modules[name]?.[method] !== "function")
             .map(([name, method]) => name + "." + method);
+        // Web wrappers can expose the same JS methods while discord_utils is
+        // unavailable. RUNNING_GAMES_CHANGE then throws asynchronously inside
+        // Discord's session/overlay subscribers, after injection reports success.
+        if (required.some(([name]) => name === "RunningGameStore")) {
+            try {
+                const native = modules.NativeUtils?.getDiscordUtils?.();
+                if (!native || !["object", "function"].includes(typeof native)) {
+                    missing.push("NativeUtils.discord_utils");
+                } else if (typeof native.setGameCandidateOverrides !== "function") {
+                    // This wrapper calls the native method unconditionally.
+                    // Window/fullscreen and global-lock methods are optional.
+                    missing.push("NativeUtils.discord_utils.setGameCandidateOverrides");
+                }
+            } catch (_) {
+                missing.push("NativeUtils.discord_utils");
+            }
+        }
         if (missing.length) return JSON.stringify({success:false, code:"cdp_capability_missing", missing});
         if (discoverOnly) return JSON.stringify({success:true});
         const previous = window.__dqh_cdp;
