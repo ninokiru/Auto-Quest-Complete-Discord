@@ -443,3 +443,32 @@ saved record (a manually chosen path) is kept as it is. The update helper passes
 the installed copy as `%~3` and the launcher as `%~4`, and the batch starts `%~3`
 only when it exists — which is how a portable build ends up on the installed
 version instead of restarting the extracted file.
+
+### CDP play quests share one account — 2026-11-01 (L2#6)
+
+A desktop-play quest running through the attached client keeps its own spoofed
+title inside Discord, so it no longer takes the account's single game slot by
+itself. The change is four-part and each part is load-bearing:
+
+- **Injected state.** `window.__dqh_cdp._fakeGames` is an object keyed by
+  application id. `mergeFakes` merges every entry into the arrays the patched
+  store accessors return, and the dispatch interceptor adds all of them to
+  `RUNNING_GAMES_CHANGE`. `_fakeGame` still points at the newest one for the
+  single-game readers.
+- **Release.** `js_remove_spoofed_game(app_id)` deletes one entry and dispatches
+  the real running-games list, so a finished quest stops reporting its title
+  without disturbing the others. `finish_play_quest` picks that path while
+  `ACTIVE_CDP_PLAY_QUESTS` says another play quest is alive, and falls back to
+  the full `cdp_cleanup_after_stop` for the last one out.
+- **Admission.** `QuestTask`/`QuestSlot` carry `cdp_play`. `quest_slot_conflict`
+  lets CDP play slots share an account up to `CDP_PLAY_QUEST_LIMIT` (10) and
+  refuses every mix with a simulated game or an Activity in either direction.
+  Non-play CDP quests stay `exclusive`, which is what keeps them out of a running
+  play quest and vice versa.
+- **Frontend.** `gameSlotAllows(cdpPlay)` mirrors the rule, `openQuestSlot` marks
+  the CDP branches with `cdpPlay`, and the queue admits CDP play items while the
+  account still has room.
+
+The pre-init cleanup in `complete_play_quest_via_cdp` only runs for the first
+live play quest; running it for the second would strip the first one's spoof and
+bridge mid-quest.

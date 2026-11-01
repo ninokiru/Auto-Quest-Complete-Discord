@@ -97,6 +97,12 @@ export interface RunningQuest {
    * task-status registry.
    */
   hasBackendTask: boolean
+  /**
+   * True when this game quest runs through the attached Discord client. Those
+   * keep their own spoofed title inside the client, so several may share an
+   * account; a simulated game still holds the account's single slot alone.
+   */
+  cdpPlay?: boolean
 }
 
 /** The unit a slot counts its target and its polled progress in. */
@@ -344,11 +350,35 @@ export const useQuestsStore = defineStore('quests', () => {
     }
   }
 
-  /** Whether a game quest already holds this account's single game slot. Every
-   *  local slot belongs to the account the page is on; another account's task
-   *  lives in `accountTasks` and has its own slot. */
+  /** How many CDP play quests one account may run at once. */
+  const MAX_CDP_PLAY_QUESTS = 10
+
+  /** Whether the account's game slot can take another game quest.
+   *
+   *  Every local slot belongs to the account the page is on. A CDP play quest
+   *  keeps its own spoofed title inside Discord, so it shares the account with
+   *  other CDP play quests up to the limit; a simulated game, an Activity or a
+   *  mix of the two still owns the account alone. */
+  function gameSlotAllows(cdpPlay: boolean): boolean {
+    const games = runningQuests.value.filter(
+      slot => slot.type === 'game' || slot.type === 'activity',
+    )
+    if (games.length === 0) return true
+    if (!cdpPlay) return false
+    const allCdpPlay = games.every(slot => slot.type === 'game' && slot.cdpPlay)
+    return allCdpPlay && games.length < MAX_CDP_PLAY_QUESTS
+  }
+
+  /** Whether a start of the current mode would be refused by the game slot. */
   function gameSlotBusy(): boolean {
-    return runningQuests.value.some(slot => slot.type === 'game' || slot.type === 'activity')
+    return !gameSlotAllows(gameQuestMode.value === 'cdp')
+  }
+
+  /** Whether this queued quest would run as a CDP play quest. */
+  function isCdpPlayCandidate(item: Quest): boolean {
+    return gameQuestMode.value === 'cdp'
+      && isGameQuest(item)
+      && !isPlayActivityQuest(item)
   }
 
   /**
@@ -359,9 +389,11 @@ export const useQuestsStore = defineStore('quests', () => {
    * calling in, so this covers a manual Start; the backend enforces the same
    * rule for the paths it owns.
    */
-  function ensureGameSlotFree() {
-    if (!gameSlotBusy()) return
-    const message = 'One game quest runs at a time per account; wait for the running one to finish'
+  function ensureGameSlotFree(cdpPlay = false) {
+    if (gameSlotAllows(cdpPlay)) return
+    const message = cdpPlay
+      ? `At most ${MAX_CDP_PLAY_QUESTS} CDP game quests run at a time per account`
+      : 'One game quest runs at a time per account; wait for the running one to finish'
     error.value = message
     throw new Error(message)
   }
@@ -1828,7 +1860,7 @@ export const useQuestsStore = defineStore('quests', () => {
     taskKey?: string | null
   ) {
     ensureLocalQuestSlot(quest.id)
-    ensureGameSlotFree()
+    ensureGameSlotFree(gameQuestMode.value === 'cdp')
     startingQuestId.value = quest.id
     error.value = null
     // Remember the request so a soft error can offer "switch to CDP and retry".
@@ -1854,7 +1886,8 @@ export const useQuestsStore = defineStore('quests', () => {
           cdpPort.value
         )
 
-        openQuestSlot(quest.id, 'game', secondsNeeded, 'time', progressPct, true, progressTaskKey)
+        const cdpSlot = openQuestSlot(quest.id, 'game', secondsNeeded, 'time', progressPct, true, progressTaskKey)
+        cdpSlot.cdpPlay = true
         startProgressSimulation()
         setupListeners()
         syncPolling()
@@ -1914,7 +1947,8 @@ export const useQuestsStore = defineStore('quests', () => {
               initialProgress,
               cdpPort.value
             )
-            openQuestSlot(quest.id, 'game', secondsNeeded, 'time', progressPct, true, progressTaskKey)
+            const cdpSlot = openQuestSlot(quest.id, 'game', secondsNeeded, 'time', progressPct, true, progressTaskKey)
+            cdpSlot.cdpPlay = true
             startProgressSimulation()
             setupListeners()
             syncPolling()
@@ -2517,9 +2551,12 @@ export const useQuestsStore = defineStore('quests', () => {
         // behind it wait instead of failing: skipping the candidate here rather
         // than dropping it keeps it queued for the refill that `releaseQuestSlot`
         // schedules once the running one lets go of the slot.
-        const gameBusy = gameSlotBusy()
+        // A game quest starts only when the account's game slot can take it: a
+        // CDP play quest shares the account with other CDP play quests, every
+        // other game quest owns it alone.
         const queueItem = questQueue.value.find(item =>
-          !questSlot(item.id) && !(gameBusy && isGameQuest(item)))
+          !questSlot(item.id)
+          && (!isGameQuest(item) || gameSlotAllows(isCdpPlayCandidate(item))))
         if (!queueItem) return
 
         // The task this quest actually runs decides both its target and the

@@ -2,20 +2,24 @@
 
 Auto-complete Discord **video, stream and game quests** from one window. Tauri 2 + Rust behind the scenes, Vue 3 on the surface, and no cloud service in between: everything runs on your machine.
 
-## v0.0.5 L2#5 — the portable build updates into the installed one
+## v0.0.5 L2#6 — up to ten CDP game quests per account
 
-Everything in L2#1 to L2#4 is still here. This patch is the remaining half of the update fix: the installed build restarted correctly since L2#2, but a copy started from the `portable.zip` kept coming back as the old file.
+Everything in L2#1 to L2#5 is still here. This patch lifts the rule that made a second game quest wait: when a desktop-play quest runs through the attached Discord client, it keeps its own spoofed title inside that client, so up to ten of them can run for one account at the same time.
 
-### Fixed
+### Changed
 
-- **Updating from the portable build now lands on the new version.** The update helper was told to restart the executable it was launched from. For an installed build that is the file the installer had just replaced, but for a portable copy it is the extracted file the installer never touches — so the window reopened on the old build while the new one sat unused in `%LOCALAPPDATA%`. The helper now receives both paths, prefers the installed executable once the installer has created it, and falls back to the launcher only when it does not exist. Your portable folder is left as it was; from now on the app runs from the installed copy.
+- **CDP play quests run in parallel, up to ten per account.** Each one now holds its own spoofed game in Discord's running-games set instead of replacing the previous one, so Discord can heartbeat several quests at once. A quest that ends releases only its own title while the others keep going; the full cleanup runs when the last one stops. Starting a second one no longer queues it behind the first.
+- **The old rules still hold where they matter.** A simulated game, an Activity, or a mix of those with a CDP play quest still occupies the account alone, and video/stream/activity CDP quests still take the Discord window exclusively — those kinds cannot run beside a play quest in either direction.
 
 ### Checks
 
-- The translation check, the frontend test suite, the runtime identity checks, and the full Rust test suite run on Windows for this release.
-- The helper script's shape (no machine paths, CRLF, both restart targets) is pinned by a unit test.
+- New Rust tests pin the admission rules: ten CDP play slots fill and the eleventh is refused, another account has its own budget, a simulated game and a CDP play quest never share an account, and CDP play quests do not block API quests.
+- The injected scripts are syntax-checked separately, and the usual Windows gate list (fmt, clippy, tests, build) runs for this release.
 
-**Full Changelog**: https://github.com/ninokiru/Auto-Quest-Complete-Discord/compare/0.0.5-L2.4...0.0.5-L2.5
+> [!NOTE]
+> This is the first build with parallel CDP game quests. If a game quest behaves oddly while several run together, stop them and switch the mode back to simulate; tell me what the card showed and I will follow up.
+
+**Full Changelog**: https://github.com/ninokiru/Auto-Quest-Complete-Discord/compare/0.0.5-L2.5...0.0.5-L2.6
 
 ### How the in-app update works
 
@@ -37,8 +41,8 @@ These binaries are **not code-signed**. The app rewrites its own process identit
 
 | File | Use |
 | --- | --- |
-| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.5-setup.exe` | Windows installer (NSIS) |
-| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.5-portable.zip` | Windows portable, no installation |
+| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.6-setup.exe` | Windows installer (NSIS) |
+| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.6-portable.zip` | Windows portable, no installation |
 
 This release publishes **Windows x64 only**. macOS (Apple Silicon) and Linux (x86_64 `.deb` / AppImage) builds are still fully supported by the source tree and are compiled and tested in CI — only their release publishing is temporarily switched off to keep a release run on one runner. They will return in a later release. If you need one of them now, build it from source (`pnpm tauri:build`).
 

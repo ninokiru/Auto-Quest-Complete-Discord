@@ -48,6 +48,40 @@ const CLEANUP_DRAIN_POLL: Duration = Duration::from_millis(100);
 /// at 0% until someone presses Stop.
 const CDP_POLL_MAX_CONSECUTIVE_FAILURES: u32 = 8;
 
+/// CDP play quests share the Discord client, and each spoofs its own title.
+/// This counts the live ones so a quest that ends releases only its own game
+/// while others still run, and the last one leaves performs the full cleanup.
+static ACTIVE_CDP_PLAY_QUESTS: AtomicUsize = AtomicUsize::new(0);
+
+struct PlayQuestGuard;
+
+impl PlayQuestGuard {
+    fn acquire() -> Self {
+        ACTIVE_CDP_PLAY_QUESTS.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for PlayQuestGuard {
+    fn drop(&mut self) {
+        ACTIVE_CDP_PLAY_QUESTS.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Release the spoof of one finished play quest. While another CDP play quest is
+/// still running, only this title is removed; the wipe in `cdp_cleanup_after_stop`
+/// would otherwise strip the bridges and games of the quests that keep going.
+async fn finish_play_quest(port: u16, app_id: &str, context: &str, cancelled: bool) {
+    if ACTIVE_CDP_PLAY_QUESTS.load(Ordering::SeqCst) > 1 {
+        let js = js_remove_spoofed_game(app_id);
+        if let Err(err) = cdp_execute_json_on_task_target(port, &js, false, 5, context).await {
+            log_cdp_cleanup_failure(context, &err);
+        }
+        return;
+    }
+    cdp_cleanup_after_stop(port, context, cancelled).await;
+}
+
 struct CleanupGuard;
 
 impl CleanupGuard {
@@ -447,11 +481,17 @@ fn js_spoof_play_game_for(
             if (String(game.id) === String(fake.id)) return true;
             return fake.pid != null && game.pid === fake.pid;
         }}
-        function mergeFake(games, fake) {{
+        function allFakeGames() {{
+            const map = dqh._fakeGames;
+            const list = map && typeof map === "object" ? Object.values(map) : [];
+            if (list.length > 0) return list.filter(Boolean);
+            return dqh._fakeGame ? [dqh._fakeGame] : [];
+        }}
+        function mergeFakes(games) {{
             const list = Array.isArray(games) ? games.slice() : [];
-            if (!fake) return list;
-            if (list.some(g => sameGame(g, fake))) return list;
-            list.push(fake);
+            for (const fake of allFakeGames()) {{
+                if (!list.some(g => sameGame(g, fake))) list.push(fake);
+            }}
             return list;
         }}
         function allocateSyntheticPid(games) {{
@@ -606,6 +646,10 @@ fn js_spoof_play_game_for(
             fakeGame.pid = allocateSyntheticPid(realGames);
         }}
 
+        // One account can hold several CDP game quests at once, so every spoofed
+        // title is kept by application id instead of replacing the previous one.
+        dqh._fakeGames = dqh._fakeGames && typeof dqh._fakeGames === "object" ? dqh._fakeGames : {{}};
+        dqh._fakeGames[applicationId] = fakeGame;
         dqh._spoofActive = true;
         dqh._fakeGame = fakeGame;
         dqh._fakeApplicationId = applicationId;
@@ -664,7 +708,7 @@ fn js_spoof_play_game_for(
             try {{ games = dqh._origGetRunningGames.call(dqh.RunningGameStore); }} catch(e) {{
                 try {{ games = dqh._origGetRunningGames(); }} catch(e2) {{ games = []; }}
             }}
-            return mergeFake(games, dqh._fakeGame);
+            return mergeFakes(games);
         }}
         function patchedGetGameForPID(p) {{
             return patchedGetRunningGames().find(x => x.pid === p);
@@ -694,7 +738,7 @@ fn js_spoof_play_game_for(
                 try {{ games = origVisible.call(store); }} catch(e) {{
                     try {{ games = origVisible(); }} catch(e2) {{ games = []; }}
                 }}
-                return mergeFake(games, dqh._fakeGame);
+                return mergeFakes(games);
             }};
         }}
         dqh.RunningGameStore.getRunningGames = patchedGetRunningGames;
@@ -743,7 +787,7 @@ fn js_spoof_play_game_for(
             dqh.NativeUtils.setObservedGamesCallback = function(config, flag, cb, userId) {{
                 const wrappedCb = function(games) {{
                     if (!dqh._spoofActive || !dqh._fakeGame) return cb(games);
-                    return cb(mergeFake(games, dqh._fakeGame));
+                    return cb(mergeFakes(games));
                 }};
                 return origObserved(config, flag, wrappedCb, userId);
             }};
@@ -756,18 +800,18 @@ fn js_spoof_play_game_for(
             const origDispatch = dqh.FluxDispatcher.dispatch.bind(dqh.FluxDispatcher);
             dqh._origDispatch = origDispatch;
             dqh.FluxDispatcher.dispatch = function(event) {{
-                if (event && event.type === "RUNNING_GAMES_CHANGE" && dqh._fakeGame && dqh._spoofActive) {{
+                const fakes = event && event.type === "RUNNING_GAMES_CHANGE" && dqh._spoofActive
+                    ? allFakeGames()
+                    : [];
+                if (fakes.length > 0) {{
                     const before = Array.isArray(event.games) ? event.games.length : 0;
-                    const already = Array.isArray(event.games) && event.games.some(g => sameGame(g, dqh._fakeGame));
-                    event.games = mergeFake(event.games, dqh._fakeGame);
-                    if (!already) {{
-                        if (!event.added) event.added = [];
-                        if (!event.added.some(g => sameGame(g, dqh._fakeGame))) {{
-                            event.added.push(dqh._fakeGame);
-                        }}
+                    event.games = mergeFakes(event.games);
+                    if (!event.added) event.added = [];
+                    for (const fake of fakes) {{
+                        if (!event.added.some(g => sameGame(g, fake))) event.added.push(fake);
                     }}
                     if (event.removed) {{
-                        event.removed = event.removed.filter(g => !sameGame(g, dqh._fakeGame));
+                        event.removed = event.removed.filter(g => !fakes.some(fake => sameGame(g, fake)));
                     }}
                     if (event.games.length !== before) dqh._dispatchInterceptCount++;
                 }}
@@ -775,13 +819,67 @@ fn js_spoof_play_game_for(
             }};
         }}
 
-        const mergedGames = mergeFake(realGames, fakeGame);
+        const mergedGames = mergeFakes(realGames);
         subscribeHeartbeats();
         dqh.FluxDispatcher.dispatch({{ type: "RUNNING_GAMES_CHANGE", removed: [], added: [fakeGame], games: mergedGames }});
 
         return JSON.stringify({{ success: true, wrappedObserver, pid: fakeGame.pid || null, patchCount: patchCount, exeName: exeName, allExeNames: allExeNames, appDataName: appDataDebug, realGamesCount: realGames.length, mergedCount: mergedGames.length, hostOs: hostOs, selectedOs: selectedOs, usedHint: !!hint }});
     }} catch (e) {{
         return JSON.stringify({{ success: false, error: String(e) }});
+    }}
+}})()
+"#
+    )
+}
+
+/// Remove one spoofed game from the running-games set, leaving the others alone.
+///
+/// A CDP play quest that ends while another one still runs must release only its
+/// own title; the global cleanup is for the last one to leave.
+fn js_remove_spoofed_game(app_id: &str) -> String {
+    let safe_app_id = serde_json::to_string(app_id).unwrap_or_else(|_| "\"\"".to_string());
+    format!(
+        r#"
+(() => {{
+    try {{
+        const dqh = window.__dqh_cdp;
+        if (!dqh || !dqh.initialized) return JSON.stringify({{ success: true, remaining: 0 }});
+
+        const applicationId = {safe_app_id};
+        if (dqh._fakeGames && typeof dqh._fakeGames === "object") {{
+            delete dqh._fakeGames[applicationId];
+        }}
+        const remaining = dqh._fakeGames ? Object.keys(dqh._fakeGames).length : 0;
+        if (remaining === 0) {{
+            dqh._spoofActive = false;
+            dqh._fakeGame = null;
+            dqh._fakeApplicationId = null;
+        }} else if (dqh._fakeGame && String(dqh._fakeGame.id) === String(applicationId)) {{
+            dqh._fakeGame = Object.values(dqh._fakeGames)[0] || null;
+            dqh._fakeApplicationId = dqh._fakeGame ? String(dqh._fakeGame.id) : null;
+        }}
+
+        try {{
+            if (dqh.FluxDispatcher) {{
+                let realGames = [];
+                try {{
+                    realGames = dqh._origGetRunningGames.call(dqh.RunningGameStore);
+                }} catch (e) {{
+                    realGames = [];
+                }}
+                const pending = dqh.FluxDispatcher.dispatch({{
+                    type: "RUNNING_GAMES_CHANGE",
+                    removed: [],
+                    added: [],
+                    games: Array.isArray(realGames) ? realGames : []
+                }});
+                if (pending && typeof pending.then === "function") pending.catch(() => {{}});
+            }}
+        }} catch (e) {{}}
+
+        return JSON.stringify({{ success: true, remaining }});
+    }} catch (error) {{
+        return JSON.stringify({{ success: false, error: String(error) }});
     }}
 }})()
 "#
@@ -2271,9 +2369,14 @@ pub async fn complete_play_quest_via_cdp(
         None,
     );
 
-    // Defensive pre-cleanup: prevent stale spoof state from a previous run from leaking
-    // into the new quest session.
-    cdp_cleanup_before_init(port).await?;
+    // Defensive pre-cleanup: prevent stale spoof state from a previous run from
+    // leaking into the new quest session. It wipes every spoof, so it only runs
+    // when this is the first CDP play quest; later ones join the running set.
+    let active_before = ACTIVE_CDP_PLAY_QUESTS.load(Ordering::SeqCst);
+    let _play_guard = PlayQuestGuard::acquire();
+    if active_before == 0 {
+        cdp_cleanup_before_init(port).await?;
+    }
     cdp_prepare_quest_modules(port, "play quest").await?;
 
     // 2. Spoof running game
@@ -2282,7 +2385,7 @@ pub async fn complete_play_quest_via_cdp(
         match cdp_execute_json_on_task_target(port, &js, true, 15, "play quest spoof").await {
             Ok(summary) => summary,
             Err(err) => {
-                cdp_cleanup_after_stop(port, "play quest spoof failed", false).await;
+                finish_play_quest(port, &app_id, "play quest spoof failed", false).await;
                 return Err(err);
             }
         };
@@ -2345,7 +2448,7 @@ pub async fn complete_play_quest_via_cdp(
             _ = sleep(poll_interval) => {},
             _ = cancel_rx.recv() => {
                 log(LogLevel::Info, LogCategory::TokenExtraction, "CDP play quest cancelled", None);
-                cdp_cleanup_after_stop(port, "play quest cancelled", true).await;
+                finish_play_quest(port, &app_id, "play quest cancelled", true).await;
                 let _ = app_handle.emit("quest-stopped", ());
                 return Ok(());
             }
@@ -2390,7 +2493,7 @@ pub async fn complete_play_quest_via_cdp(
                 Err(e) => {
                     consecutive_poll_failures += 1;
                     if consecutive_poll_failures >= CDP_POLL_MAX_CONSECUTIVE_FAILURES {
-                        cdp_cleanup_after_stop(port, "play quest poll failed", false).await;
+                        finish_play_quest(port, &app_id, "play quest poll failed", false).await;
                         anyhow::bail!(
                             "Progress could not be read for {} polls in a row: {e}",
                             consecutive_poll_failures
@@ -2432,7 +2535,7 @@ pub async fn complete_play_quest_via_cdp(
                 "CDP play quest completed!",
                 None,
             );
-            cdp_cleanup_after_stop(port, "play quest completed", false).await;
+            finish_play_quest(port, &app_id, "play quest completed", false).await;
             let _ = app_handle.emit("quest-complete", ());
             return Ok(());
         }

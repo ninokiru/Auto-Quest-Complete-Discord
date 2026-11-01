@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   onQuestComplete: vi.fn(),
   onQuestError: vi.fn(),
   onQuestProgress: vi.fn(),
+  startCdpQuest: vi.fn(),
   startGameHeartbeatQuest: vi.fn(),
   startPlayActivityQuest: vi.fn(),
   startGameSimulationUsage: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock('@/api/tauri', () => ({
   onQuestComplete: mocks.onQuestComplete,
   onQuestError: mocks.onQuestError,
   onQuestProgress: mocks.onQuestProgress,
+  startCdpQuest: mocks.startCdpQuest,
   startGameHeartbeatQuest: mocks.startGameHeartbeatQuest,
   startPlayActivityQuest: mocks.startPlayActivityQuest,
   startGameSimulationUsage: mocks.startGameSimulationUsage,
@@ -190,6 +192,19 @@ describe('one game quest at a time per account', () => {
     expect(startedIds(store)).toEqual(['game-a'])
     expect(mocks.startPlayActivityQuest).not.toHaveBeenCalled()
     expect(store.runningQuests.map(slot => slot.questId)).toEqual(['game-a'])
+  })
+
+  it('lets up to ten CDP play quests share the account', async () => {
+    const store = useQuestsStore()
+    store.gameQuestMode = 'cdp'
+    for (let index = 0; index < 10; index += 1) {
+      await store.startPlay(gameQuest(`cdp-${index}`), 600, 0)
+    }
+    expect(store.runningQuests).toHaveLength(10)
+
+    await expect(store.startPlay(gameQuest('cdp-11'), 600, 0))
+      .rejects.toThrow('At most 10 CDP game quests')
+    expect(store.runningQuests).toHaveLength(10)
   })
 
   it('keeps a video quest running alongside a game quest', async () => {
