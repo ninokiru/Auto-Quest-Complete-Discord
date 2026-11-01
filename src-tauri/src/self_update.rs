@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::ipc::Channel;
+use tauri::Manager;
 
 /// Releases of this repository, addressed by tag.
 const RELEASE_TAG_API: &str =
@@ -257,10 +258,12 @@ fn check_digest(bytes: &[u8], expected: [u8; 32]) -> Result<()> {
 }
 
 /// Silent NSIS install, then relaunch. No path from this machine is ever written
-/// into the script text: the pid, installer and application arrive as `%~1`, `%~2`
-/// and `%~3` arguments, whose batch expansion cmd does not re-parse. The loop gives
-/// the running application time to exit, because the installer cannot overwrite an
-/// executable that is still loaded, and the counter bounds that wait.
+/// into the script text: the pid, installer, installed target and launcher arrive
+/// as `%~1` to `%~4` arguments, whose batch expansion cmd does not re-parse. The
+/// installed target is where the installer just put the app; it does not exist
+/// before a first install, which is when the launcher is started instead. The loop
+/// gives the running application time to exit, because the installer cannot
+/// overwrite an executable that is still loaded, and the counter bounds that wait.
 const INSTALLER_SCRIPT_LINES: &[&str] = &[
     "@echo off",
     "set \"WAIT_PID=%~1\"",
@@ -273,7 +276,9 @@ const INSTALLER_SCRIPT_LINES: &[&str] = &[
     ":install",
     "\"%~2\" /S",
     "ping -n 4 127.0.0.1 >nul",
-    "start \"\" \"%~3\"",
+    "set \"LAUNCH=%~4\"",
+    "if exist \"%~3\" set \"LAUNCH=%~3\"",
+    "start \"\" \"%LAUNCH%\"",
     "del \"%~2\" >nul 2>&1",
     "del \"%~f0\" >nul 2>&1",
     "goto end",
@@ -293,7 +298,12 @@ fn installer_script() -> String {
 }
 
 #[cfg(windows)]
-fn install_and_relaunch(installer: &Path, app_exe: &Path, script: &str) -> Result<()> {
+fn install_and_relaunch(
+    installer: &Path,
+    installed_exe: &Path,
+    launcher_exe: &Path,
+    script: &str,
+) -> Result<()> {
     use std::os::windows::process::CommandExt;
     use std::process::Stdio;
 
@@ -310,7 +320,8 @@ fn install_and_relaunch(installer: &Path, app_exe: &Path, script: &str) -> Resul
         .arg(&script_path)
         .arg(&pid)
         .arg(installer)
-        .arg(app_exe)
+        .arg(installed_exe)
+        .arg(launcher_exe)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -324,8 +335,48 @@ fn install_and_relaunch(installer: &Path, app_exe: &Path, script: &str) -> Resul
 /// the documented path. The command exists everywhere anyway: the frontend learns the
 /// platform only after invoking, and an error reads better than a missing command.
 #[cfg(not(windows))]
-fn install_and_relaunch(_installer: &Path, _app_exe: &Path, _script: &str) -> Result<()> {
+fn install_and_relaunch(
+    _installer: &Path,
+    _installed_exe: &Path,
+    _launcher_exe: &Path,
+    _script: &str,
+) -> Result<()> {
     bail!("In-app updates are only available on Windows")
+}
+
+/// Where the NSIS installer puts this product's executable.
+///
+/// A portable copy runs from the folder it was extracted into, while an update
+/// still installs into `%LOCALAPPDATA%\<product>`; starting the portable file
+/// again would hide the new build. The uninstall entry names that directory once
+/// the app has been installed, and the NSIS current-user default covers the first
+/// in-app update of a portable copy.
+#[cfg(windows)]
+fn installed_app_executable(product_name: &str) -> Option<PathBuf> {
+    let product_name = product_name.trim();
+    if product_name.is_empty() {
+        return None;
+    }
+
+    let key = format!("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{product_name}");
+    let directory = windows_registry::CURRENT_USER
+        .open(&key)
+        .ok()
+        .map(|entry| entry.get_string("InstallLocation").unwrap_or_default())
+        .map(|location| location.trim().trim_matches('"').to_string())
+        .filter(|location| !location.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            let local_appdata = std::env::var_os("LOCALAPPDATA")?;
+            Some(PathBuf::from(local_appdata).join(product_name))
+        })?;
+
+    Some(directory.join(format!("{}.exe", env!("CARGO_PKG_NAME"))))
+}
+
+#[cfg(not(windows))]
+fn installed_app_executable(_product_name: &str) -> Option<PathBuf> {
+    None
 }
 
 fn ensure_supported_platform() -> Result<()> {
@@ -336,7 +387,11 @@ fn ensure_supported_platform() -> Result<()> {
     }
 }
 
-async fn perform_update(tag: &str, on_progress: &Channel<UpdateProgress>) -> Result<()> {
+async fn perform_update(
+    tag: &str,
+    product_name: &str,
+    on_progress: &Channel<UpdateProgress>,
+) -> Result<()> {
     ensure_supported_platform()?;
     let tag = normalize_tag(tag)?;
 
@@ -369,11 +424,15 @@ async fn perform_update(tag: &str, on_progress: &Channel<UpdateProgress>) -> Res
     // relaunch has to target the executable the user started.
     let located = crate::runtime_identity::launcher_executable_path()
         .or_else(|| std::env::current_exe().ok());
-    let app_exe = located.context("Could not locate this application's file")?;
+    let launcher = located.context("Could not locate this application's file")?;
+    // The installer writes its own copy even when this process is portable. The
+    // path is handed over even before it exists: the script checks again after
+    // the install, which is when the file first appears for a portable copy.
+    let target = installed_app_executable(product_name).unwrap_or_else(|| launcher.clone());
 
     let installing = UpdateProgress::phase(UpdatePhase::Installing);
     let _ = on_progress.send(installing);
-    install_and_relaunch(&dest, &app_exe, &installer_script())
+    install_and_relaunch(&dest, &target, &launcher, &installer_script())
 }
 
 /// Arm the update for `tag`: download, verify, stage the helper, and return. The
@@ -382,13 +441,16 @@ async fn perform_update(tag: &str, on_progress: &Channel<UpdateProgress>) -> Res
 #[tauri::command]
 pub async fn start_self_update(
     tag: String,
+    app: tauri::AppHandle,
     on_progress: Channel<UpdateProgress>,
 ) -> Result<(), String> {
     if UPDATE_ARMED.swap(true, Ordering::SeqCst) {
         return Err("An update is already in progress".to_string());
     }
 
-    match perform_update(&tag, &on_progress).await {
+    // The installed copy is found through the product name the bundle uses.
+    let product_name = app.config().product_name.clone().unwrap_or_default();
+    match perform_update(&tag, &product_name, &on_progress).await {
         Ok(()) => Ok(()),
         Err(error) => {
             // Stays armed on success because this process is about to exit; only a
@@ -555,6 +617,9 @@ mod tests {
         assert!(!script.contains(&temp));
         assert!(script.contains("%~2"));
         assert!(script.contains("%~3"));
+        assert!(script.contains("%~4"));
+        // The installed copy wins only once the installer has created it.
+        assert!(script.contains("if exist \"%~3\""));
         assert!(script.contains("goto install"));
         assert!(script.contains("tasklist"));
 

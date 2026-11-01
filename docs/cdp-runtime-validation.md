@@ -393,3 +393,53 @@ including the formerly failing macOS budget test. No PR reply, thread-resolution
 mutation or real Discord operation is part of this follow-up.
 Local validation passed: 267 Rust workspace tests, 11 live/environment tests
 ignored, strict workspace Clippy, formatting, dependency boundary and diff checks.
+
+## Injection lifetime, cleanup serialization and launcher relocation — 2026-11-01
+
+Five contracts changed with L2#3 and L2#4. Each is pinned by a Rust test, so a
+later edit has to satisfy the test or change it deliberately.
+
+**The module scan is paid once per document.** `JS_INIT_QUEST_MODULES` already kept
+its result in `window.__dqh_cdp`, but the cache was read *after* walking every
+webpack module. It is now checked first against `DQH_INIT_VERSION` and the
+operation's required `store.method` list, and answers `{"success":true,"cached":true}`
+before the scan. `initialize_modules_with` treats that answer as final and skips the
+install evaluation, so a quest started on a document that already carries the
+modules costs one evaluation instead of two scans plus two evaluations. A document
+that lost the cache (reload, `delete window.__dqh_cdp` after an API-module mismatch)
+takes the old path unchanged.
+
+**The install budget is six seconds, not two.** It is shared by the discovery and
+install evaluations and starts after target verification, which does not count
+against it. A cold Discord page can spend most of a second on the scan alone; the
+two-second window timed out the first quest after a client start.
+
+**Cleanups are serialized against starts.** `cdp_cleanup_with_attempts` increments
+`CLEANUPS_IN_FLIGHT` for its whole run (including the verification rounds), and
+`cdp_cleanup_before_init` waits for that counter to drain before it starts its own
+cleanup, up to 90 seconds, failing with `cdp_cleanup_pending`. This closes the
+window where a Stop that reached `QUEST_STOP_WAIT` detached a task whose cleanup
+was still running: the cleanup script strips every injected bridge, and one landing
+after the next quest's init left that quest with "Modules not initialized". The
+activity gate already serializes quest starts and stops; this covers the detached
+case the gate cannot see.
+
+**A run of failed progress polls ends a CDP play or stream quest.** Both loops retry
+a failed poll on the next tick, but eight consecutive failures (15 s and 20 s
+intervals) now emit a "progress could not be read" failure after running the quest
+cleanup, instead of leaving the card at 0% until Stop. A single success resets the
+counter. A poll that succeeds while the spoof silently died is *not* covered: that
+needs live evidence before a no-progress guard is added.
+
+**A saved Discord installation is re-resolved at launch.** Discord's updater moves
+the executable to a new `app-<version>` folder while
+`windows_official_installation_id` — derived from the installation root, not the
+versioned folder — stays the same. `refreshed_installation` calls
+`refresh_automatic_installation` before validating, so the launch follows the moved
+file; `Ok(None)` means the installation is gone, while an I/O error keeps the saved
+record. The client list applies the same rule: a saved record that no longer
+validates is replaced by the freshly scanned one with the same id, and a valid
+saved record (a manually chosen path) is kept as it is. The update helper passes
+the installed copy as `%~3` and the launcher as `%~4`, and the batch starts `%~3`
+only when it exists — which is how a portable build ends up on the installed
+version instead of restarting the extracted file.
