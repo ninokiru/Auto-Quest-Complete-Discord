@@ -8,6 +8,8 @@ Everything in L2#1 to L2#5 is still here. This patch lifts the rule that made a 
 
 ### Changed
 
+- **A real orb replaces the test token.** The ring-with-a-spark placeholder in Settings, next to the balance on Home and in a quest's reward row is now a shaded orb with a highlight. It is drawn from four shapes in the app's own palette instead of bundling Discord's artwork, so the icon follows light and dark and the bundle stays free of their asset.
+- **Settings can pin the theme.** Appearance now offers **System / Light / Dark**: System keeps following the operating system while the window is open, the other two pin the palette until changed. The header button still flips light and dark in one click, and an older saved choice is read as-is.
 - **CDP play quests run in parallel, up to ten per account.** Each one now holds its own spoofed game in Discord's running-games set instead of replacing the previous one, so Discord can heartbeat several quests at once. A quest that ends releases only its own title while the others keep going; the full cleanup runs when the last one stops. Starting a second one no longer queues it behind the first.
 - **The old rules still hold where they matter.** A simulated game, an Activity, or a mix of those with a CDP play quest still occupies the account alone, and video/stream/activity CDP quests still take the Discord window exclusively — those kinds cannot run beside a play quest in either direction.
 

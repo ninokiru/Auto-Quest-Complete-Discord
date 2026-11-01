@@ -24,6 +24,7 @@ import { notifyQuestFinished } from '@/api/tauri'
 import { setQuestAnnouncer } from '@/utils/questNotifier'
 import { useNotificationsStore } from '@/stores/notifications'
 import { useQuestsStore } from '@/stores/quests'
+import { useThemeStore } from '@/stores/theme'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -95,7 +96,7 @@ onErrorCaptured((error) => {
 })
 
 // Theme Logic
-const isDark = ref(true) // Default to dark
+const themeStore = useThemeStore()
 
 // Debug mode state
 const debugModeEnabled = ref(false)
@@ -118,8 +119,7 @@ function toggleTheme(event: MouseEvent) {
   )
 
   const applyNextTheme = () => {
-    isDark.value = !isDark.value
-    updateTheme()
+    themeStore.toggle()
   }
 
   const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -164,13 +164,6 @@ function toggleTheme(event: MouseEvent) {
   void transition.finished.then(cleanUpTransition, cleanUpTransition)
 }
 
-function updateTheme() {
-  const root = window.document.documentElement
-  root.classList.remove('light', 'dark')
-  root.classList.add(isDark.value ? 'dark' : 'light')
-  localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
-}
-
 // Language Logic
 function setLanguage(lang: string) {
   locale.value = lang
@@ -199,13 +192,8 @@ onMounted(() => {
   setQuestAnnouncer(announceQuest)
 
   // Init Theme
-  const savedTheme = localStorage.getItem('theme')
-  if (savedTheme) {
-    isDark.value = savedTheme === 'dark'
-  } else {
-    isDark.value = window.matchMedia('(prefers-color-scheme: dark)').matches
-  }
-  updateTheme()
+  themeStore.apply()
+  themeStore.watchSystem()
 
   // Restore debug mode state
   debugModeEnabled.value = isDebugModeEnabled()
@@ -340,7 +328,7 @@ watch(
                   :title="t('header.toggle_theme')"
                   :aria-label="t('header.toggle_theme')"
                 >
-                  <Moon v-if="isDark" class="h-4 w-4" />
+                  <Moon v-if="themeStore.isDark" class="h-4 w-4" />
                   <Sun v-else class="h-4 w-4" />
                 </Button>
 
@@ -405,7 +393,7 @@ watch(
                     <span class="mx-1 hidden h-5 w-px bg-border sm:block" aria-hidden="true" />
 
                     <Button variant="ghost" size="icon" class="h-9 w-9" @click="toggleTheme" :title="t('header.toggle_theme')" :aria-label="t('header.toggle_theme')">
-                      <Moon v-if="isDark" class="h-4 w-4" />
+                      <Moon v-if="themeStore.isDark" class="h-4 w-4" />
                       <Sun v-else class="h-4 w-4" />
                     </Button>
 

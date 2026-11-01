@@ -5,7 +5,7 @@ import { getQuestRewardCode, type QuestRewardCode } from '@/api/tauri'
 import { useQuestsStore } from '@/stores/quests'
 import { useAuthStore } from '@/stores/auth'
 import QuestDeveloperDetails from '@/components/QuestDeveloperDetails.vue'
-import TokenIcon from '@/components/icons/TokenIcon.vue'
+import OrbIcon from '@/components/icons/OrbIcon.vue'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Activity, Check, Clock, Cloud, Copy, Gamepad2, Gift, KeyRound, Loader2, MonitorPlay } from 'lucide-vue-next'
@@ -462,7 +462,7 @@ async function copyRewardCode() {
               :alt="rewardName(reward)"
               class="h-full w-full object-contain"
             />
-            <TokenIcon
+            <OrbIcon
               v-else-if="reward.icon === 'orbs'"
               class="h-5 w-5 text-primary"
             />

@@ -6,7 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { RotateCw } from 'lucide-vue-next'
 import BoostIcon from '@/components/icons/BoostIcon.vue'
-import TokenIcon from '@/components/icons/TokenIcon.vue'
+import OrbIcon from '@/components/icons/OrbIcon.vue'
 import { cn } from '@/lib/utils'
 
 const { t, locale } = useI18n()
@@ -84,7 +84,7 @@ const compactClaimText = computed(() => {
     class="orbs-nitro-status inline-flex min-h-[4.5rem] w-fit max-w-full items-center gap-3 rounded-full border border-primary/20 bg-primary/10 px-4 py-2.5 text-primary transition-colors hover:bg-primary/15"
   >
     <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-background/65 shadow-sm">
-      <component :is="showOrbs ? TokenIcon : BoostIcon" class="h-5 w-5" />
+      <component :is="showOrbs ? OrbIcon : BoostIcon" class="h-5 w-5" />
     </span>
 
     <div class="min-w-0">
