@@ -28,6 +28,11 @@ const CDP_CLEANUP_VERIFY_TIMEOUT_SECS: u64 = 10;
 /// Wall-clock ceiling for the pre-init cleanup retries. Without it a stalled
 /// renderer turns every quest start into several minutes of silent waiting.
 const CDP_CLEANUP_BUDGET: Duration = Duration::from_secs(45);
+/// Budget shared by the module discovery and install evaluations. A cold
+/// Discord page can spend a second on the webpack scan alone, so the old two
+/// seconds timed out the first quest after a client start; a page that cannot
+/// answer at all still fails within this window.
+const CDP_MODULE_INIT_BUDGET: Duration = Duration::from_secs(6);
 /// Discord only lists the Activity iframe once its renderer mounts, so one
 /// snapshot races the launch the user just confirmed. Discovery re-reads the
 /// read-only target list (no navigation, no route warmup) until this budget ends.
@@ -59,6 +64,14 @@ const JS_INIT_QUEST_MODULES: &str = r#"
         const DQH_INIT_VERSION = 9;
         const required = __DQH_REQUIRED__;
         const discoverOnly = __DQH_DISCOVER_ONLY__;
+        // A document that already carries every module this operation needs
+        // answers here, before the webpack scan: the scan exists to install the
+        // cache, not to confirm it, and it walks thousands of modules.
+        const cached = window.__dqh_cdp;
+        if (cached?.initialized && cached._initVersion === DQH_INIT_VERSION &&
+            required.every(([name, method]) => typeof cached[name]?.[method] === "function")) {
+            return JSON.stringify({ success: true, cached: true });
+        }
         let wpRequire = webpackChunkdiscord_app.push([[Symbol()], {}, r => r]);
         webpackChunkdiscord_app.pop();
 
@@ -165,10 +178,6 @@ const JS_INIT_QUEST_MODULES: &str = r#"
         if (missing.length) return JSON.stringify({success:false, code:"cdp_capability_missing", missing});
         if (discoverOnly) return JSON.stringify({success:true});
         const previous = window.__dqh_cdp;
-        if (previous?.initialized && previous._initVersion === DQH_INIT_VERSION &&
-            required.every(([name, method]) => typeof previous[name]?.[method] === "function")) {
-            return JSON.stringify({success:true, cached:true});
-        }
         // Adding an optional operation must retain patch bookkeeping and originals.
         if (previous?.initialized && previous._initVersion === DQH_INIT_VERSION) {
             for (const [name, module] of Object.entries(modules)) {
@@ -1583,7 +1592,7 @@ async fn initialize_modules_with<T>(
     mut execute: impl AsyncFnMut(&T, String) -> Result<String>,
 ) -> Result<()> {
     let verified = verification.await?;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let deadline = tokio::time::Instant::now() + CDP_MODULE_INIT_BUDGET;
     // Discover first; no cache or client state is installed until all required methods exist.
     for attempt in 0..3 {
         let result =
@@ -1597,6 +1606,11 @@ async fn initialize_modules_with<T>(
                 })??;
         let parsed: serde_json::Value = serde_json::from_str(&result)?;
         if parsed["success"] == true {
+            // The page already holds the modules this operation needs, so the
+            // install pass would only re-confirm what the discovery just read.
+            if parsed["cached"] == true {
+                return Ok(());
+            }
             let raw = tokio::time::timeout_at(
                 deadline,
                 execute(&verified, with_bridge(&module_script(operation, false))),
@@ -4383,9 +4397,27 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn an_initialized_document_costs_one_evaluation() {
+        let mut scripts = Vec::new();
+        initialize_modules_with(
+            async { Ok(()) },
+            "video quest",
+            async |_: &(), script: String| {
+                scripts.push(script);
+                Ok(serde_json::json!({"success":true,"cached":true}).to_string())
+            },
+        )
+        .await
+        .unwrap();
+        // The second script only installs the modules; a cached page is done.
+        assert_eq!(scripts.len(), 1);
+        assert!(scripts[0].contains("const discoverOnly = true"));
+    }
+
     #[tokio::test(start_paused = true)]
     async fn module_budget_excludes_verification_and_is_shared_by_both_scripts() {
-        for script_delay_ms in [700, 1200] {
+        for script_delay_ms in [700, 3200] {
             let start = tokio::time::Instant::now();
             let mut scripts = Vec::new();
             let result = initialize_modules_with(
@@ -4410,7 +4442,9 @@ mod tests {
             } else {
                 let error = result.unwrap_err();
                 assert!(error.to_string().contains("module_initialization_timeout"));
-                assert_eq!(start.elapsed(), Duration::from_secs(5));
+                // Verification takes 3 s and does not count against the budget,
+                // so the deadline lands one budget (6 s) after it.
+                assert_eq!(start.elapsed(), Duration::from_secs(9));
             }
         }
     }

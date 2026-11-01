@@ -8,6 +8,7 @@ Everything in L2#1 and L2#2 is still here. This patch takes the dead ends out of
 
 ### Changed
 
+- **CDP sets itself up once per Discord session.** Starting a quest through the attached client re-scanned Discord's webpack module table on every quest and then installed the same modules again — that scan is the slowest part of the start and it walks thousands of modules. A page that already holds every module the operation needs is now recognised in a single evaluation, so only the first quest after a Discord start pays for the scan, and the install budget grew from two to six seconds so a cold page cannot fail that first quest with a timeout.
 - **A game with no runnable executable plays through Discord instead of stopping.** In simulate mode a title whose executable list has nothing this machine can use used to end the start with a dialog asking to switch to CDP. When the attached Discord client is reachable, the quest now goes straight to that path and keeps running; the dialog is left for the case where CDP is not available at all. This is what the CDP fallback was meant to be — one Start, no answer required.
 
 ### Fixed
