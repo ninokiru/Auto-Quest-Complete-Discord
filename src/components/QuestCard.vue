@@ -292,9 +292,11 @@ const idleBarStyle = computed(() => ({
 
 const activeProgressText = computed(() => {
   if (!isActiveQuest.value) return ''
-  // Confirmed progress drives the text, same as the submitted (blue) bar.
+  // The text follows the same value as the percentage and the bar; reading only
+  // the banked seconds here made a card say 2:59 of 15:00 next to a 99% bar.
+  const slot = runningSlot.value
   return formatSlotProgress(
-    runningSlot.value?.serverProgress ?? 0,
+    slot ? displayPercent(slot) : 0,
     targetDuration.value,
     runningProgressUnit.value
   )

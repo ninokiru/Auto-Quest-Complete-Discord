@@ -186,7 +186,7 @@ function handleCollapsedClick() {
  * slot counts checkpoints, otherwise the elapsed/total seconds clock.
  */
 function slotSubmittedText(slot: RunningQuest): string {
-  return formatSlotProgress(slot.serverProgress, slot.targetDuration, slot.progressUnit)
+  return formatSlotProgress(displayPercent(slot), slot.targetDuration, slot.progressUnit)
 }
 
 /** The app icon of the quest a slot runs, so a row reads like the list it came
