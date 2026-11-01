@@ -5245,6 +5245,7 @@ mod quest_task_account_tests {
             account_id: account_id.map(str::to_string),
             exclusive: false,
             game: false,
+            cdp_play: false,
             cancel_flag,
             join: None,
             outcome: new_quest_outcome(),
