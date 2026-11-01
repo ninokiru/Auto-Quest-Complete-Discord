@@ -2,23 +2,24 @@
 
 Auto-complete Discord **video, stream and game quests** from one window. Tauri 2 + Rust behind the scenes, Vue 3 on the surface, and no cloud service in between: everything runs on your machine.
 
-## v0.0.5 L2#2 — the in-app update finally lands on the new build
+## v0.0.5 L2#3 — a second game quest waits, a flaky update retries, a missing game still runs
 
-Everything in L2#1 is still here. This patch fixes the in-app update: the installer did replace the application, but the helper then started the old build again, so the same update announced itself after every install.
+Everything in L2#1 and L2#2 is still here. This patch takes the dead ends out of the three flows that were most likely to stop a quest: a second game quest, one refused video update, and a game with no executable this machine can run.
+
+### Changed
+
+- **A game with no runnable executable plays through Discord instead of stopping.** In simulate mode a title whose executable list has nothing this machine can use used to end the start with a dialog asking to switch to CDP. When the attached Discord client is reachable, the quest now goes straight to that path and keeps running; the dialog is left for the case where CDP is not available at all. This is what the CDP fallback was meant to be — one Start, no answer required.
 
 ### Fixed
 
-- **An in-app update restarted the old build.** Release builds run from a randomly named copy of the executable in the temporary folder, so the running application is not the file that was installed. The update helper was pointed at that running copy, and the installer only ever replaces the installed file — after the install the helper started the stale copy again, the window showed the old version, and the update prompt came back. Three updates in a row left the same build on screen. The helper now restarts the executable the user actually launched, which is the file the installer just replaced.
-
-> [!IMPORTANT]
-> The fix lives in the update path itself, so a build that already has the bug cannot update into it. If you are on **L1#3** or **L2#1**, download the `-setup.exe` below once and run it; every in-app update after that installs and restarts correctly.
+- **A second game quest was refused instead of waiting.** Starting a game quest while another one ran for the same account ended with "One game quest runs at a time per account" and the quest never ran. The queue already defers that case, so a manual Start now joins the queue and starts by itself as soon as the running quest lets go of the slot; a notice says so instead of an error.
+- **One refused video-progress update ended the whole watch.** A video quest sent its timestamp every heartbeat and treated any error as fatal — a single blip in Discord's API threw away a quest that may already have been watching for an hour. A refused update is now retried up to three times, three seconds apart, without skipping the step it was on; only a run of three failures still ends the quest, and a Stop still cancels immediately.
 
 ### Checks
 
-- A Rust unit test covers the launcher path the helper restarts: it is only reported when the file still exists, so a deleted path falls back instead of being trusted.
-- The translation check, the frontend test suite, the runtime identity checks and the full Rust test suite run on Windows for this release.
+- The translation check, the frontend test suite, the runtime identity checks, and the full Rust test suite run on Windows for this release.
 
-**Full Changelog**: https://github.com/ninokiru/Auto-Quest-Complete-Discord/compare/0.0.5-L2.1...0.0.5-L2.2
+**Full Changelog**: https://github.com/ninokiru/Auto-Quest-Complete-Discord/compare/0.0.5-L2.2...0.0.5-L2.3
 
 ### How the in-app update works
 
@@ -29,6 +30,9 @@ Everything in L2#1 is still here. This patch fixes the in-app update: the instal
 
 Only Windows is self-updating in this release; other platforms still get the release page link. Downloads are restricted to GitHub hosts.
 
+> [!IMPORTANT]
+> If you are still on **L1#3** or **L2#1**, run the `-setup.exe` below once by hand. Those builds restart the old copy after an update, which L2#2 fixed; every in-app update after that install is correct.
+
 ### Windows SmartScreen / Defender
 
 These binaries are **not code-signed**. The app rewrites its own process identity and reads locally stored Discord credentials, which is exactly what heuristic scanners flag, so Defender may quarantine the download and SmartScreen may block the first launch. Confirm the file came from this repository, choose **More info → Run anyway**, and add the app folder to Defender's exclusions if it keeps deleting the file.
@@ -37,8 +41,8 @@ These binaries are **not code-signed**. The app rewrites its own process identit
 
 | File | Use |
 | --- | --- |
-| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.2-setup.exe` | Windows installer (NSIS) |
-| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.2-portable.zip` | Windows portable, no installation |
+| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.3-setup.exe` | Windows installer (NSIS) |
+| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.3-portable.zip` | Windows portable, no installation |
 
 This release publishes **Windows x64 only**. macOS (Apple Silicon) and Linux (x86_64 `.deb` / AppImage) builds are still fully supported by the source tree and are compiled and tested in CI — only their release publishing is temporarily switched off to keep a release run on one runner. They will return in a later release. If you need one of them now, build it from source (`pnpm tauri:build`).
 

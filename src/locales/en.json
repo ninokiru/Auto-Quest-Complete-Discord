@@ -675,6 +675,8 @@
     "failed_accept": "Failed to accept quest",
     "failed_accept_batch": "Accepted {success} quests, failed {fail}",
     "failed_start_game": "Failed to start game simulator",
+    "game_queued_title": "Queued behind the running game quest",
+    "game_queued_desc": "One game quest runs per account, so this one waits and starts by itself when the running quest ends.",
     "failed_start_activity": "Failed to start activity quest",
     "failed_claim": "Failed to claim reward",
     "failed_stop_quest": "Failed to stop quest",

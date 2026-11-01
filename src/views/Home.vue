@@ -1526,13 +1526,37 @@ function cancelCustomExeDialog() {
   }
 }
 
+/**
+ * A game quest holds the account's single game slot until it ends. A second
+ * Start joins the queue instead of failing on a toast: `processQueue` already
+ * defers game quests while one runs, so the quest starts by itself once the
+ * slot is free.
+ */
+async function startOrQueuePlay(
+  quest: Quest,
+  secondsNeeded: number,
+  initialProgress: number,
+  exeName?: string,
+) {
+  if (questsStore.gameSlotBusy()) {
+    questsStore.addToQueue(quest, exeName)
+    void questsStore.startQueue()
+    toast.info({
+      title: t('toast.game_queued_title'),
+      description: t('toast.game_queued_desc'),
+    })
+    return
+  }
+  await questsStore.startPlay(quest, secondsNeeded, initialProgress, exeName)
+}
+
 async function selectExeAndStartPlay(exeName: string) {
   showExeSelectDialog.value = false
   if (!pendingPlayQuest.value) return
   const { quest, secondsNeeded, initialProgress } = pendingPlayQuest.value
   pendingPlayQuest.value = null
   try {
-    await questsStore.startPlay(quest, secondsNeeded, initialProgress, exeName)
+    await startOrQueuePlay(quest, secondsNeeded, initialProgress, exeName)
   } catch (e) {
     toast.error({
       title: t('toast.failed_start_game'),
@@ -1561,7 +1585,7 @@ async function submitCustomExeAndStartPlay() {
   const { quest, secondsNeeded, initialProgress } = pendingPlayQuest.value
   pendingPlayQuest.value = null
   try {
-    await questsStore.startPlay(quest, secondsNeeded, initialProgress, exeName)
+    await startOrQueuePlay(quest, secondsNeeded, initialProgress, exeName)
   } catch (e) {
     toast.error({
       title: t('toast.failed_start_game'),
@@ -1667,7 +1691,7 @@ async function startQuest(quest: Quest) {
             }
           }
         }
-        await questsStore.startPlay(quest, secondsNeeded, initialProgress)
+        await startOrQueuePlay(quest, secondsNeeded, initialProgress)
     } catch (e) {
         toast.error({
           title: t('toast.failed_start_game'),

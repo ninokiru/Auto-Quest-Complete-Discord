@@ -1899,26 +1899,47 @@ export const useQuestsStore = defineStore('quests', () => {
         }
         const hostOs = caps.os
         const resolution = resolveSimulationExecutable(game.executables, hostOs, selectedExeName)
-        if (resolution.kind === 'win32_only_on_linux') {
-          softError.value = {
-            code: 'SIMULATION_EXECUTABLE_OS_UNSUPPORTED',
-            message: `"${game.name}" only provides a Windows executable, which cannot be process-simulated on Linux. Switch to CDP mode to complete this quest.`,
-            gameName: game.name,
-            questId: quest.id,
-            recommendedMode: 'cdp',
-            recoverable: true,
+        if (resolution.kind !== 'ok') {
+          // Nothing here can run the title as a process, but the attached
+          // Discord client can still play it, so take that path instead of
+          // stopping the quest at a dialog whose only answer is the same switch.
+          if (!cdpAvailable.value) await initCdpMode()
+          if (cdpAvailable.value) {
+            await startCdpQuest(
+              quest.id,
+              'play',
+              appId,
+              appName,
+              secondsNeeded,
+              initialProgress,
+              cdpPort.value
+            )
+            openQuestSlot(quest.id, 'game', secondsNeeded, 'time', progressPct, true, progressTaskKey)
+            startProgressSimulation()
+            setupListeners()
+            syncPolling()
+            // The history segment below records a simulated process; this start
+            // made none, so there is nothing to record.
+            return
           }
-          if (isQueueRunning.value) queuePauseReason.value = 'simulation_incompatible'
-          return
-        }
-        if (resolution.kind === 'not_found') {
-          softError.value = {
-            code: 'SIMULATION_EXECUTABLE_NOT_FOUND',
-            message: `No compatible executable definition for game ${game.name}. Switch to CDP mode to complete this quest.`,
-            gameName: game.name,
-            questId: quest.id,
-            recommendedMode: 'cdp',
-            recoverable: true,
+          if (resolution.kind === 'win32_only_on_linux') {
+            softError.value = {
+              code: 'SIMULATION_EXECUTABLE_OS_UNSUPPORTED',
+              message: `"${game.name}" only provides a Windows executable, which cannot be process-simulated on Linux. Switch to CDP mode to complete this quest.`,
+              gameName: game.name,
+              questId: quest.id,
+              recommendedMode: 'cdp',
+              recoverable: true,
+            }
+          } else {
+            softError.value = {
+              code: 'SIMULATION_EXECUTABLE_NOT_FOUND',
+              message: `No compatible executable definition for game ${game.name}. Switch to CDP mode to complete this quest.`,
+              gameName: game.name,
+              questId: quest.id,
+              recommendedMode: 'cdp',
+              recoverable: true,
+            }
           }
           if (isQueueRunning.value) queuePauseReason.value = 'simulation_incompatible'
           return
@@ -2861,6 +2882,7 @@ export const useQuestsStore = defineStore('quests', () => {
     startVideo,
     startStream,
     startPlay,
+    gameSlotBusy,
     startActivity,
     startPlayActivity,
     stop,

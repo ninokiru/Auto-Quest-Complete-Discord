@@ -11,6 +11,12 @@ const PLAY_ACTIVITY_RETRY_DELAY_SECS: u64 = 5;
 const PLAY_ACTIVITY_MAX_CONSECUTIVE_ERRORS: u32 = 3;
 const PLAY_ACTIVITY_TIMEOUT_GRACE_SECS: u64 = 300;
 
+/// One refused video-progress update is usually a blip in Discord's API, but
+/// failing on it throws away a watch that may be an hour long. A short retry
+/// keeps the quest alive; a run of failures is a real problem and still ends it.
+const VIDEO_PROGRESS_RETRY_DELAY_SECS: u64 = 3;
+const VIDEO_PROGRESS_MAX_CONSECUTIVE_ERRORS: u32 = 3;
+
 async fn confirm_play_activity_via_api(
     client: &DiscordApiClient,
     quest_id: &str,
@@ -95,6 +101,7 @@ pub async fn complete_video_quest(
     println!("Starting video quest: quest_id={}, target={}s, current_progress={:.1}s, speed={:.1}x, interval={}s", 
              quest_id, seconds_needed, current_seconds, speed, interval);
 
+    let mut consecutive_errors: u32 = 0;
     loop {
         // Calculate the remaining simulated seconds, then the real wait time
         let remaining_sim_seconds = (seconds_needed as f64) - current_seconds;
@@ -115,9 +122,10 @@ pub async fn complete_video_quest(
             }
         }
 
-        // Advance timestamp based on speed and actual wait time
-        current_seconds += speed * (wait_secs as f64);
-        let timestamp = current_seconds.min(seconds_needed as f64);
+        // Advance timestamp based on speed and actual wait time. It is committed
+        // only once Discord accepts it, so a retry repeats the same step instead
+        // of skipping it.
+        let timestamp = (current_seconds + speed * (wait_secs as f64)).min(seconds_needed as f64);
 
         // Add some randomness to look more natural
         let timestamp_with_jitter = timestamp + rand::rng().random_range(0.0..0.5);
@@ -128,6 +136,8 @@ pub async fn complete_video_quest(
             .await
         {
             Ok(completed) => {
+                current_seconds = timestamp;
+                consecutive_errors = 0;
                 // Calculate and emit progress percentage
                 let progress = (timestamp / seconds_needed as f64 * 100.0).min(100.0);
                 let _ = app_handle.emit("quest-progress", progress);
@@ -144,9 +154,23 @@ pub async fn complete_video_quest(
                 }
             }
             Err(e) => {
-                println!("Video progress update failed: {}", e);
-                let _ = app_handle.emit("quest-error", e.to_string());
-                return Err(e);
+                consecutive_errors += 1;
+                if consecutive_errors >= VIDEO_PROGRESS_MAX_CONSECUTIVE_ERRORS {
+                    println!("Video progress update failed: {}", e);
+                    let _ = app_handle.emit("quest-error", e.to_string());
+                    return Err(e);
+                }
+                println!(
+                    "Video progress update failed ({} of {}): {}; retrying",
+                    consecutive_errors, VIDEO_PROGRESS_MAX_CONSECUTIVE_ERRORS, e
+                );
+                tokio::select! {
+                    _ = sleep(Duration::from_secs(VIDEO_PROGRESS_RETRY_DELAY_SECS)) => {},
+                    _ = cancel_rx.recv() => {
+                        let _ = app_handle.emit("quest-stopped", ());
+                        return Ok(());
+                    }
+                }
             }
         }
     }
