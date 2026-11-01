@@ -303,7 +303,7 @@ const activeBarStyle = computed(() =>
  *  direct-API paths. Discord counts a CDP game or Activity itself. */
 const showsLocalPendingLegend = computed(() =>
   runningSlots.value.some(
-    slot => slot.type === 'video' && questsStore.gameQuestMode !== 'cdp',
+    entry => entry.slot.type === 'video' && questsStore.gameQuestMode !== 'cdp',
   ),
 )
 
