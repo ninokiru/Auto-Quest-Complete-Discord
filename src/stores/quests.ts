@@ -772,9 +772,11 @@ export const useQuestsStore = defineStore('quests', () => {
   })
 
   // Persist game quest mode changes
+  // Sync so a mode picked before the platform capabilities resolve is already
+  // stored when that fetch decides whether to apply its default.
   watch(gameQuestMode, (newMode) => {
     localStorage.setItem(STORAGE_GAME_QUEST_MODE_KEY, newMode)
-  })
+  }, { flush: 'sync' })
 
   // Persist CDP port changes
   watch(cdpPort, (newPort) => {

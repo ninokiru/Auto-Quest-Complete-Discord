@@ -196,6 +196,9 @@ describe('one game quest at a time per account', () => {
 
   it('lets up to ten CDP play quests share the account', async () => {
     const store = useQuestsStore()
+    // The platform default is applied once capabilities arrive; let it settle
+    // first or it overwrites the mode set on the next line.
+    await store.initPlatformCapabilities()
     store.gameQuestMode = 'cdp'
     for (let index = 0; index < 10; index += 1) {
       await store.startPlay(gameQuest(`cdp-${index}`), 600, 0)
