@@ -18,6 +18,7 @@
 [![Vue](https://img.shields.io/badge/vue-3.5-green.svg)](https://vuejs.org/)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org/)
 [![GitHub Release](https://img.shields.io/github/v/release/ninokiru/Auto-Quest-Complete-Discord?label=latest%20release&color=41b883)](https://github.com/ninokiru/Auto-Quest-Complete-Discord/releases/latest)
+[![Người đóng góp cho XERJ Corpus Hub](https://hub.xerj.org/contributors/ninokiru/badge.svg)](https://hub.xerj.org/contributors/ninokiru)
 
 </div>
 
@@ -502,6 +503,10 @@ no such obligation. Contributions to this repository are licensed under GPL-3.0-
 - [taisrisk/Discord-Quest-Helper](https://github.com/taisrisk/Discord-Quest-Helper)
 - [aamiaa/CompleteDiscordQuest.md](https://gist.github.com/aamiaa/204cd9d42013ded9faf646fae7f89fbb)
 - [docs.discord.food](https://docs.discord.food/) — reference for the undocumented user-API quest endpoints
+
+**Recognition**
+
+- The Windows launcher port (`933413d`) is indexed in the [XERJ Corpus Hub](https://hub.xerj.org/contributors/ninokiru), shared with the author's permission under MIT terms for that commit.
 
 **Technologies**
 
