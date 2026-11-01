@@ -107,9 +107,7 @@ async fn read_browser_metadata(port: u16) -> Result<serde_json::Value, String> {
         return Err(metadata_oversized());
     }
     serde_json::from_slice(&body).map_err(|_| {
-        format!(
-            "Invalid CDP client information on port {port}. Use official Discord or Vesktop."
-        )
+        format!("Invalid CDP client information on port {port}. Use official Discord or Vesktop.")
     })
 }
 
