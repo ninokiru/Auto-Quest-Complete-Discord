@@ -18,6 +18,14 @@ Everything in L2#1 to L2#5 is still here. This patch lifts the rule that made a 
 - **The percentage no longer trails the bar the app draws.** A running card and the progress panel read only the value Discord had banked, while the bar itself fills up to the local clock — so a CDP game showed 92% next to a 99% Discord. The number now ends where the bar ends and steps back only if the polled value is higher.
 - **"Waiting for local processing" is gone for Discord-run quests.** That legend described time this app counted and had not submitted yet, which only happens on the direct-API video path; a CDP game or Activity is counted by Discord, so the legend no longer claims a wait that does not exist.
 
+- **A failed CDP game quest no longer takes its siblings with it.** The task wrapper used to wipe every injected bridge when any CDP quest ended with an error, which killed the other nine. It now leaves them alone while another play quest is live.
+- **Two quests for one game can run together.** The spoofed titles are refcounted, so finishing one quest no longer removes the game the other is still playing for.
+- **The module budget is actually six seconds.** Each evaluation still had a two-second socket timeout inside the six-second window, so a cold scan failed early; the evaluation now gets the whole budget.
+- **Cleanup and the "last quest" decision are exact.** A quest that joins a running sibling still waits out a cleanup detached from an earlier stop, a second spoof no longer overwrites the first one's restore records, and two quests finishing together can no longer both skip the full cleanup.
+- **The progress number stays honest while running.** A running quest caps at 99%, a checkpoint slot shows the count Discord banked instead of the local clock, and the collapsed bubble now shows the same value as its bar.
+- **A CDP video or Activity start is refused while another quest runs**, instead of being sent to a backend that would reject it.
+- **The window paints the stored theme immediately**, and the orb falls back to its still image (not the drawn icon) if the clip cannot play.
+
 ### Checks
 
 - New Rust tests pin the admission rules: ten CDP play slots fill and the eleventh is refused, another account has its own budget, a simulated game and a CDP play quest never share an account, and CDP play quests do not block API quests.

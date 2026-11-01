@@ -302,10 +302,14 @@ const activeBarStyle = computed(() =>
  *  time this app counted and has not submitted yet, which only happens on the
  *  direct-API paths. Discord counts a CDP game or Activity itself. */
 const showsLocalPendingLegend = computed(() =>
-  runningSlots.value.some(
-    entry => entry.slot.type === 'video' && questsStore.gameQuestMode !== 'cdp',
-  ),
+  runningSlots.value.some(entry => entry.slot.type === 'video' && !entry.slot.cdpPlay),
 )
+
+/** The collapsed bubble's number follows the same slot value as its bar. */
+const primaryDisplayProgress = computed(() => {
+  const slot = questsStore.runningQuests[0]
+  return slot ? Math.floor(displayPercent(slot)) : 0
+})
 
 function slotBarStyle(slot: RunningQuest): Record<string, string> {
   return barStyleFor(slot.localProgress, slotSubmittedPercent(slot))
@@ -371,7 +375,7 @@ const keepAliveRemainingText = computed(() => {
                 {{ t('home.queue_count', { count: queuedBehindCount }) }}
               </span>
               <span v-if="questsStore.activeQuestId" class="text-sm font-semibold">
-                {{ Math.floor(questsStore.activeQuestProgress) }}%
+                {{ primaryDisplayProgress }}%
               </span>
             </div>
           </div>

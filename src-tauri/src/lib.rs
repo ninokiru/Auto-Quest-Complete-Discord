@@ -2134,12 +2134,12 @@ async fn start_cdp_quest(
         match result {
             Ok(()) => quest_task_finished(&outcome_writer),
             Err(e) => {
-                // Strip this spoof before releasing the slot, otherwise the next
-                // quest can inject while this rollback is still running.
-                cdp_quest::cdp_cleanup_after_stop(
+                // A failed play quest has already released its own spoof; stripping
+                // every bridge here would take the other live play quests with it.
+                cdp_quest::cleanup_failed_cdp_task(
                     cdp_port,
+                    cdp_play,
                     "task failed or target invalidated",
-                    true,
                 )
                 .await;
                 quest_task_failed(&outcome_writer, format!("CDP quest failed: {}", e));

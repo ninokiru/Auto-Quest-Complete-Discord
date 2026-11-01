@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import gameOrbStill from '@/assets/orbs/orb-game.webp'
 import gameOrbVideo from '@/assets/orbs/orb-game.webm'
 import videoOrbStill from '@/assets/orbs/orb-video.webp'
@@ -26,11 +26,27 @@ const artwork = {
 const still = computed(() => artwork[props.kind ?? 'game'].still)
 const video = computed(() => artwork[props.kind ?? 'game'].video)
 
-const mediaFailed = ref(false)
-const reduceMotion = typeof window !== 'undefined'
-  && (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false)
+// The still and the clip fail independently: a codec the WebView refuses must
+// fall back to the bundled image, not all the way to the drawn icon.
+const videoFailed = ref(false)
+const stillFailed = ref(false)
 
-const showVideo = computed(() => props.animated && !mediaFailed.value && !reduceMotion)
+const reduceMotion = ref(false)
+const motionQuery = typeof window !== 'undefined'
+  ? window.matchMedia?.('(prefers-reduced-motion: reduce)')
+  : undefined
+if (motionQuery) {
+  reduceMotion.value = motionQuery.matches
+  const onChange = (event: MediaQueryListEvent) => {
+    reduceMotion.value = event.matches
+  }
+  motionQuery.addEventListener('change', onChange)
+  onUnmounted(() => motionQuery.removeEventListener('change', onChange))
+}
+
+const showVideo = computed(
+  () => props.animated && !reduceMotion.value && !videoFailed.value,
+)
 </script>
 
 <template>
@@ -45,15 +61,15 @@ const showVideo = computed(() => props.animated && !mediaFailed.value && !reduce
     preload="metadata"
     aria-hidden="true"
     class="h-full w-full rounded-[26%] object-contain"
-    @error="mediaFailed = true"
+    @error="videoFailed = true"
   />
   <img
-    v-else-if="!mediaFailed"
+    v-else-if="!stillFailed"
     :src="still"
     alt=""
     aria-hidden="true"
     class="h-full w-full rounded-[26%] object-contain"
-    @error="mediaFailed = true"
+    @error="stillFailed = true"
   />
   <OrbIcon v-else class="h-full w-full" />
 </template>

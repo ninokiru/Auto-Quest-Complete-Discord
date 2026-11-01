@@ -9,6 +9,7 @@
 //! This is a clean-room Rust/CDP reimplementation; no source code was copied.
 
 use anyhow::{Context, Result};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tauri::Emitter;
@@ -53,33 +54,100 @@ const CDP_POLL_MAX_CONSECUTIVE_FAILURES: u32 = 8;
 /// while others still run, and the last one leaves performs the full cleanup.
 static ACTIVE_CDP_PLAY_QUESTS: AtomicUsize = AtomicUsize::new(0);
 
-struct PlayQuestGuard;
+struct PlayQuestGuard {
+    claimed: bool,
+}
 
 impl PlayQuestGuard {
     fn acquire() -> Self {
         ACTIVE_CDP_PLAY_QUESTS.fetch_add(1, Ordering::SeqCst);
-        Self
+        Self { claimed: false }
+    }
+
+    /// Drop this quest's count now and report how many others are still live.
+    /// Doing it before the cleanup decision is what makes "the last one leaves"
+    /// exact: two quests finishing together would both read a count above one
+    /// and neither would ever run the full cleanup.
+    fn claim(&mut self) -> usize {
+        self.claimed = true;
+        let previous = ACTIVE_CDP_PLAY_QUESTS.fetch_sub(1, Ordering::SeqCst);
+        previous.saturating_sub(1)
     }
 }
 
 impl Drop for PlayQuestGuard {
     fn drop(&mut self) {
-        ACTIVE_CDP_PLAY_QUESTS.fetch_sub(1, Ordering::SeqCst);
+        if !self.claimed {
+            ACTIVE_CDP_PLAY_QUESTS.fetch_sub(1, Ordering::SeqCst);
+        }
     }
 }
 
+/// How many live CDP play quests still use each application id. Discord can list
+/// two quests for one game, and both need the same spoofed title to stay in the
+/// running set until the last of them ends.
+static ACTIVE_PLAY_APPS: Mutex<Vec<(String, usize)>> = Mutex::new(Vec::new());
+
+fn register_play_app(app_id: &str) -> usize {
+    let mut apps = ACTIVE_PLAY_APPS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(entry) = apps.iter_mut().find(|(id, _)| id == app_id) {
+        entry.1 += 1;
+        return entry.1;
+    }
+    apps.push((app_id.to_string(), 1));
+    1
+}
+
+fn release_play_app(app_id: &str) -> usize {
+    let mut apps = ACTIVE_PLAY_APPS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(index) = apps.iter().position(|(id, _)| id == app_id) else {
+        return 0;
+    };
+    if apps[index].1 > 1 {
+        apps[index].1 -= 1;
+        return apps[index].1;
+    }
+    apps.remove(index);
+    0
+}
+
 /// Release the spoof of one finished play quest. While another CDP play quest is
-/// still running, only this title is removed; the wipe in `cdp_cleanup_after_stop`
-/// would otherwise strip the bridges and games of the quests that keep going.
-async fn finish_play_quest(port: u16, app_id: &str, context: &str, cancelled: bool) {
-    if ACTIVE_CDP_PLAY_QUESTS.load(Ordering::SeqCst) > 1 {
-        let js = js_remove_spoofed_game(app_id);
-        if let Err(err) = cdp_execute_json_on_task_target(port, &js, false, 5, context).await {
-            log_cdp_cleanup_failure(context, &err);
+/// still running, only this title is removed — and only when no other quest uses
+/// the same game; the wipe in `cdp_cleanup_after_stop` would otherwise strip the
+/// bridges and games of the quests that keep going.
+async fn finish_play_quest(
+    guard: &mut PlayQuestGuard,
+    port: u16,
+    app_id: &str,
+    context: &str,
+    cancelled: bool,
+) {
+    let users_of_title = release_play_app(app_id);
+    let others = guard.claim();
+    if others > 0 {
+        if users_of_title == 0 {
+            let js = js_remove_spoofed_game(app_id);
+            if let Err(err) = cdp_execute_json_on_task_target(port, &js, false, 5, context).await {
+                log_cdp_cleanup_failure(context, &err);
+            }
         }
         return;
     }
     cdp_cleanup_after_stop(port, context, cancelled).await;
+}
+
+/// Cleanup for a CDP task that ended with an error. A failed play quest has
+/// already released its own spoof, so wiping every bridge here would take the
+/// other live play quests with it.
+pub(crate) async fn cleanup_failed_cdp_task(port: u16, play: bool, context: &str) {
+    if play && ACTIVE_CDP_PLAY_QUESTS.load(Ordering::SeqCst) > 0 {
+        return;
+    }
+    cdp_cleanup_after_stop(port, context, true).await;
 }
 
 struct CleanupGuard;
@@ -761,6 +829,11 @@ fn js_spoof_play_game_for(
                         try {{
                             const val = exp[key];
                             if (val && val !== dqh.RunningGameStore && typeof val.getRunningGames === 'function') {{
+                                // A second spoof must not wrap the first one's patched
+                                // function: its restore record would then point at that
+                                // closure instead of the real original, and cleanup would
+                                // put the patch back after "verifying clean".
+                                if (val.getRunningGames.__dqhPatched) continue;
                                 let sample = null;
                                 try {{ sample = val.getRunningGames(); }} catch(e) {{ continue; }}
                                 if (!Array.isArray(sample)) continue;
@@ -768,6 +841,7 @@ fn js_spoof_play_game_for(
                                 const origPidFn = typeof val.getGameForPID === 'function' ? val.getGameForPID : null;
                                 const origVisibleFn = typeof val.getVisibleRunningGames === 'function' ? val.getVisibleRunningGames : null;
                                 val.getRunningGames = patchedGetRunningGames;
+                                val.getRunningGames.__dqhPatched = true;
                                 if (origPidFn) val.getGameForPID = patchedGetGameForPID;
                                 patchVisibleAccessor(val, origVisibleFn);
                                 broadPatched.push({{ val, origFn, origPidFn, origVisibleFn }});
@@ -778,7 +852,10 @@ fn js_spoof_play_game_for(
                 }} catch(e) {{}}
             }}
         }} catch(e) {{}}
-        dqh._broadPatched = broadPatched;
+        // Keep the first spoof's restore records: a later spoof skips modules the
+        // earlier one already patched, so replacing the list would lose them.
+        if (!Array.isArray(dqh._broadPatched)) dqh._broadPatched = [];
+        for (const patch of broadPatched) dqh._broadPatched.push(patch);
 
         let wrappedObserver = false;
         if (dqh.NativeUtils && typeof dqh.NativeUtils.setObservedGamesCallback === "function" && !dqh._origSetObservedGamesCallback) {{
@@ -1720,7 +1797,8 @@ async fn initialize_modules(port: u16, operation: &str) -> Result<()> {
         cdp_client::verify_primary_discord_target(port),
         operation,
         async |verified, script| {
-            cdp_client::execute_js_on_verified_discord_target(verified, &script, true, 2).await
+            let budget = CDP_MODULE_INIT_BUDGET.as_secs();
+            cdp_client::execute_js_on_verified_discord_target(verified, &script, true, budget).await
         },
     )
     .await
@@ -2373,11 +2451,17 @@ pub async fn complete_play_quest_via_cdp(
     // leaking into the new quest session. It wipes every spoof, so it only runs
     // when this is the first CDP play quest; later ones join the running set.
     let active_before = ACTIVE_CDP_PLAY_QUESTS.load(Ordering::SeqCst);
-    let _play_guard = PlayQuestGuard::acquire();
+    let mut play_guard = PlayQuestGuard::acquire();
     if active_before == 0 {
         cdp_cleanup_before_init(port).await?;
+    } else {
+        // The full wipe is skipped while a sibling runs, but a cleanup detached
+        // from an earlier stop can still be stripping bridges right now.
+        wait_for_prior_cleanup().await?;
     }
     cdp_prepare_quest_modules(port, "play quest").await?;
+
+    register_play_app(&app_id);
 
     // 2. Spoof running game
     let js = js_spoof_play_game(&app_id, &app_name);
@@ -2385,14 +2469,21 @@ pub async fn complete_play_quest_via_cdp(
         match cdp_execute_json_on_task_target(port, &js, true, 15, "play quest spoof").await {
             Ok(summary) => summary,
             Err(err) => {
-                finish_play_quest(port, &app_id, "play quest spoof failed", false).await;
+                finish_play_quest(
+                    &mut play_guard,
+                    port,
+                    &app_id,
+                    "play quest spoof failed",
+                    false,
+                )
+                .await;
                 return Err(err);
             }
         };
 
     log_partial_target_failures("play quest spoof", &spoof_summary.target_failures);
 
-    let parsed = spoof_summary
+    let parsed = match spoof_summary
         .successful_results
         .iter()
         .max_by_key(|value| {
@@ -2400,8 +2491,20 @@ pub async fn complete_play_quest_via_cdp(
                 .get("patchCount")
                 .and_then(|patches| patches.as_u64())
                 .unwrap_or(0)
-        })
-        .context("CDP play quest spoof returned no successful target result")?;
+        }) {
+        Some(parsed) => parsed,
+        None => {
+            finish_play_quest(
+                &mut play_guard,
+                port,
+                &app_id,
+                "play quest spoof failed",
+                false,
+            )
+            .await;
+            anyhow::bail!("CDP play quest spoof returned no successful target result");
+        }
+    };
 
     let patch_count = parsed
         .get("patchCount")
@@ -2448,13 +2551,30 @@ pub async fn complete_play_quest_via_cdp(
             _ = sleep(poll_interval) => {},
             _ = cancel_rx.recv() => {
                 log(LogLevel::Info, LogCategory::TokenExtraction, "CDP play quest cancelled", None);
-                finish_play_quest(port, &app_id, "play quest cancelled", true).await;
+                finish_play_quest(
+                    &mut play_guard,
+                    port,
+                    &app_id,
+                    "play quest cancelled",
+                    true,
+                )
+                .await;
                 let _ = app_handle.emit("quest-stopped", ());
                 return Ok(());
             }
         }
 
-        cdp_client::get_primary_discord_target(port).await?;
+        if let Err(error) = cdp_client::get_primary_discord_target(port).await {
+            finish_play_quest(
+                &mut play_guard,
+                port,
+                &app_id,
+                "play quest target lost",
+                false,
+            )
+            .await;
+            return Err(error);
+        }
 
         // Primary: poll via Rust API client (same as quest list refresh)
         let poll_result = if let Some(ref api_client) = client {
@@ -2493,7 +2613,14 @@ pub async fn complete_play_quest_via_cdp(
                 Err(e) => {
                     consecutive_poll_failures += 1;
                     if consecutive_poll_failures >= CDP_POLL_MAX_CONSECUTIVE_FAILURES {
-                        finish_play_quest(port, &app_id, "play quest poll failed", false).await;
+                        finish_play_quest(
+                            &mut play_guard,
+                            port,
+                            &app_id,
+                            "play quest poll failed",
+                            false,
+                        )
+                        .await;
                         anyhow::bail!(
                             "Progress could not be read for {} polls in a row: {e}",
                             consecutive_poll_failures
@@ -2535,7 +2662,14 @@ pub async fn complete_play_quest_via_cdp(
                 "CDP play quest completed!",
                 None,
             );
-            finish_play_quest(port, &app_id, "play quest completed", false).await;
+            finish_play_quest(
+                &mut play_guard,
+                port,
+                &app_id,
+                "play quest completed",
+                false,
+            )
+            .await;
             let _ = app_handle.emit("quest-complete", ());
             return Ok(());
         }

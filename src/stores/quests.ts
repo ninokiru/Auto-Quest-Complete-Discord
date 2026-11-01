@@ -111,7 +111,12 @@ export interface RunningQuest {
  *  so the number beside it has to end where the bar ends: reading only the
  *  polled value made a CDP game show 92% while Discord already showed 99%. */
 export function displayPercent(slot: RunningQuest): number {
-  return Math.min(100, Math.max(slot.serverProgress, slot.localProgress))
+  // A checkpoint slot is counted by Discord; the local clock advances in
+  // checkpoint units and would otherwise claim more squares than the server has.
+  if (slot.progressUnit === 'checkpoints') return Math.min(100, slot.serverProgress)
+  // A quest that is still running cannot be finished: the poll caps a running
+  // value below 100, so the local clock must not paint a full bar on its own.
+  return Math.min(99, Math.max(slot.serverProgress, slot.localProgress))
 }
 
 /** The unit a slot counts its target and its polled progress in. */
@@ -381,6 +386,18 @@ export const useQuestsStore = defineStore('quests', () => {
   /** Whether a start of the current mode would be refused by the game slot. */
   function gameSlotBusy(): boolean {
     return !gameSlotAllows(gameQuestMode.value === 'cdp')
+  }
+
+  /**
+   * A CDP video or checkpoint Activity drives the one Discord window, so the
+   * backend keeps it exclusive: it may not start beside any other running quest.
+   * Refusing here turns a guaranteed round-trip rejection into a clear message.
+   */
+  function ensureExclusiveCdpFree() {
+    if (runningQuests.value.length === 0) return
+    const message = 'A CDP quest needs the Discord client to itself; stop the running quest first'
+    error.value = message
+    throw new Error(message)
   }
 
   /** Whether this queued quest would run as a CDP play quest. */
@@ -1800,6 +1817,7 @@ export const useQuestsStore = defineStore('quests', () => {
       const progressPct = (secondsNeeded > 0) ? (initialProgress / secondsNeeded) * 100 : 0
 
       if (gameQuestMode.value === 'cdp') {
+        ensureExclusiveCdpFree()
         // CDP mode: use Discord's internal api.post() for video progress
         await startCdpQuest(questId, 'video', '', '', secondsNeeded, initialProgress, cdpPort.value)
       } else {
@@ -1807,7 +1825,7 @@ export const useQuestsStore = defineStore('quests', () => {
       }
 
       const quest = quests.value.find(item => item.id === questId)
-      openQuestSlot(
+      const videoSlot = openQuestSlot(
         questId,
         'video',
         secondsNeeded,
@@ -1816,6 +1834,8 @@ export const useQuestsStore = defineStore('quests', () => {
         true,
         taskKey ?? taskKeyForKind(quest, 'video')
       )
+      // Discord counts a CDP video itself, so the local clock is not the truth.
+      videoSlot.cdpPlay = gameQuestMode.value === 'cdp'
 
       // CDP video progress is server-enforced real-time; don't inflate local simulation
       startProgressSimulation()
@@ -2079,6 +2099,7 @@ export const useQuestsStore = defineStore('quests', () => {
     startingQuestId.value = quest.id
     error.value = null
     try {
+      ensureExclusiveCdpFree()
       // Activity quests require CDP mode
       if (!cdpAvailable.value) {
         throw new Error('Activity quests require CDP mode. Please start Discord with --remote-debugging-port and enable CDP in Settings.')
