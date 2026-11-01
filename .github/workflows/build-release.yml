@@ -108,189 +108,10 @@ jobs:
             gh release create "$VERSION" --target "$GITHUB_SHA" "${flags[@]}"
           fi
 
-  # Every release-blocking check runs once here instead of three times in the
-  # platform matrix: a single `cargo fmt --check` diff used to cost 3 x (node +
-  # rust + pnpm install + vite build) before any artifact was produced.
-  # `always()` lets this job run even when `release_policy` fails (for example a
-  # version that is already published), so dispatching this workflow is a way to
-  # validate any branch, including main, without bumping public/version.txt.
-  # The `release` job still refuses to publish unless `release_policy` succeeded.
-  quality:
-    needs: release_policy
-    if: always() && needs.release_policy.result != 'cancelled'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: pnpm/action-setup@v6
-        name: Install pnpm
-        with:
-          run_install: false
-
-      - name: Setup node
-        uses: actions/setup-node@v6
-        with:
-          node-version: lts/*
-          cache: 'pnpm'
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          components: clippy, rustfmt
-
-      # Tauri 2 build dependencies for Debian/Ubuntu (WebKitGTK 4.1 baseline).
-      #
-      # The WebKitGTK chain is a few hundred MB and the mirror is the slowest
-      # step of the whole pipeline: one release run sat in apt for 13 minutes
-      # while every other job was finished in three. The runner image deletes
-      # downloaded .deb files right after the install, so the archives are kept
-      # and cached here — a warm cache installs from the local archive in
-      # seconds and never touches the mirror.
-      - name: Cache apt archives
-        uses: actions/cache@v5
-        with:
-          path: /var/cache/apt/archives/*.deb
-          key: apt-${{ runner.os }}-webkit-4.1-v1
-
-      - name: Install Linux dependencies
-        run: |
-          sudo rm -f /etc/apt/apt.conf.d/docker-clean
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libxdo-dev \
-            libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            desktop-file-utils \
-            xdg-utils
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: '. -> target'
-
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-
-      # Patch package.json / src-tauri/Cargo.toml / tauri.conf.json from
-      # public/version.txt before the Rust checks, so clippy, the tests and the
-      # bundle all see the version this release actually ships with.
-      - name: Sync version from public/version.txt
-        run: pnpm run sync-version
-
-      - name: Validate i18n
-        run: pnpm run i18n:check
-
-      - name: Run frontend tests
-        run: pnpm test
-
-      - name: Validate runtime identity policy and audit tools
-        run: |
-          pnpm run check:runtime-identity
-          pnpm run test:identity-audit
-          pnpm run test:packaged-identity
-
-      # `tauri::generate_context!` resolves `frontendDist` (../dist) at compile
-      # time, so the bundle has to exist before any cargo step touches src-tauri.
-      - name: Build frontend
-        run: pnpm run build
-
-      # Signed-out readers cannot open Actions logs, so every Rust step tees its
-      # output to a file the diagnostics step below publishes publicly.
-      #
-      # Both formatters always run, even when the first one finds a diff, so the
-      # log (and the published diagnostics) show every file that needs fixing in
-      # one go; the step still fails if either of them did.
-      - name: Rust format
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p target
-          status=0
-          cargo fmt --package discord-cdp-launch-core --package discord-cdp-launcher -- --check 2>&1 |
-            tee target/rust-fmt.log || status=1
-          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check 2>&1 |
-            tee -a target/rust-fmt.log || status=1
-          exit "$status"
-
-      # Also the first Cargo compilation of the pipeline. `unused` (imports,
-      # variables, dead code, discarded must_use results) and the clippy
-      # correctness/suspicious groups are hard gates. The style group has a large
-      # backlog in this crate — roughly 190 `|value| value.method()` closures
-      # alone — so it stays warning-level until that is cleared, then this can
-      # tighten back to `-D warnings`.
-      - name: Rust clippy
-        shell: bash
-        run: |
-          set -o pipefail
-          cargo clippy --locked --workspace --all-targets --all-features --message-format=short \
-            -- -D unused -D clippy::correctness -D clippy::suspicious 2>&1 |
-            tee target/rust-clippy.log
-
-      # Single-threaded on purpose: several tests mutate process env or rely on a
-      # released loopback port staying free, which only holds when no other test
-      # runs beside them. A flake here costs a full release round trip.
-      - name: Rust tests
-        shell: bash
-        run: |
-          set -o pipefail
-          cargo test --locked --workspace --no-fail-fast -- --test-threads=1 2>&1 |
-            tee target/rust-tests.log
-
-      # Job logs and job summaries both need a GitHub login, but annotations are
-      # public: the failing lines are echoed as `::error::` chunks, retrievable
-      # with `curl .../check-runs/<job id>/annotations`.
-      - name: Publish Rust diagnostics
-        if: failure()
-        shell: bash
-        run: |
-          set +e
-          for f in target/rust-fmt.log target/rust-clippy.log target/rust-tests.log; do
-            [ -f "$f" ] || continue
-            if [ "$f" = "target/rust-fmt.log" ]; then
-              pat='^Diff in|^[-+]'
-            else
-              # `cargo test` puts the useful part on the lines *after* the panic,
-              # so the assertion and its left/right values are matched too.
-              pat=': error|^error|error\[E|FAILED|panicked at|assertion'
-              pat="$pat|^ +(left|right):|^test result:|^---- "
-            fi
-            name="$(basename "$f")"
-            {
-              echo "### $name"
-              echo '```text'
-              grep -E "$pat" "$f" | head -n 200
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
-            # Three non-overlapping windows of 120 lines each.
-            for start in 1 121 241; do
-              chunk="$(grep -E "$pat" "$f" | sed -n "${start},$((start + 119))p" |
-                sed -e 's/%/%25/g' -e 's/$/%0A/' | tr -d '\n')"
-              if [ -n "$chunk" ]; then
-                echo "::error::$name from line ${start}:$chunk"
-              fi
-            done
-          done
-
-      - name: Verify CDP core dependency boundary
-        run: pnpm run check:cdp-core-deps
-
-  # The release only ships Windows, but `quality` compiles the Linux tree, so
-  # anything behind `#[cfg(windows)]` is never type-checked or linted there. This
-  # job runs clippy (which compiles every target, tests included) on the platform
-  # that is actually shipped. It does not run the test suite: `build-tauri`
-  # covers the Windows build itself, and tests stay on Linux where the
-  # single-threaded loopback assumptions are known to hold.
+  # The release ships Windows only, so every check runs on the platform that is
+  # actually shipped: clippy compiles every target and test here, which is the
+  # only place `#[cfg(windows)]` is type-checked. The Linux and macOS trees are no
+  # longer compiled by CI; they build from source and are verified by hand.
   quality-windows:
     needs: release_policy
     if: always() && needs.release_policy.result != 'cancelled'
@@ -365,7 +186,7 @@ jobs:
             fi
           done
 
-  # Runs beside `quality`, not after it: the bundles only need the version and
+  # Runs beside `quality-windows`, not after it: the bundles only need the version and
   # the lockfile, so waiting ~2.5 minutes for a `cargo fmt` diff to finish before
   # starting three 6-10 minute compile jobs bought nothing. `release` below is
   # the gate that refuses to publish unless all of them succeed.
@@ -393,7 +214,7 @@ jobs:
           # a platform only means uncommenting the entry here and adding its asset
           # names to the check in the `release` job.
           # Nothing else needs restoring — the crates, sidecars, and platform code
-          # are unchanged, and `quality` still builds and tests the Linux tree.
+          # are unchanged; re-enabling one also needs its CI coverage back.
           # - platform: 'macos-14'  # Apple Silicon M1/M2 runner
           #   args: '--no-sign --target aarch64-apple-darwin'
           #   x-target: 'darwin-arm64'
@@ -429,7 +250,7 @@ jobs:
 
       # Tauri 2 build dependencies for Debian/Ubuntu (WebKitGTK 4.1 baseline).
       #
-      # Same cache as the quality job above: the .deb archives are kept after
+      # Same apt cache shape the old Linux gate used: the .deb archives are kept after
       # the install and reused, so this step does not wait for the mirror.
       - name: Cache apt archives
         if: matrix.platform == 'ubuntu-22.04'
@@ -509,7 +330,7 @@ jobs:
       # Patch package.json / src-tauri/Cargo.toml / tauri.conf.json from
       # public/version.txt so the bundle ships the version this release names.
       # fmt, clippy, cargo test, i18n, vitest and the identity audits run once in
-      # the `quality` job above; ci.yml still covers them per platform on push.
+      # `quality-windows` above; ci.yml still covers them on every push.
       - name: Sync version from public/version.txt
         run: pnpm run sync-version
 
@@ -544,7 +365,7 @@ jobs:
       # dies in one second on a parse error. A relative `--config` path resolves
       # against the working directory and merges into tauri.conf.json.
       #
-      # No `-- --locked` here: `quality` already gates the lockfile with
+      # No `-- --locked` here: `quality-windows` already gates the lockfile with
       # `cargo clippy --locked` and `cargo test --locked`, and `tauri build` does
       # not document forwarding cargo flags through `pnpm run tauri`.
       - name: Write the bundle config override
@@ -755,7 +576,7 @@ jobs:
 
   # Both branches rejoin here. The finished assets are already attached to the
   # draft by the time this runs, so all that is left is to refuse to publish
-  # unless `quality`, `quality-windows` and every platform build came back
+  # unless `quality-windows` and every platform build came back
   # green, and then flip the draft switch. No checkout, no artifact download, no
   # repack: those were a second runner doing nothing but moving the same bytes
   # onto the release.
@@ -764,10 +585,9 @@ jobs:
     timeout-minutes: 10
     needs:
       - release_policy
-      - quality
       - quality-windows
       - build-tauri
-    # `build-tauri` does not wait for `quality`, so this is where they meet.
+    # `build-tauri` does not wait for `quality-windows`, so this is where they meet.
     # `always()` is what lets a failed build explain itself here instead of
     # leaving a draft behind that nobody reports on.
     if: >-
@@ -783,11 +603,11 @@ jobs:
           GH_REPO: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.release_policy.outputs.version }}
-          GATES: ${{ needs.quality.result }} ${{ needs.quality-windows.result }} ${{ needs.build-tauri.result }}
+          GATES: ${{ needs.quality-windows.result }} ${{ needs.build-tauri.result }}
         run: |
           set -euo pipefail
-          if [ "$GATES" != 'success success success' ]; then
-            echo "::error::Release gates were (quality, quality-windows, build-tauri): $GATES"
+          if [ "$GATES" != 'success success' ]; then
+            echo "::error::Release gates were (quality-windows, build-tauri): $GATES"
             echo "::notice::Draft $VERSION is left unpublished; fix the failing job and re-run this workflow."
             exit 1
           fi
