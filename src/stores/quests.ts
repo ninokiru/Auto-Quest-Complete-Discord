@@ -1899,7 +1899,7 @@ export const useQuestsStore = defineStore('quests', () => {
         }
         const hostOs = caps.os
         const resolution = resolveSimulationExecutable(game.executables, hostOs, selectedExeName)
-        if (resolution.kind !== 'ok') {
+        if (resolution.kind !== 'supported') {
           // Nothing here can run the title as a process, but the attached
           // Discord client can still play it, so take that path instead of
           // stopping the quest at a dialog whose only answer is the same switch.

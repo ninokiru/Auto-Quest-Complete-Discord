@@ -240,6 +240,8 @@ describe('quest progress units', () => {
 
   it('consumes queue items whose start only reports a soft error', async () => {
     const store = useQuestsStore()
+    // With no CDP to fall back to, the simulate resolution is the last word.
+    mocks.checkCdpStatus.mockResolvedValue({ connected: false })
     mocks.fetchDetectableGames.mockResolvedValue([
       { id: 'app-first', name: 'First', executables: [] },
       { id: 'app-second', name: 'Second', executables: [] },
@@ -255,6 +257,21 @@ describe('quest progress units', () => {
     expect(store.runningQuests).toEqual([])
     expect(store.softError?.code).toBe('SIMULATION_EXECUTABLE_NOT_FOUND')
     expect(store.queuePauseReason).toBe('simulation_incompatible')
+  })
+
+  it('plays a game with no runnable executable through the attached client', async () => {
+    const store = useQuestsStore()
+    mocks.fetchDetectableGames.mockResolvedValue([
+      { id: 'app-first', name: 'First', executables: [] },
+    ] satisfies DetectableGame[])
+
+    await store.startPlay(desktopPlayQuest('first'), 600, 0)
+
+    // The CDP path needs no local process, so the missing executable is not a
+    // reason to stop the quest.
+    expect(mocks.startCdpQuest).toHaveBeenCalledTimes(1)
+    expect(store.runningQuests.map(slot => slot.questId)).toEqual(['first'])
+    expect(store.softError).toBeNull()
   })
 
   it('skips a console-only quest instead of queueing it', async () => {
