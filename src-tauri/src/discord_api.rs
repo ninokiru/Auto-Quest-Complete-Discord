@@ -644,10 +644,7 @@ impl DiscordApiClient {
         if !status.is_success() {
             anyhow::bail!("Failed to get user badges: {}", status);
         }
-        response
-            .json()
-            .await
-            .context("Failed to parse user badges")
+        response.json().await.context("Failed to parse user badges")
     }
 
     /// Get progress for a specific quest.
