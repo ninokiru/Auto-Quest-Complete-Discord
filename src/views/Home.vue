@@ -257,8 +257,8 @@
           <TransitionGroup
             name="quest-list"
             tag="div"
-            class="relative grid gap-3 sm:grid-cols-2"
-            :class="animateListMoves && 'quest-list-smooth'"
+            class="relative grid sm:grid-cols-2"
+            :class="[uiStore.density === 'compact' ? 'gap-2' : 'gap-3', animateListMoves && 'quest-list-smooth']"
           >
             <QuestCard
               v-for="quest in filteredQuests"
@@ -266,6 +266,7 @@
               :quest="quest"
               :quest-type="getQuestType(quest)"
               :show-developer-details="props.debugModeEnabled"
+              :compact="uiStore.density === 'compact'"
               :busy="startingQuestId === quest.id || acceptingQuest === quest.id || acceptingAllQuestIds.has(quest.id) || claimingQuest === quest.id || isQuestStopping(quest.id)"
             >
               <template #actions>
@@ -662,6 +663,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useQuestsStore } from '@/stores/quests'
+import { useUiStore } from '@/stores/ui'
 import { useVersionStore, formatVersionLabel } from '@/stores/version'
 import { useGameIdleStore } from '@/stores/gameIdle'
 import OrbsNitroStatus from '@/components/OrbsNitroStatus.vue'
@@ -761,6 +763,7 @@ const filterChipOffClass =
 const { t, locale } = useI18n()
 const authStore = useAuthStore()
 const questsStore = useQuestsStore()
+const uiStore = useUiStore()
 const gameIdleStore = useGameIdleStore()
 const versionStore = useVersionStore()
 const toast = useToastStore()

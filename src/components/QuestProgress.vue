@@ -5,7 +5,7 @@ import type { RunningQuest } from '@/stores/quests'
 import type { Quest } from '@/api/tauri'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Activity, AlertCircle, ChevronUp, Cloud, Gamepad2, ListChecks, MonitorPlay, Timer, X } from 'lucide-vue-next'
+import { Activity, AlertCircle, ChevronDown, ChevronUp, Cloud, Gamepad2, ListChecks, MonitorPlay, Timer, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { formatClockTime, formatSlotProgress } from '@/utils/questProgressDisplay'
 
@@ -41,6 +41,33 @@ const runningSlots = computed(() =>
 )
 
 const runningIds = computed(() => new Set(questsStore.runningQuests.map(slot => slot.questId)))
+
+type SlotGroup = RunningQuest['type']
+const GROUP_ORDER: SlotGroup[] = ['game', 'video', 'stream', 'activity']
+const collapsedGroups = ref<Set<SlotGroup>>(new Set())
+
+// With several parallel quests, group the rows by what they drive, so the panel
+// stays scannable and each group can be folded away.
+const groupedSlots = computed(() =>
+  GROUP_ORDER.flatMap(type => {
+    const entries = runningSlots.value.filter(entry => entry.slot.type === type)
+    return entries.length > 0 ? [{ type, entries }] : []
+  })
+)
+
+function groupLabel(type: SlotGroup): string {
+  if (type === 'video') return t('filter.video')
+  if (type === 'stream') return t('filter.stream_play')
+  if (type === 'activity') return t('filter.activity')
+  return t('filter.play')
+}
+
+function toggleGroup(type: SlotGroup) {
+  const next = new Set(collapsedGroups.value)
+  if (next.has(type)) next.delete(type)
+  else next.add(type)
+  collapsedGroups.value = next
+}
 
 const activeQuest = computed(() => {
   if (!questsStore.activeQuestId) return null
@@ -434,67 +461,90 @@ const keepAliveRemainingText = computed(() => {
       </CardHeader>
       <CardContent class="p-3">
         <div v-if="runningSlots.length > 0" class="space-y-2">
-          <TransitionGroup name="slot-row" tag="div" class="max-h-[320px] space-y-2 overflow-y-auto pr-1">
-            <div
-              v-for="entry in runningSlots"
-              :key="entry.slot.questId"
-              class="relative overflow-hidden rounded-lg border border-border/60 bg-background/60 py-2.5 pl-3.5 pr-3"
-            >
-              <span class="pointer-events-none absolute inset-y-0 left-0 w-[3px] bg-primary" aria-hidden="true" />
-              <div class="flex items-center gap-3">
-                <div class="relative shrink-0">
-                  <img
-                    v-if="entry.appIcon"
-                    :src="entry.appIcon"
-                    class="h-8 w-8 rounded-lg object-cover"
-                    alt=""
-                  />
-                  <div v-else class="flex h-8 w-8 items-center justify-center rounded-lg bg-secondary">
-                    <component :is="slotTypeIcon(entry.slot)" class="h-4 w-4 text-muted-foreground" />
-                  </div>
-                  <span
-                    class="absolute -bottom-1 -right-1 flex h-[15px] w-[15px] items-center justify-center rounded border bg-card"
-                    :class="slotTypeIconClass(entry.slot)"
-                  >
-                    <component :is="slotTypeIcon(entry.slot)" class="h-[9px] w-[9px]" />
-                  </span>
-                </div>
+          <div class="max-h-[320px] space-y-1.5 overflow-y-auto pr-1">
+            <div v-for="group in groupedSlots" :key="group.type" class="space-y-1.5">
+              <button
+                v-if="runningSlots.length > 1"
+                type="button"
+                class="flex w-full items-center justify-between rounded-md px-1 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                :aria-expanded="!collapsedGroups.has(group.type)"
+                @click="toggleGroup(group.type)"
+              >
+                <span>{{ groupLabel(group.type) }} · {{ group.entries.length }}</span>
+                <ChevronDown
+                  class="h-3.5 w-3.5 transition-transform"
+                  :class="collapsedGroups.has(group.type) && '-rotate-90'"
+                />
+              </button>
 
-                <div class="min-w-0 flex-1">
-                  <p class="truncate text-[13px] font-semibold leading-tight">
-                    {{ entry.quest?.config.messages.quest_name ?? entry.slot.questId }}
-                  </p>
-                  <p class="mt-0.5 truncate text-[11px] text-muted-foreground">
-                    {{ entry.quest?.config.messages.game_title }}
-                  </p>
-                  <div class="mt-1.5 flex items-center gap-2">
-                    <div class="relative h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-secondary">
-                      <div
-                        class="absolute inset-y-0 left-0 rounded-full transition-[width] duration-300"
-                        :style="slotBarStyle(entry.slot)"
+              <TransitionGroup
+                v-show="!collapsedGroups.has(group.type)"
+                name="slot-row"
+                tag="div"
+                class="space-y-2"
+              >
+                <div
+                  v-for="entry in group.entries"
+                  :key="entry.slot.questId"
+                  class="relative overflow-hidden rounded-lg border border-border/60 bg-background/60 py-2.5 pl-3.5 pr-3"
+                >
+                  <span class="pointer-events-none absolute inset-y-0 left-0 w-[3px] bg-primary" aria-hidden="true" />
+                  <div class="flex items-center gap-3">
+                    <div class="relative shrink-0">
+                      <img
+                        v-if="entry.appIcon"
+                        :src="entry.appIcon"
+                        class="h-8 w-8 rounded-lg object-cover"
+                        alt=""
                       />
+                      <div v-else class="flex h-8 w-8 items-center justify-center rounded-lg bg-secondary">
+                        <component :is="slotTypeIcon(entry.slot)" class="h-4 w-4 text-muted-foreground" />
+                      </div>
+                      <span
+                        class="absolute -bottom-1 -right-1 flex h-[15px] w-[15px] items-center justify-center rounded border bg-card"
+                        :class="slotTypeIconClass(entry.slot)"
+                      >
+                        <component :is="slotTypeIcon(entry.slot)" class="h-[9px] w-[9px]" />
+                      </span>
                     </div>
-                    <span class="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
-                      {{ slotSubmittedText(entry.slot) }}
-                    </span>
+
+                    <div class="min-w-0 flex-1">
+                      <p class="truncate text-[13px] font-semibold leading-tight">
+                        {{ entry.quest?.config.messages.quest_name ?? entry.slot.questId }}
+                      </p>
+                      <p class="mt-0.5 truncate text-[11px] text-muted-foreground">
+                        {{ entry.quest?.config.messages.game_title }}
+                      </p>
+                      <div class="mt-1.5 flex items-center gap-2">
+                        <div class="relative h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-secondary">
+                          <div
+                            class="absolute inset-y-0 left-0 rounded-full transition-[width] duration-300"
+                            :style="slotBarStyle(entry.slot)"
+                          />
+                        </div>
+                        <span class="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
+                          {{ slotSubmittedText(entry.slot) }}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div class="flex shrink-0 flex-col items-end gap-0.5">
+                      <span class="font-mono text-sm font-medium tabular-nums">{{ Math.floor(displayPercent(entry.slot)) }}%</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        class="h-6 shrink-0 px-2 text-[11px] text-error hover:bg-destructive/10 hover:text-error"
+                        :disabled="questsStore.stopping"
+                        @click="handleStopQuest(entry.slot.questId)"
+                      >
+                        {{ t('quest.stop_single') }}
+                      </Button>
+                    </div>
                   </div>
                 </div>
-
-                <div class="flex shrink-0 flex-col items-end gap-0.5">
-                  <span class="font-mono text-sm font-medium tabular-nums">{{ Math.floor(displayPercent(entry.slot)) }}%</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    class="h-6 shrink-0 px-2 text-[11px] text-error hover:bg-destructive/10 hover:text-error"
-                    :disabled="questsStore.stopping"
-                    @click="handleStopQuest(entry.slot.questId)"
-                  >
-                    {{ t('quest.stop_single') }}
-                  </Button>
-                </div>
-              </div>
+              </TransitionGroup>
             </div>
-          </TransitionGroup>
+          </div>
 
           <div class="flex justify-between px-1 text-[10px] text-muted-foreground">
             <div class="flex items-center gap-1.5">

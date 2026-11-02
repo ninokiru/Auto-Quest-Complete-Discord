@@ -14,6 +14,7 @@ const PRESET_KEYS: readonly string[] = [
   'questHelper_autoClaimRewards',
   'questHelper_simulationPath',
   'theme_mode',
+  'aqc_ui_density',
 ]
 
 interface PresetFile {

@@ -42,6 +42,8 @@ const props = defineProps<{
   foreign?: boolean
   /** The account that owns this quest, when it is not the signed-in one. */
   accountId?: string
+  /** Tighter spacing for the Home list's compact density. */
+  compact?: boolean
 }>()
 
 const questsStore = useQuestsStore()
@@ -384,7 +386,7 @@ async function copyRewardCode() {
 
     <!-- items-start keeps the icon block at its own height: a stretched block
          would push the type chip down to the bottom of a tall title. -->
-    <div class="flex flex-1 items-start gap-3 px-4 pb-3 pt-3.5">
+    <div class="flex flex-1 items-start gap-3" :class="compact ? 'px-3 pb-2 pt-2.5' : 'px-4 pb-3 pt-3.5'">
       <div class="relative shrink-0">
         <img
           v-if="quest.config.application?.icon"

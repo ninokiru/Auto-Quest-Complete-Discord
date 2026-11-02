@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { Monitor, Moon, Palette, Sun } from 'lucide-vue-next'
+import { LayoutGrid, Monitor, Moon, Palette, Sun } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useQuestsStore } from '@/stores/quests'
 import { useThemeStore, type ThemeMode } from '@/stores/theme'
+import { useUiStore, type UiDensity } from '@/stores/ui'
 import OrbMedia from '@/components/icons/OrbMedia.vue'
 import SettingsSectionCard from './SettingsSectionCard.vue'
 import SettingsSwitch from './SettingsSwitch.vue'
@@ -13,6 +14,12 @@ import { settingToneClass } from './settingTones'
 const { t } = useI18n()
 const questsStore = useQuestsStore()
 const themeStore = useThemeStore()
+const uiStore = useUiStore()
+
+const densityOptions: { value: UiDensity; label: string }[] = [
+  { value: 'comfortable', label: 'settings.density_comfortable' },
+  { value: 'compact', label: 'settings.density_compact' },
+]
 
 // System follows the operating system and keeps following it while the window
 // is open; the other two pin the palette until the user changes it.
@@ -59,6 +66,39 @@ const themeOptions: { value: ThemeMode; icon: typeof Sun; label: string }[] = [
           @click="themeStore.setMode(option.value)"
         >
           <component :is="option.icon" class="h-3.5 w-3.5" />
+          {{ t(option.label) }}
+        </Button>
+      </div>
+    </div>
+
+    <div class="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-border bg-card p-4 transition-colors hover:bg-muted/40">
+      <div class="flex min-w-0 items-start gap-3">
+        <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10">
+          <LayoutGrid class="h-5 w-5 text-primary" />
+        </div>
+        <div class="min-w-0">
+          <p class="text-sm font-semibold">{{ t('settings.density') }}</p>
+          <p class="mt-1 text-xs text-muted-foreground">{{ t('settings.density_desc') }}</p>
+        </div>
+      </div>
+
+      <div
+        class="flex shrink-0 items-center gap-1 rounded-lg border border-border bg-muted/40 p-1"
+        role="group"
+        :aria-label="t('settings.density')"
+      >
+        <Button
+          v-for="option in densityOptions"
+          :key="option.value"
+          size="sm"
+          variant="ghost"
+          class="h-8 px-2.5 text-xs"
+          :class="uiStore.density === option.value
+            ? 'bg-background text-foreground shadow-sm hover:bg-background'
+            : 'text-muted-foreground hover:text-foreground'"
+          :aria-pressed="uiStore.density === option.value"
+          @click="uiStore.setDensity(option.value)"
+        >
           {{ t(option.label) }}
         </Button>
       </div>
