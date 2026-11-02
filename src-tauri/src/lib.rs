@@ -3243,8 +3243,43 @@ fn notify_quest_finished(app: tauri::AppHandle, title: String, body: String) -> 
     quest_notify::show(&app, &title, &body)
 }
 
+/// Send one quest event to the user's custom webhook. The config travels with
+/// the call so nothing secret has to live in the backend between requests.
+#[tauri::command]
+async fn send_quest_webhook(
+    config: webhook::WebhookConfig,
+    event: String,
+    quest_id: Option<String>,
+    name: Option<String>,
+    error: Option<String>,
+) -> Result<(), String> {
+    webhook::send(
+        &config,
+        &event,
+        quest_id.as_deref(),
+        name.as_deref(),
+        error.as_deref(),
+    )
+    .await
+}
+
+/// POST a sample event with the unsaved config so the user can verify the
+/// endpoint and token before keeping them.
+#[tauri::command]
+async fn test_quest_webhook(config: webhook::WebhookConfig) -> Result<(), String> {
+    webhook::send(
+        &config,
+        "test",
+        None,
+        Some("Auto Quest Complete Discord"),
+        None,
+    )
+    .await
+}
+
 mod rpc;
 mod runner;
+mod webhook;
 
 use once_cell::sync::OnceCell;
 static DISCORD_RPC_CLIENT: OnceCell<Mutex<Option<rpc::Client>>> = OnceCell::new();
@@ -3734,6 +3769,8 @@ pub fn run() {
             claim_quest_reward,
             get_quest_reward_code,
             notify_quest_finished,
+            send_quest_webhook,
+            test_quest_webhook,
             connect_to_discord_rpc,
             disconnect_from_discord_rpc,
             open_in_explorer,

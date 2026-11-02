@@ -263,6 +263,17 @@ const activeLocalPercent = computed(() => {
 // The bar's own width transition already eases every step, so the submitted
 // value feeds it directly instead of driving a second per-card animation frame.
 const progressBarStyle = computed(() => {
+  const slot = runningSlot.value
+  // CDP play/stream, Activity and heartbeat quests are counted by Discord, so
+  // their bar is the display value in solid blue; the green pending tail only
+  // describes direct-API video time this app has not submitted yet.
+  if (slot && !(slot.type === 'video' && !slot.cdpPlay)) {
+    return {
+      width: `${progress.value}%`,
+      background: 'hsl(var(--primary))',
+      boxShadow: '0 1px 3px hsl(var(--primary) / 0.35)',
+    }
+  }
   const local = activeLocalPercent.value
   const submitted = progress.value
   if (local <= 0) return {}

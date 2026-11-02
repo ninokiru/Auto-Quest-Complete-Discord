@@ -22,6 +22,7 @@ import {
 import { resolveSimulationExecutable } from '@/utils/executables'
 import { clampGameIdleDuration, loadGameIdleDuration, resolveGameIdleDuration } from '@/utils/durationSetting'
 import { announceQuestEnd } from '@/utils/questNotifier'
+import { notifyQuestWebhook } from '@/utils/questWebhook'
 import { useNotificationsStore } from '@/stores/notifications'
 
 /** Clamp a 0..100 percentage so no consumer renders a value outside its range. */
@@ -1468,6 +1469,7 @@ export const useQuestsStore = defineStore('quests', () => {
 
     announceQuestEnd(questName)
     useNotificationsStore().push('quest_completed', { name: questName })
+    notifyQuestWebhook('quest_completed', questId, questName)
     questQueue.value = questQueue.value.filter(item => item.id !== questId)
     syncPolling()
     if (held) scheduleQueueRefill()
@@ -1505,6 +1507,7 @@ export const useQuestsStore = defineStore('quests', () => {
     }
     announceQuestEnd(questName)
     useNotificationsStore().push('quest_completed', { name: questName })
+    notifyQuestWebhook('quest_completed', questId, questName)
     syncPolling()
     if (held) scheduleQueueRefill()
     if (runningQuests.value.length === 0) cleanupListeners()
@@ -1533,6 +1536,7 @@ export const useQuestsStore = defineStore('quests', () => {
     error.value = message
     announceQuestEnd(questName, message)
     useNotificationsStore().push('quest_failed', { name: questName, error: message })
+    notifyQuestWebhook('quest_failed', questId, questName, message)
     syncPolling()
     if (runningQuests.value.length === 0) cleanupListeners()
     if (wasQueued) {
@@ -2405,16 +2409,17 @@ export const useQuestsStore = defineStore('quests', () => {
     const epoch = listenerGeneration
 
     onQuestProgress((progress) => {
-      // The event payload is a bare number with no quest identifier, so the
-      // only way to reject a leaked handler from a previous setup is the epoch,
-      // and the only safe moment to apply it is while one quest runs and no other
-      // account has work that could have emitted this number instead.
       if (epoch !== listenerGeneration) return
       if (!questEventsAreOwn()) return
-      const slot = soleRunningQuest()
+      // CDP play/stream quests identify themselves so several can run at once;
+      // older emitters still send a bare number, which only the sole slot may take.
+      const questId = typeof progress === 'object' ? progress.questId : null
+      const percent = typeof progress === 'object' ? progress.percent : progress
+      if (typeof percent !== 'number') return
+      const slot = questId ? questSlot(questId) : soleRunningQuest()
       if (!slot) return
-      slot.serverProgress = clampProgressPercent(progress)
-      // For Play quests, update local state or log since no direct feedback loop? 
+      slot.serverProgress = clampProgressPercent(percent)
+      // For Play quests, update local state or log since no direct feedback loop?
       // Discord RPC is one-way, but we might listen to Discord Gateway for activity updates if needed.
       // But user_status updates come from backend polling or events.
     }).then((unlisten) => {

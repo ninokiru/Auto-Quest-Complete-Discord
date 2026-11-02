@@ -49,6 +49,17 @@ const CLEANUP_DRAIN_POLL: Duration = Duration::from_millis(100);
 /// at 0% until someone presses Stop.
 const CDP_POLL_MAX_CONSECUTIVE_FAILURES: u32 = 8;
 
+/// Wall-clock ceiling for a CDP play/stream poll loop. A spoof that stops
+/// reporting would otherwise hold its slot forever while the API keeps
+/// answering; three times the target (ten minutes minimum) stays generous.
+fn cdp_poll_deadline(seconds_needed: u32) -> Option<std::time::Instant> {
+    if seconds_needed == 0 {
+        return None;
+    }
+    let allowance = (seconds_needed as u64).saturating_mul(3).max(600);
+    Some(std::time::Instant::now() + Duration::from_secs(allowance))
+}
+
 /// CDP play quests share the Discord client, and each spoofs its own title.
 /// This counts the live ones so a quest that ends releases only its own game
 /// while others still run, and the last one leaves performs the full cleanup.
@@ -2477,6 +2488,10 @@ pub async fn complete_play_quest_via_cdp(
         None,
     );
 
+    if seconds_needed == 0 {
+        anyhow::bail!("CDP play quest has a zero-second target and can never complete");
+    }
+
     // Defensive pre-cleanup: prevent stale spoof state from a previous run from
     // leaking into the new quest session. It wipes every spoof, so it only runs
     // when this is the first CDP play quest; later ones join the running set.
@@ -2564,12 +2579,16 @@ pub async fn complete_play_quest_via_cdp(
 
     // 3. Poll progress using Rust API client (reliable) with CDP fallback
     let poll_interval = Duration::from_secs(15);
+    let deadline = cdp_poll_deadline(seconds_needed);
     let initial_pct = if seconds_needed > 0 {
         (initial_progress / seconds_needed as f64) * 100.0
     } else {
         0.0
     };
-    let _ = app_handle.emit("quest-progress", initial_pct);
+    let _ = app_handle.emit(
+        "quest-progress",
+        serde_json::json!({ "questId": &quest_id, "percent": initial_pct }),
+    );
 
     let mut consecutive_poll_failures = 0u32;
     loop {
@@ -2664,13 +2683,42 @@ pub async fn complete_play_quest_via_cdp(
         };
         consecutive_poll_failures = 0;
 
+        if let Some(deadline) = deadline {
+            if std::time::Instant::now() >= deadline {
+                log(
+                    LogLevel::Error,
+                    LogCategory::TokenExtraction,
+                    &format!(
+                        "CDP play quest exceeded its time budget ({}s target); giving up",
+                        seconds_needed
+                    ),
+                    None,
+                );
+                finish_play_quest(
+                    &mut play_guard,
+                    port,
+                    &app_id,
+                    "play quest time budget exceeded",
+                    false,
+                )
+                .await;
+                anyhow::bail!(
+                    "Play quest exceeded its time budget ({}s target)",
+                    seconds_needed
+                );
+            }
+        }
+
         let pct = if seconds_needed > 0 {
             (progress_secs / seconds_needed as f64 * 100.0).min(100.0)
         } else {
             0.0
         };
 
-        let _ = app_handle.emit("quest-progress", pct);
+        let _ = app_handle.emit(
+            "quest-progress",
+            serde_json::json!({ "questId": &quest_id, "percent": pct }),
+        );
         log(
             LogLevel::Debug,
             LogCategory::TokenExtraction,
@@ -2753,6 +2801,10 @@ pub async fn complete_stream_quest_via_cdp(
         None,
     );
 
+    if seconds_needed == 0 {
+        anyhow::bail!("CDP stream quest has a zero-second target and can never complete");
+    }
+
     // Defensive pre-cleanup: ensure previous spoof state is removed before applying new patches.
     cdp_cleanup_before_init(port).await?;
     // Both patches are required; startup errors clean up and never reach polling.
@@ -2770,12 +2822,16 @@ pub async fn complete_stream_quest_via_cdp(
 
     // 3. Poll progress using Rust API client (reliable) with CDP fallback
     let poll_interval = Duration::from_secs(20);
+    let deadline = cdp_poll_deadline(seconds_needed);
     let initial_pct = if seconds_needed > 0 {
         (initial_progress / seconds_needed as f64) * 100.0
     } else {
         0.0
     };
-    let _ = app_handle.emit("quest-progress", initial_pct);
+    let _ = app_handle.emit(
+        "quest-progress",
+        serde_json::json!({ "questId": &quest_id, "percent": initial_pct }),
+    );
 
     let mut consecutive_poll_failures = 0u32;
     loop {
@@ -2845,13 +2901,35 @@ pub async fn complete_stream_quest_via_cdp(
         };
         consecutive_poll_failures = 0;
 
+        if let Some(deadline) = deadline {
+            if std::time::Instant::now() >= deadline {
+                log(
+                    LogLevel::Error,
+                    LogCategory::TokenExtraction,
+                    &format!(
+                        "CDP stream quest exceeded its time budget ({}s target); giving up",
+                        seconds_needed
+                    ),
+                    None,
+                );
+                cdp_cleanup_after_stop(port, "stream quest time budget exceeded", false).await;
+                anyhow::bail!(
+                    "Stream quest exceeded its time budget ({}s target)",
+                    seconds_needed
+                );
+            }
+        }
+
         let pct = if seconds_needed > 0 {
             (progress_secs / seconds_needed as f64 * 100.0).min(100.0)
         } else {
             0.0
         };
 
-        let _ = app_handle.emit("quest-progress", pct);
+        let _ = app_handle.emit(
+            "quest-progress",
+            serde_json::json!({ "questId": &quest_id, "percent": pct }),
+        );
         log(
             LogLevel::Debug,
             LogCategory::TokenExtraction,

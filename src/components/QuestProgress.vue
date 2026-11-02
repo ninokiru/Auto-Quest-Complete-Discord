@@ -294,15 +294,34 @@ function barStyleFor(local: number, submitted: number): Record<string, string> {
   }
 }
 
-const activeBarStyle = computed(() =>
-  barStyleFor(questsStore.localProgress, animatedSubmitted.value)
-)
+const activeBarStyle = computed(() => {
+  const slot = questsStore.runningQuests[0]
+  if (slot && !slotUsesLocalPending(slot)) return solidBarStyle(displayPercent(slot))
+  return barStyleFor(questsStore.localProgress, animatedSubmitted.value)
+})
+
+// The green "pending" tail only means something on the direct-API video path,
+// where this app counts time Discord has not banked yet. Every other slot —
+// CDP play/stream, Activity, heartbeat — is counted by Discord, so its bar is
+// the display value in solid blue.
+function slotUsesLocalPending(slot: RunningQuest): boolean {
+  return slot.type === 'video' && !slot.cdpPlay
+}
+
+function solidBarStyle(percent: number): Record<string, string> {
+  const clamped = Math.min(100, Math.max(0, percent))
+  return {
+    width: `${clamped}%`,
+    background: 'hsl(var(--primary))',
+    boxShadow: '0 1px 3px hsl(var(--primary) / 0.35)',
+  }
+}
 
 /** Whether the green part of a bar means anything for what is on screen: it is
  *  time this app counted and has not submitted yet, which only happens on the
  *  direct-API paths. Discord counts a CDP game or Activity itself. */
 const showsLocalPendingLegend = computed(() =>
-  runningSlots.value.some(entry => entry.slot.type === 'video' && !entry.slot.cdpPlay),
+  runningSlots.value.some(entry => slotUsesLocalPending(entry.slot)),
 )
 
 /** The collapsed bubble's number follows the same slot value as its bar. */
@@ -312,6 +331,7 @@ const primaryDisplayProgress = computed(() => {
 })
 
 function slotBarStyle(slot: RunningQuest): Record<string, string> {
+  if (!slotUsesLocalPending(slot)) return solidBarStyle(displayPercent(slot))
   return barStyleFor(slot.localProgress, slotSubmittedPercent(slot))
 }
 

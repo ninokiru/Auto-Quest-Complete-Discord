@@ -641,8 +641,10 @@ export async function acceptQuest(questId: string, accountId?: string | null): P
 }
 
 // Event listeners
-export function onQuestProgress(callback: (progress: number) => void) {
-  return listen<number>('quest-progress', (event) => {
+export type QuestProgressPayload = number | { questId?: string; percent?: number }
+
+export function onQuestProgress(callback: (progress: QuestProgressPayload) => void) {
+  return listen<QuestProgressPayload>('quest-progress', (event) => {
     callback(event.payload)
   })
 }
