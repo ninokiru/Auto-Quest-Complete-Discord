@@ -1,18 +1,21 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useQuestsStore } from '@/stores/quests'
+import { useUserBadgesStore } from '@/stores/userBadges'
+import { ACCOUNT_BADGES, badgeCount, badgeIcon } from '@/utils/userBadges'
 import type { AccountSummary, DiscordUser } from '@/api/tauri'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Check, ChevronDown, Loader2, LogOut, Search, UserPlus, X } from 'lucide-vue-next'
+import { Check, ChevronDown, Gamepad2, Loader2, LogOut, Search, Swords, Trophy, UserPlus, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const authStore = useAuthStore()
 const questsStore = useQuestsStore()
-const emit = defineEmits<{ logout: [] }>()
+const badgesStore = useUserBadgesStore()
+const emit = defineEmits<{ logout: []; farm: [] }>()
 
 const user = computed(() => authStore.user)
 const open = ref(false)
@@ -24,9 +27,37 @@ const scanning = ref(false)
 const newToken = ref('')
 const menuError = ref<string | null>(null)
 const containerRef = ref<HTMLElement | null>(null)
+const failedBadgeIds = ref<Set<number>>(new Set())
 
 const accounts = computed(() => authStore.knownAccounts)
 const busy = computed(() => switching.value || authStore.loading)
+
+const badgeRows = computed(() => ACCOUNT_BADGES.flatMap(definition => {
+  const badge = badgesStore.badges.find(item => item.badge_id === definition.id && item.owned === true)
+  if (!badge) return []
+  const count = badgeCount(badge, definition.unit)
+  const fallbackIcon = { games: Gamepad2, quests: Trophy, hours: Swords }[definition.kind]
+  return [{
+    ...definition,
+    icon: badgeIcon(badge),
+    fallbackIcon,
+    text: count === null && typeof badge.info_label === 'string' && badge.info_label
+      ? badge.info_label
+      : t(`account.badges_${definition.kind}`, { count: count?.toLocaleString(locale.value) ?? '—' }),
+  }]
+}))
+
+watch(() => badgesStore.badges, () => { failedBadgeIds.value = new Set() })
+watch(open, visible => { if (visible) void badgesStore.refresh() })
+
+function failBadgeIcon(id: number) {
+  failedBadgeIds.value = new Set(failedBadgeIds.value).add(id)
+}
+
+function handleFarm() {
+  open.value = false
+  emit('farm')
+}
 
 // The scan reads the desktop clients' local profiles, which the backend only
 // reports as `full` where that is possible. The login screen hides its
@@ -219,6 +250,51 @@ onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside))
               <X v-else class="mx-auto h-3.5 w-3.5" />
             </button>
           </div>
+
+          <div v-if="badgeRows.length" class="mx-1 mt-1 border-t border-border/60 pt-2">
+            <p class="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+              {{ t('account.badges_title') }}
+            </p>
+            <ul class="space-y-1 pb-1" :aria-busy="badgesStore.loading">
+              <li
+                v-for="badge in badgeRows"
+                :key="badge.id"
+                class="flex items-center gap-2 rounded-md px-1.5 py-1 text-[11px]"
+              >
+                <img
+                  v-if="badge.icon && !failedBadgeIds.has(badge.id)"
+                  :src="badge.icon"
+                  alt=""
+                  aria-hidden="true"
+                  class="h-4 w-4 shrink-0 object-contain"
+                  @error="failBadgeIcon(badge.id)"
+                />
+                <component
+                  :is="badge.fallbackIcon"
+                  v-else
+                  class="h-4 w-4 shrink-0 text-muted-foreground"
+                  :stroke-width="1.5"
+                  aria-hidden="true"
+                />
+                <span class="min-w-0 flex-1 truncate tabular-nums">{{ badge.text }}</span>
+                <button
+                  v-if="badge.kind !== 'quests'"
+                  type="button"
+                  class="shrink-0 rounded px-1 text-[10px] font-medium text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  @click="handleFarm"
+                >
+                  {{ t('account.badges_farm') }}
+                </button>
+              </li>
+            </ul>
+          </div>
+          <p
+            v-if="badgesStore.failed && !badgesStore.badges.length"
+            class="px-2 pb-1 text-[10px] text-muted-foreground"
+            role="status"
+          >
+            {{ t('account.badges_unavailable') }}
+          </p>
 
           <button
             v-if="!adding"

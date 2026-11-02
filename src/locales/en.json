@@ -449,7 +449,13 @@
     "add_hint": "Sign in without stopping this account's quests.",
     "add_action": "Add",
     "scan": "Find accounts on this device",
-    "scanning": "Searching this device..."
+    "scanning": "Searching this device...",
+    "badges_title": "Account badges",
+    "badges_games": "{count} games played",
+    "badges_quests": "{count} quests completed",
+    "badges_hours": "{count} hours played",
+    "badges_farm": "Farm",
+    "badges_unavailable": "Badges unavailable"
   },
   "dialog": {
     "accept_quests_title": "Accept Quests",

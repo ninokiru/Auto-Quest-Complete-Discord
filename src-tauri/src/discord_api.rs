@@ -634,6 +634,22 @@ impl DiscordApiClient {
         Ok(user)
     }
 
+    /// Account badges shown in Discord's own profile menu.
+    pub async fn get_current_user_badges(&self) -> Result<serde_json::Value> {
+        let url = format!("{}/users/@me/badges", DISCORD_API_BASE);
+        let response = self
+            .send_respecting_rate_limit(self.request(Method::GET, &url))
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            anyhow::bail!("Failed to get user badges: {}", status);
+        }
+        response
+            .json()
+            .await
+            .context("Failed to parse user badges")
+    }
+
     /// Get progress for a specific quest.
     ///
     /// Returns `(progress_seconds, completed)` by fetching the full quest list

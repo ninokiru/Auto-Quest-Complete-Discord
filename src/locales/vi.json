@@ -447,7 +447,13 @@
     "add_hint": "Đăng nhập mà không dừng các quest của tài khoản này.",
     "add_action": "Thêm",
     "scan": "Tự tìm tài khoản trên máy",
-    "scanning": "Đang tìm trên máy..."
+    "scanning": "Đang tìm trên máy...",
+    "badges_title": "Thành tích tài khoản",
+    "badges_games": "{count} game đã chơi",
+    "badges_quests": "{count} quest đã hoàn thành",
+    "badges_hours": "{count} giờ đã chơi",
+    "badges_farm": "Cày",
+    "badges_unavailable": "Không tải được thành tích"
   },
   "dialog": {
     "accept_quests_title": "Chấp nhận Quests",

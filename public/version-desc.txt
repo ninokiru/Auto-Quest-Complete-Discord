@@ -13,6 +13,7 @@ Everything in L2#1 to L2#5 is still here. This patch lifts the rule that made a 
 - **Game quests run in parallel, up to twenty per account.** Heartbeat quests need no local presence, and each CDP play quest now holds its own spoofed game in Discord's running-games set instead of replacing the previous one, so Discord can heartbeat several quests at once. A quest that ends releases only its own resources while the others keep going; the full CDP cleanup runs when the last one stops. Starting a second one no longer queues it behind the first.
 - **Home warns when more than five quests run together.** From the sixth parallel quest, an amber banner names the count and the risk of a Discord warning or account ban.
 - **Batch acceptance is paced like a person.** "Accept all" now waits a random 0.4–0.8 seconds between enrollments, including failed ones, instead of a fixed half-second burst.
+- **Account badges are visible again.** The account menu shows games played, quests completed and hours played when Discord returns them; the games and hours rows carry a shortcut to the Game Simulator.
 - **The old rules still hold where they matter.** A simulated game, an Activity, or a mix of those with a CDP play quest still occupies the account alone, and video/stream/activity CDP quests still take the Discord window exclusively — those kinds cannot run beside a play quest in either direction.
 
 ### Fixed

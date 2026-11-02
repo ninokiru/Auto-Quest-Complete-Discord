@@ -357,7 +357,7 @@ watch(
 
                 <NotificationCenter />
 
-                <AccountMenu v-if="authStore.user" @logout="authStore.logout" />
+                <AccountMenu v-if="authStore.user" @logout="authStore.logout" @farm="selectTab('game')" />
               </div>
             </div>
 
