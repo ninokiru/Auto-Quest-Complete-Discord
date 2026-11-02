@@ -132,7 +132,9 @@
     "activity_launch_navigate": "Open Quest in Discord",
     "activity_navigate_error": "Failed to navigate Discord to quest page. Please open Discord manually and go to the Quests page.",
     "enrollment_blocked_title": "Quest enrollment is blocked",
-    "enrollment_blocked_desc": "Discord will not let this account accept new quests until {until}. Quests already enrolled or running continue normally."
+    "enrollment_blocked_desc": "Discord will not let this account accept new quests until {until}. Quests already enrolled or running continue normally.",
+    "parallel_warning_title": "Running {count} quests at once",
+    "parallel_warning_desc": "Running more than 5 quests at once may get your account warned or banned by Discord. Stop some if you do not need them."
   },
   "quest": {
     "soft_error_title": "Can't simulate this game here",

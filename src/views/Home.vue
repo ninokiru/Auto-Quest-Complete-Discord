@@ -51,6 +51,25 @@
     </div>
 
     <div class="space-y-6">
+      <!-- A large parallel burst is exactly what Discord's abuse checks look
+           for; state the risk once the user crosses five running quests. -->
+      <div
+        v-if="questsStore.runningQuests.length > PARALLEL_WARNING_THRESHOLD"
+        class="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4"
+      >
+        <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/20">
+          <ShieldAlert class="h-5 w-5 text-amber-700 dark:text-amber-400" />
+        </div>
+        <div class="min-w-0 space-y-1">
+          <p class="font-semibold text-amber-800 dark:text-amber-300">
+            {{ t('home.parallel_warning_title', { count: questsStore.runningQuests.length }) }}
+          </p>
+          <p class="text-sm text-muted-foreground text-pretty">
+            {{ t('home.parallel_warning_desc') }}
+          </p>
+        </div>
+      </div>
+
       <div class="space-y-6">
         <div class="flex min-w-0 items-center justify-between gap-4">
           <div class="min-w-0 space-y-2">
@@ -901,6 +920,9 @@ const startingQuestId = computed(() => preparingQuestId.value ?? questsStore.sta
  *  store's own limit; an exclusive CDP video/activity start is refused there. */
 const parallelCap = computed(() => questsStore.maxParallelQuests)
 
+/** Discord treats a large parallel burst as abuse; warn from the sixth quest. */
+const PARALLEL_WARNING_THRESHOLD = 5
+
 const hasFreeQuestSlot = computed(() => questsStore.runningQuests.length < parallelCap.value)
 
 function isQuestRunning(questId: string): boolean {
@@ -1305,8 +1327,8 @@ async function confirmAcceptAll() {
       acceptingAllQuestIds.value.delete(id)
       acceptingAllQuestIds.value = new Set(acceptingAllQuestIds.value) // trigger reactivity
     }
-    // Small delay to be nice to API
-    await new Promise(r => setTimeout(r, 500))
+    // Space the batch like a person accepting quests, not a burst.
+    await new Promise(r => setTimeout(r, 400 + Math.random() * 400))
   }
 
   if (failCount > 0) {

@@ -2507,12 +2507,12 @@ export const useQuestsStore = defineStore('quests', () => {
           await acceptQuest(id)
           updateQuestEnrollment(id, new Date().toISOString())
           successCount++
-          // Small delay to be nice to API
-          await new Promise(r => setTimeout(r, 500))
         } catch (e) {
           console.error(`Failed to accept quest ${id}:`, e)
           failCount++
         }
+        // Space the batch like a person accepting quests, not a burst.
+        await new Promise(r => setTimeout(r, 400 + Math.random() * 400))
       }
     } finally {
       if (failCount > 0) {

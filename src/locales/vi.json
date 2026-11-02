@@ -130,7 +130,9 @@
     "activity_launch_navigate": "Mở Quest trong Discord",
     "activity_navigate_error": "Không thể điều hướng Discord tới trang nhiệm vụ. Vui lòng mở Discord theo cách thủ công và truy cập trang Quests.",
     "enrollment_blocked_title": "Việc nhận nhiệm vụ đang bị chặn",
-    "enrollment_blocked_desc": "Discord không cho tài khoản này nhận nhiệm vụ mới đến {until}. Các nhiệm vụ đã nhận hoặc đang chạy vẫn diễn ra bình thường."
+    "enrollment_blocked_desc": "Discord không cho tài khoản này nhận nhiệm vụ mới đến {until}. Các nhiệm vụ đã nhận hoặc đang chạy vẫn diễn ra bình thường.",
+    "parallel_warning_title": "Đang chạy {count} quest song song",
+    "parallel_warning_desc": "Chạy trên 5 quest cùng lúc có thể khiến Discord cảnh báo hoặc khóa tài khoản. Dừng bớt nếu không thật sự cần."
   },
   "quest": {
     "soft_error_title": "Không thể mô phỏng trò chơi này ở đây",
