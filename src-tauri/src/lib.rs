@@ -124,10 +124,9 @@ struct AccountSummary {
 /// rather than about shared local resources.
 const MAX_PARALLEL_QUESTS: usize = 20;
 
-/// How many desktop-play quests may run through the attached Discord client for
-/// one account. Each keeps its own spoofed title in the client's running-games
-/// set, so they no longer serialise on the single local-presence rule.
-const CDP_PLAY_QUEST_LIMIT: usize = 10;
+/// How many game quests that keep no local presence (CDP play and direct-API
+/// heartbeat) may share one account. A simulated game still owns it alone.
+const SHARED_GAME_QUEST_LIMIT: usize = 20;
 
 /// One running quest task. Quests execute in parallel and are addressed by id,
 /// so each entry needs its own cancel channel and outcome instead of the single
@@ -145,11 +144,15 @@ struct QuestTask {
     /// The task plays a game for its account: a desktop-play heartbeat loop or a
     /// cloud-game Activity. One account has one game presence, one simulated
     /// executable per title and one history segment per title, so a second such
-    /// task has to wait instead of colliding with the first — unless both are CDP
-    /// play quests, which live inside Discord and keep separate spoofed titles.
+    /// task has to wait instead of colliding with the first — unless neither
+    /// task needs a local presence.
     game: bool,
-    /// Whether this task is one of those CDP play quests.
+    /// Whether this task is a CDP play quest, which keeps its own spoofed title
+    /// inside Discord instead of a local process.
     cdp_play: bool,
+    /// Whether this task completes through per-quest API heartbeats and keeps no
+    /// local presence, so it can share the account with other such tasks.
+    api_game: bool,
     cancel_flag: tokio::sync::mpsc::Sender<()>,
     /// Background completion task. Stop waits on this so CDP quest cleanup
     /// cannot race a newly admitted manual spoof or replacement quest.
@@ -215,6 +218,7 @@ enum QuestSlotConflict {
     AlreadyRunning,
     ExclusiveBusy,
     GameBusy,
+    GameLimit,
     Full,
 }
 
@@ -226,13 +230,16 @@ struct QuestSlot {
     quest_id: String,
     exclusive: bool,
     /// The task plays a game for `account_id`. One account has a single game
-    /// presence, so these serialise per account — except CDP play quests, which
-    /// drive Discord itself and may share the account up to the CDP limit.
+    /// presence, so these serialise per account — except tasks that keep no
+    /// local presence, which may share the account up to the shared limit.
     game: bool,
     /// A desktop-play quest running through the attached Discord client. It
     /// keeps its own spoofed title inside that client, so several can run at
     /// once without fighting over a local process or presence.
     cdp_play: bool,
+    /// A desktop-play quest completed by direct API heartbeats. It also keeps no
+    /// local presence, so it shares the account like a CDP play quest.
+    api_game: bool,
 }
 
 /// Decide whether one more quest may be admitted. `running` holds the slots of
@@ -260,20 +267,25 @@ fn quest_slot_conflict(
     // A game quest publishes a presence, and on the simulated path an executable
     // and a history segment, all keyed to the title rather than to the quest.
     // Two of them on one account would tear each other's down when the first
-    // finishes, so the second waits for the first. CDP play quests are the
-    // exception: each keeps its own spoofed title inside Discord, so they may
-    // share the account up to `CDP_PLAY_QUEST_LIMIT` — never beside a simulated
-    // game or an Activity, which own the local presence.
+    // finishes, so the second waits for the first. CDP play and direct-API
+    // heartbeat quests keep no local presence, so they may share the account up
+    // to `SHARED_GAME_QUEST_LIMIT` — never beside a simulated game or an
+    // Activity, which own the local presence.
     if candidate.game {
         let same_account_games: Vec<&QuestSlot> = running
             .iter()
             .filter(|slot| slot.game && slot.account_id == candidate.account_id)
             .collect();
         if !same_account_games.is_empty() {
-            let share_cdp_slots =
-                candidate.cdp_play && same_account_games.iter().all(|slot| slot.cdp_play);
-            if !share_cdp_slots || same_account_games.len() >= CDP_PLAY_QUEST_LIMIT {
+            let share_slots = (candidate.cdp_play || candidate.api_game)
+                && same_account_games
+                    .iter()
+                    .all(|slot| slot.cdp_play || slot.api_game);
+            if !share_slots {
                 return Some(QuestSlotConflict::GameBusy);
+            }
+            if same_account_games.len() >= SHARED_GAME_QUEST_LIMIT {
+                return Some(QuestSlotConflict::GameLimit);
             }
         }
     }
@@ -298,6 +310,9 @@ fn quest_slot_conflict_message(conflict: QuestSlotConflict, quest_id: &str) -> S
         QuestSlotConflict::GameBusy => {
             "One game quest runs at a time per account; stop the running one first".to_string()
         }
+        QuestSlotConflict::GameLimit => {
+            format!("At most {SHARED_GAME_QUEST_LIMIT} game quests run at a time per account")
+        }
         QuestSlotConflict::Full => {
             format!("At most {MAX_PARALLEL_QUESTS} quests run at the same time per account")
         }
@@ -307,7 +322,7 @@ fn quest_slot_conflict_message(conflict: QuestSlotConflict, quest_id: &str) -> S
 #[cfg(test)]
 mod quest_slot_tests {
     use super::{
-        quest_slot_conflict, QuestSlot, QuestSlotConflict, CDP_PLAY_QUEST_LIMIT,
+        quest_slot_conflict, QuestSlot, QuestSlotConflict, SHARED_GAME_QUEST_LIMIT,
         MAX_PARALLEL_QUESTS,
     };
 
@@ -318,6 +333,7 @@ mod quest_slot_tests {
             exclusive: false,
             game: false,
             cdp_play: false,
+            api_game: false,
         }
     }
 
@@ -339,6 +355,14 @@ mod quest_slot_tests {
         QuestSlot {
             game: true,
             cdp_play: true,
+            ..slot(quest_id, account_id)
+        }
+    }
+
+    fn heartbeat_game_slot(quest_id: &str, account_id: Option<&str>) -> QuestSlot {
+        QuestSlot {
+            game: true,
+            api_game: true,
             ..slot(quest_id, account_id)
         }
     }
@@ -433,7 +457,7 @@ mod quest_slot_tests {
 
     #[test]
     fn cdp_play_quests_share_one_account_up_to_the_limit() {
-        let running: Vec<QuestSlot> = (0..CDP_PLAY_QUEST_LIMIT - 1)
+        let running: Vec<QuestSlot> = (0..SHARED_GAME_QUEST_LIMIT - 1)
             .map(|index| cdp_play_slot(&format!("play-{index}"), Some("acc-a")))
             .collect();
         assert_eq!(
@@ -445,7 +469,7 @@ mod quest_slot_tests {
             None
         );
 
-        let full: Vec<QuestSlot> = (0..CDP_PLAY_QUEST_LIMIT)
+        let full: Vec<QuestSlot> = (0..SHARED_GAME_QUEST_LIMIT)
             .map(|index| cdp_play_slot(&format!("play-{index}"), Some("acc-a")))
             .collect();
         assert_eq!(
@@ -454,7 +478,7 @@ mod quest_slot_tests {
                 &cdp_play_slot("play-extra", Some("acc-a")),
                 MAX_PARALLEL_QUESTS
             ),
-            Some(QuestSlotConflict::GameBusy)
+            Some(QuestSlotConflict::GameLimit)
         );
         // Another account has its own budget.
         assert_eq!(
@@ -464,6 +488,65 @@ mod quest_slot_tests {
                 MAX_PARALLEL_QUESTS
             ),
             None
+        );
+    }
+
+    #[test]
+    fn heartbeat_game_quests_share_the_account() {
+        let heartbeat = heartbeat_game_slot("hb", Some("acc-a"));
+        assert_eq!(
+            quest_slot_conflict(
+                std::slice::from_ref(&heartbeat),
+                &heartbeat_game_slot("hb-next", Some("acc-a")),
+                MAX_PARALLEL_QUESTS
+            ),
+            None
+        );
+        // A CDP play quest keeps no local presence either, so the two kinds mix.
+        assert_eq!(
+            quest_slot_conflict(
+                std::slice::from_ref(&heartbeat),
+                &cdp_play_slot("cdp", Some("acc-a")),
+                MAX_PARALLEL_QUESTS
+            ),
+            None
+        );
+        assert_eq!(
+            quest_slot_conflict(
+                &[cdp_play_slot("cdp", Some("acc-a"))],
+                &heartbeat_game_slot("hb-next", Some("acc-a")),
+                MAX_PARALLEL_QUESTS
+            ),
+            None
+        );
+        // A simulated game still owns the account alone.
+        assert_eq!(
+            quest_slot_conflict(
+                std::slice::from_ref(&heartbeat),
+                &game_slot("sim", Some("acc-a")),
+                MAX_PARALLEL_QUESTS
+            ),
+            Some(QuestSlotConflict::GameBusy)
+        );
+        assert_eq!(
+            quest_slot_conflict(
+                &[game_slot("sim", Some("acc-a"))],
+                &heartbeat_game_slot("hb-next", Some("acc-a")),
+                MAX_PARALLEL_QUESTS
+            ),
+            Some(QuestSlotConflict::GameBusy)
+        );
+
+        let full: Vec<QuestSlot> = (0..SHARED_GAME_QUEST_LIMIT)
+            .map(|index| heartbeat_game_slot(&format!("hb-{index}"), Some("acc-a")))
+            .collect();
+        assert_eq!(
+            quest_slot_conflict(
+                &full,
+                &heartbeat_game_slot("hb-extra", Some("acc-a")),
+                MAX_PARALLEL_QUESTS
+            ),
+            Some(QuestSlotConflict::GameLimit)
         );
     }
 
@@ -512,7 +595,7 @@ mod quest_slot_tests {
     }
 
     #[test]
-    fn one_game_quest_runs_at_a_time_per_account() {
+    fn a_simulated_game_quest_runs_at_a_time_per_account() {
         assert_eq!(
             quest_slot_conflict(
                 &[game_slot("quest-a", Some("acc-a"))],
@@ -1708,7 +1791,7 @@ async fn start_video_quest(
     let _gate = state.activity_gate.lock().await;
     state.game_idle.ensure_idle().await?;
     let (client, owner) = quest_client_for(&state, account_id.as_deref())?;
-    ensure_quest_slot_available(&state, &quest_id, false, false, false, owner.as_deref())?;
+    ensure_quest_slot_available(&state, &quest_id, false, false, false, false, owner.as_deref())?;
 
     let quest_id_for_state = quest_id.clone();
     let outcome = new_quest_outcome();
@@ -1742,6 +1825,7 @@ async fn start_video_quest(
         false,
         false,
         false,
+        false,
         cancel_tx,
         join,
         outcome,
@@ -1765,7 +1849,7 @@ async fn start_stream_quest(
     let _gate = state.activity_gate.lock().await;
     state.game_idle.ensure_idle().await?;
     let (client, owner) = quest_client_for(&state, account_id.as_deref())?;
-    ensure_quest_slot_available(&state, &quest_id, false, false, false, owner.as_deref())?;
+    ensure_quest_slot_available(&state, &quest_id, false, false, false, false, owner.as_deref())?;
 
     let quest_id_for_state = quest_id.clone();
     let outcome = new_quest_outcome();
@@ -1798,6 +1882,7 @@ async fn start_stream_quest(
         false,
         false,
         false,
+        false,
         cancel_tx,
         join,
         outcome,
@@ -1821,7 +1906,7 @@ async fn start_game_heartbeat_quest(
     let _gate = state.activity_gate.lock().await;
     state.game_idle.ensure_idle().await?;
     let (client, owner) = quest_client_for(&state, account_id.as_deref())?;
-    ensure_quest_slot_available(&state, &quest_id, false, true, false, owner.as_deref())?;
+    ensure_quest_slot_available(&state, &quest_id, false, true, false, true, owner.as_deref())?;
 
     let quest_id_for_state = quest_id.clone();
     let outcome = new_quest_outcome();
@@ -1854,6 +1939,7 @@ async fn start_game_heartbeat_quest(
         false,
         true,
         false,
+        true,
         cancel_tx,
         join,
         outcome,
@@ -1951,7 +2037,15 @@ async fn start_play_activity_quest(
         let (api_client, api_owner) = quest_client_for(&state, account_id.as_deref())?;
         (Some(api_client), api_owner)
     };
-    ensure_quest_slot_available(&state, &quest_id, exclusive, true, false, owner.as_deref())?;
+    ensure_quest_slot_available(
+        &state,
+        &quest_id,
+        exclusive,
+        true,
+        false,
+        false,
+        owner.as_deref(),
+    )?;
     if exclusive {
         ensure_cdp_account_consistency(&state, cdp_port).await?;
     }
@@ -2023,6 +2117,7 @@ async fn start_play_activity_quest(
         exclusive,
         true,
         false,
+        false,
         cancel_tx,
         join,
         outcome,
@@ -2064,6 +2159,7 @@ async fn start_cdp_quest(
         !cdp_play,
         cdp_play,
         cdp_play,
+        false,
         owner.as_deref(),
     )?;
     ensure_cdp_account_consistency(&state, cdp_port).await?;
@@ -2167,6 +2263,7 @@ async fn start_cdp_quest(
         !cdp_play,
         cdp_play,
         cdp_play,
+        false,
         cancel_tx,
         join,
         outcome,
@@ -2264,6 +2361,7 @@ fn register_quest_task(
     exclusive: bool,
     game: bool,
     cdp_play: bool,
+    api_game: bool,
     cancel_flag: tokio::sync::mpsc::Sender<()>,
     join: tokio::task::JoinHandle<()>,
     outcome: std::sync::Arc<std::sync::Mutex<QuestTaskRecord>>,
@@ -2279,6 +2377,7 @@ fn register_quest_task(
         exclusive,
         game,
         cdp_play,
+        api_game,
         cancel_flag,
         join: Some(join),
         outcome,
@@ -2327,6 +2426,7 @@ fn ensure_quest_slot_available(
     exclusive: bool,
     game: bool,
     cdp_play: bool,
+    api_game: bool,
     account_id: Option<&str>,
 ) -> Result<(), String> {
     let candidate = QuestSlot {
@@ -2335,6 +2435,7 @@ fn ensure_quest_slot_available(
         exclusive,
         game,
         cdp_play,
+        api_game,
     };
     let running: Vec<QuestSlot> = state
         .quest_tasks
@@ -2348,6 +2449,7 @@ fn ensure_quest_slot_available(
             exclusive: task.exclusive,
             game: task.game,
             cdp_play: task.cdp_play,
+            api_game: task.api_game,
         })
         .collect();
     match quest_slot_conflict(&running, &candidate, MAX_PARALLEL_QUESTS) {
@@ -5258,6 +5360,7 @@ mod quest_task_account_tests {
             exclusive: false,
             game: false,
             cdp_play: false,
+            api_game: false,
             cancel_flag,
             join: None,
             outcome: new_quest_outcome(),

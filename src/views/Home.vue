@@ -1525,10 +1525,8 @@ function cancelCustomExeDialog() {
 }
 
 /**
- * A game quest holds the account's single game slot until it ends. A second
- * Start joins the queue instead of failing on a toast: `processQueue` already
- * defers game quests while one runs, so the quest starts by itself once the
- * slot is free.
+ * A full game slot queues the next Start instead of failing it: `processQueue`
+ * defers game quests until the slot frees, so the quest starts by itself.
  */
 async function startOrQueuePlay(
   quest: Quest,

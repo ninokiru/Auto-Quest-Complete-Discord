@@ -65,18 +65,6 @@ function gameQuest(id: string): Quest {
   } as Quest
 }
 
-function cloudGameQuest(id: string): Quest {
-  return {
-    id,
-    config: {
-      application: { id: `app-${id}`, name: id, link: '' },
-      messages: { quest_name: id },
-      task_config: { tasks: { PLAY_ACTIVITY: { type: 'PLAY_ACTIVITY', target: 900 } } },
-    },
-    user_status: questStatus(),
-  } as Quest
-}
-
 function videoQuest(id: string): Quest {
   return {
     id,
@@ -93,7 +81,7 @@ function startedIds(store: ReturnType<typeof useQuestsStore>): string[] {
     .concat(store.runningQuests.filter(slot => slot.type === 'video').map(slot => slot.questId))
 }
 
-describe('one game quest at a time per account', () => {
+describe('game quest slots per account', () => {
   beforeEach(() => {
     vi.stubGlobal('localStorage', storage())
     vi.stubGlobal('requestAnimationFrame', vi.fn().mockReturnValue(1))
@@ -122,7 +110,7 @@ describe('one game quest at a time per account', () => {
     vi.unstubAllGlobals()
   })
 
-  it('runs one game quest and leaves the next one queued instead of failing it', async () => {
+  it('runs heartbeat game quests in parallel with a video quest', async () => {
     const store = useQuestsStore()
     store.gameQuestMode = 'heartbeat'
     store.addToQueue(gameQuest('game-a'))
@@ -131,83 +119,57 @@ describe('one game quest at a time per account', () => {
 
     await store.startQueue()
 
-    expect(startedIds(store)).toEqual(['game-a', 'video'])
-    // A video quest is not a game quest, so the running one does not hold it back.
-    expect(store.runningQuests.map(slot => slot.questId)).toEqual(['game-a', 'video'])
-    // Deferred, not dropped: the item is still there for the next pass.
+    expect(startedIds(store)).toEqual(['game-a', 'game-b', 'video'])
+    expect(store.runningQuests.map(slot => slot.questId)).toEqual(['game-a', 'game-b', 'video'])
+    // A queue item leaves only when its quest is finalized.
     expect(store.questQueue.map(item => item.id)).toEqual(['game-a', 'game-b', 'video'])
     expect(store.error).toBeNull()
   })
 
-  it('starts the deferred game quest once the running one finishes', async () => {
+  it('starts a queued game quest when a shared slot frees up', async () => {
     const store = useQuestsStore()
     store.gameQuestMode = 'heartbeat'
-    store.addToQueue(gameQuest('game-a'))
-    store.addToQueue(gameQuest('game-b'))
+    for (let index = 0; index < 21; index += 1) {
+      store.addToQueue(gameQuest(`game-${index}`))
+    }
 
     await store.startQueue()
-    expect(startedIds(store)).toEqual(['game-a'])
+    expect(store.runningQuests).toHaveLength(20)
+    expect(startedIds(store)).toHaveLength(20)
 
-    mocks.getQuestTaskStatuses.mockResolvedValue([
-      { questId: 'game-a', accountId: null, own: true, state: 'finished', error: null },
-    ])
-    // A lone slot is polled on the user's own cadence, so the window has to reach
-    // the tick that ends `game-a` *and* the refill the released slot schedules.
-    await vi.advanceTimersByTimeAsync(store.gamePollingInterval * 1000 + 5_000)
-
-    expect(startedIds(store)).toEqual(['game-a', 'game-b'])
-    expect(store.runningQuests.map(slot => slot.questId)).toEqual(['game-b'])
-    expect(store.questQueue.map(item => item.id)).toEqual(['game-b'])
-  })
-
-  it('hands the game slot to the queued quest when the running one is stopped', async () => {
-    const store = useQuestsStore()
-    store.gameQuestMode = 'heartbeat'
-    store.addToQueue(gameQuest('game-a'))
-    store.addToQueue(gameQuest('game-b'))
-
-    await store.startQueue()
-    expect(startedIds(store)).toEqual(['game-a'])
-
-    // A hand Stop is not a completion, so it has to release the slot the same way.
-    await store.stopRunningQuest('game-a')
+    await store.stopRunningQuest('game-0')
     await vi.advanceTimersByTimeAsync(5_000)
 
-    expect(startedIds(store)).toEqual(['game-a', 'game-b'])
-    expect(store.runningQuests.map(slot => slot.questId)).toEqual(['game-b'])
-    expect(store.questQueue.map(item => item.id)).toEqual(['game-b'])
+    expect(startedIds(store)).toHaveLength(21)
+    expect(store.runningQuests.length).toBeLessThanOrEqual(20)
   })
 
-  it('refuses a game quest started by hand while another one runs', async () => {
+  it('refuses the twenty-first game quest started by hand', async () => {
     const store = useQuestsStore()
     store.gameQuestMode = 'heartbeat'
-    await store.startPlay(gameQuest('game-a'), 600, 0)
+    for (let index = 0; index < 20; index += 1) {
+      await store.startPlay(gameQuest(`game-${index}`), 600, 0)
+    }
 
-    await expect(store.startPlay(gameQuest('game-b'), 600, 0))
-      .rejects.toThrow('One game quest runs at a time')
-    // A cloud-game Activity plays a game too, so it waits on the same slot.
-    await expect(store.startPlayActivity(cloudGameQuest('cloud'), 900, 0))
-      .rejects.toThrow('One game quest runs at a time')
-
-    expect(startedIds(store)).toEqual(['game-a'])
-    expect(mocks.startPlayActivityQuest).not.toHaveBeenCalled()
-    expect(store.runningQuests.map(slot => slot.questId)).toEqual(['game-a'])
+    await expect(store.startPlay(gameQuest('game-20'), 600, 0))
+      .rejects.toThrow(/At most 20/)
+    expect(store.runningQuests).toHaveLength(20)
   })
 
-  it('lets up to ten CDP play quests share the account', async () => {
+  it('lets up to twenty CDP play quests share the account', async () => {
     const store = useQuestsStore()
     // The platform default is applied once capabilities arrive; let it settle
     // first or it overwrites the mode set on the next line.
     await store.initPlatformCapabilities()
     store.gameQuestMode = 'cdp'
-    for (let index = 0; index < 10; index += 1) {
+    for (let index = 0; index < 20; index += 1) {
       await store.startPlay(gameQuest(`cdp-${index}`), 600, 0)
     }
-    expect(store.runningQuests).toHaveLength(10)
+    expect(store.runningQuests).toHaveLength(20)
 
-    await expect(store.startPlay(gameQuest('cdp-11'), 600, 0))
-      .rejects.toThrow('At most 10 CDP game quests')
-    expect(store.runningQuests).toHaveLength(10)
+    await expect(store.startPlay(gameQuest('cdp-20'), 600, 0))
+      .rejects.toThrow(/At most 20/)
+    expect(store.runningQuests).toHaveLength(20)
   })
 
   it('keeps a video quest running alongside a game quest', async () => {

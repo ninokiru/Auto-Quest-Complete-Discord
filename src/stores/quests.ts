@@ -97,12 +97,13 @@ export interface RunningQuest {
    * task-status registry.
    */
   hasBackendTask: boolean
-  /**
-   * True when this game quest runs through the attached Discord client. Those
-   * keep their own spoofed title inside the client, so several may share an
-   * account; a simulated game still holds the account's single slot alone.
-   */
+  /** True when this game quest runs through the attached Discord client. Those
+   *  keep their own spoofed title inside the client, so several may share an
+   *  account; a simulated game still holds the account's single slot alone. */
   cdpPlay?: boolean
+  /** True when this game quest completes through per-quest API heartbeats. It
+   *  keeps no local presence either, so it shares the account like a CDP quest. */
+  heartbeatPlay?: boolean
 }
 
 /** The percentage a card or the progress panel shows.
@@ -364,28 +365,30 @@ export const useQuestsStore = defineStore('quests', () => {
     }
   }
 
-  /** How many CDP play quests one account may run at once. */
-  const MAX_CDP_PLAY_QUESTS = 10
+  /** How many game quests that keep no local presence may share one account. */
+  const MAX_SHARED_GAME_QUESTS = 20
 
   /** Whether the account's game slot can take another game quest.
    *
-   *  Every local slot belongs to the account the page is on. A CDP play quest
-   *  keeps its own spoofed title inside Discord, so it shares the account with
-   *  other CDP play quests up to the limit; a simulated game, an Activity or a
-   *  mix of the two still owns the account alone. */
-  function gameSlotAllows(cdpPlay: boolean): boolean {
+   *  Every local slot belongs to the account the page is on. CDP play and
+   *  direct-API heartbeat quests keep no local presence, so they share the
+   *  account up to the limit; a simulated game, an Activity or a mix of the two
+   *  still owns the account alone. */
+  function gameSlotAllows(shared: boolean): boolean {
     const games = runningQuests.value.filter(
       slot => slot.type === 'game' || slot.type === 'activity',
     )
     if (games.length === 0) return true
-    if (!cdpPlay) return false
-    const allCdpPlay = games.every(slot => slot.type === 'game' && slot.cdpPlay)
-    return allCdpPlay && games.length < MAX_CDP_PLAY_QUESTS
+    if (!shared) return false
+    const allShared = games.every(
+      slot => slot.type === 'game' && (slot.cdpPlay || slot.heartbeatPlay),
+    )
+    return allShared && games.length < MAX_SHARED_GAME_QUESTS
   }
 
   /** Whether a start of the current mode would be refused by the game slot. */
   function gameSlotBusy(): boolean {
-    return !gameSlotAllows(gameQuestMode.value === 'cdp')
+    return !gameSlotAllows(gameQuestMode.value !== 'simulate')
   }
 
   /**
@@ -400,9 +403,9 @@ export const useQuestsStore = defineStore('quests', () => {
     throw new Error(message)
   }
 
-  /** Whether this queued quest would run as a CDP play quest. */
-  function isCdpPlayCandidate(item: Quest): boolean {
-    return gameQuestMode.value === 'cdp'
+  /** Whether this queued quest would share the account's game slot. */
+  function isSharedGameCandidate(item: Quest): boolean {
+    return gameQuestMode.value !== 'simulate'
       && isGameQuest(item)
       && !isPlayActivityQuest(item)
   }
@@ -415,10 +418,10 @@ export const useQuestsStore = defineStore('quests', () => {
    * calling in, so this covers a manual Start; the backend enforces the same
    * rule for the paths it owns.
    */
-  function ensureGameSlotFree(cdpPlay = false) {
-    if (gameSlotAllows(cdpPlay)) return
-    const message = cdpPlay
-      ? `At most ${MAX_CDP_PLAY_QUESTS} CDP game quests run at a time per account`
+  function ensureGameSlotFree(shared = false) {
+    if (gameSlotAllows(shared)) return
+    const message = shared
+      ? `At most ${MAX_SHARED_GAME_QUESTS} game quests run at a time per account`
       : 'One game quest runs at a time per account; wait for the running one to finish'
     error.value = message
     throw new Error(message)
@@ -1060,6 +1063,7 @@ export const useQuestsStore = defineStore('quests', () => {
     return text.includes('owns the discord client')
       || text.includes('needs the discord client to itself')
       || text.includes('runs at a time per account')
+      || text.includes('game quests run at a time')
       || (text.includes('at most') && text.includes('quests run at the same time'))
   }
 
@@ -1892,7 +1896,7 @@ export const useQuestsStore = defineStore('quests', () => {
     taskKey?: string | null
   ) {
     ensureLocalQuestSlot(quest.id)
-    ensureGameSlotFree(gameQuestMode.value === 'cdp')
+    ensureGameSlotFree(gameQuestMode.value !== 'simulate')
     startingQuestId.value = quest.id
     error.value = null
     // Remember the request so a soft error can offer "switch to CDP and retry".
@@ -1936,12 +1940,15 @@ export const useQuestsStore = defineStore('quests', () => {
           progressPct
         )
 
-        openQuestSlot(quest.id, 'game', secondsNeeded, 'time', progressPct, true, progressTaskKey)
+        const heartbeatSlot = openQuestSlot(quest.id, 'game', secondsNeeded, 'time', progressPct, true, progressTaskKey)
+        heartbeatSlot.heartbeatPlay = true
         startProgressSimulation()
 
         // Setup listeners for progress/complete/error events
         setupListeners()
         syncPolling()
+        // Heartbeat makes no local process either, so there is no history to record.
+        return
 
       } else {
         // Simulate mode - original behavior
@@ -2582,16 +2589,12 @@ export const useQuestsStore = defineStore('quests', () => {
       while (!stopping.value
         && questQueue.value.length > 0
         && runningQuests.value.length < MAX_PARALLEL_QUESTS) {
-        // A game quest holds the account's single game slot, so the game quests
-        // behind it wait instead of failing: skipping the candidate here rather
-        // than dropping it keeps it queued for the refill that `releaseQuestSlot`
-        // schedules once the running one lets go of the slot.
-        // A game quest starts only when the account's game slot can take it: a
-        // CDP play quest shares the account with other CDP play quests, every
-        // other game quest owns it alone.
+        // A game quest starts only when the account's game slot can take it:
+        // heartbeat and CDP play quests share it up to the limit, while a
+        // simulated game or an Activity still owns it alone.
         const queueItem = questQueue.value.find(item =>
           !questSlot(item.id)
-          && (!isGameQuest(item) || gameSlotAllows(isCdpPlayCandidate(item))))
+          && (!isGameQuest(item) || gameSlotAllows(isSharedGameCandidate(item))))
         if (!queueItem) return
 
         // The task this quest actually runs decides both its target and the
