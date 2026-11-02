@@ -11,6 +11,7 @@ const PRESET_KEYS: readonly string[] = [
   'questHelper_activityCheckpointMax',
   'questHelper_postQuestKeepAliveEnabled',
   'questHelper_postQuestKeepAlive',
+  'questHelper_autoClaimRewards',
   'questHelper_simulationPath',
   'theme_mode',
 ]

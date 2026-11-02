@@ -703,6 +703,14 @@ export const useQuestsStore = defineStore('quests', () => {
   const savedShowOrbsBalance = localStorage.getItem(STORAGE_SHOW_ORBS_BALANCE_KEY)
   const showOrbsBalance = ref(savedShowOrbsBalance === null ? true : savedShowOrbsBalance === 'true')
 
+  // Claiming is irreversible, so it stays opt-in. The completion paths call the
+  // helper below once the refreshed list confirms the quest is actually ready.
+  const STORAGE_AUTO_CLAIM_KEY = 'questHelper_autoClaimRewards'
+  const autoClaimRewards = ref(localStorage.getItem(STORAGE_AUTO_CLAIM_KEY) === 'true')
+  watch(autoClaimRewards, (enabled) => {
+    localStorage.setItem(STORAGE_AUTO_CLAIM_KEY, String(enabled))
+  }, { flush: 'sync' })
+
   async function getDefaultSimulationPath(): Promise<string> {
     try {
       const base = await appLocalDataDir()
@@ -1394,6 +1402,26 @@ export const useQuestsStore = defineStore('quests', () => {
     await claimQuestReward(questId, undefined, accountId)
   }
 
+  const autoClaimInFlight = new Set<string>()
+
+  /** Claim a local quest once the refreshed list confirms it finished unclaimed.
+   *  Failures are non-fatal: the reward stays claimable from the card. */
+  async function autoClaimCompletedQuest(questId: string) {
+    if (!autoClaimRewards.value || autoClaimInFlight.has(questId)) return
+    autoClaimInFlight.add(questId)
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+      const quest = quests.value.find((item) => item.id === questId)
+      if (!quest?.user_status?.completed_at || quest.user_status.claimed_at) return
+      await claimQuestReward(questId)
+      await fetchQuests(true, true)
+    } catch (error) {
+      console.warn(`Auto-claim for quest ${questId} failed:`, error)
+    } finally {
+      autoClaimInFlight.delete(questId)
+    }
+  }
+
   /** Stop one quest another account is running, then re-read the registry so the
    *  row can flip back to Start without waiting for the next tick. */
   async function stopForeignQuest(accountId: string, questId: string): Promise<void> {
@@ -1475,6 +1503,7 @@ export const useQuestsStore = defineStore('quests', () => {
     if (held) scheduleQueueRefill()
     if (runningQuests.value.length === 0) cleanupListeners()
     void fetchQuests(true, true)
+    void autoClaimCompletedQuest(questId)
   }
 
   async function finishStandaloneQuest(questId: string, failedWith?: string) {
@@ -1512,6 +1541,7 @@ export const useQuestsStore = defineStore('quests', () => {
     if (held) scheduleQueueRefill()
     if (runningQuests.value.length === 0) cleanupListeners()
     void fetchQuests(true, true)
+    void autoClaimCompletedQuest(questId)
   }
 
   /**
@@ -2914,6 +2944,7 @@ export const useQuestsStore = defineStore('quests', () => {
     orbsBalanceLoading,
     orbsBalanceError,
     showOrbsBalance,
+    autoClaimRewards,
     simulationPath,
     initSimulationPath,
     setSimulationPath,

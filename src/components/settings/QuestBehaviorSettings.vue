@@ -289,6 +289,22 @@ onMounted(() => {
         </div>
       </div>
 
+      <div class="space-y-3">
+        <Label>{{ t('settings.automation') }}</Label>
+        <div class="rounded-lg border px-4">
+          <SettingRow
+            :label="t('settings.auto_claim_rewards')"
+            :description="t('settings.auto_claim_rewards_desc')"
+          >
+            <SettingsSwitch
+              :model-value="questsStore.autoClaimRewards"
+              :label="t('settings.auto_claim_rewards')"
+              @update:model-value="questsStore.autoClaimRewards = $event"
+            />
+          </SettingRow>
+        </div>
+      </div>
+
       <div class="space-y-3 rounded-lg border border-sky-500/25 bg-sky-500/5 p-4">
         <div>
           <Label>{{ t('settings.simulation_directory') }}</Label>
