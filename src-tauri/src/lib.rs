@@ -322,8 +322,8 @@ fn quest_slot_conflict_message(conflict: QuestSlotConflict, quest_id: &str) -> S
 #[cfg(test)]
 mod quest_slot_tests {
     use super::{
-        quest_slot_conflict, QuestSlot, QuestSlotConflict, SHARED_GAME_QUEST_LIMIT,
-        MAX_PARALLEL_QUESTS,
+        quest_slot_conflict, QuestSlot, QuestSlotConflict, MAX_PARALLEL_QUESTS,
+        SHARED_GAME_QUEST_LIMIT,
     };
 
     fn slot(quest_id: &str, account_id: Option<&str>) -> QuestSlot {
@@ -1791,7 +1791,15 @@ async fn start_video_quest(
     let _gate = state.activity_gate.lock().await;
     state.game_idle.ensure_idle().await?;
     let (client, owner) = quest_client_for(&state, account_id.as_deref())?;
-    ensure_quest_slot_available(&state, &quest_id, false, false, false, false, owner.as_deref())?;
+    ensure_quest_slot_available(
+        &state,
+        &quest_id,
+        false,
+        false,
+        false,
+        false,
+        owner.as_deref(),
+    )?;
 
     let quest_id_for_state = quest_id.clone();
     let outcome = new_quest_outcome();
@@ -1849,7 +1857,15 @@ async fn start_stream_quest(
     let _gate = state.activity_gate.lock().await;
     state.game_idle.ensure_idle().await?;
     let (client, owner) = quest_client_for(&state, account_id.as_deref())?;
-    ensure_quest_slot_available(&state, &quest_id, false, false, false, false, owner.as_deref())?;
+    ensure_quest_slot_available(
+        &state,
+        &quest_id,
+        false,
+        false,
+        false,
+        false,
+        owner.as_deref(),
+    )?;
 
     let quest_id_for_state = quest_id.clone();
     let outcome = new_quest_outcome();
@@ -1906,7 +1922,15 @@ async fn start_game_heartbeat_quest(
     let _gate = state.activity_gate.lock().await;
     state.game_idle.ensure_idle().await?;
     let (client, owner) = quest_client_for(&state, account_id.as_deref())?;
-    ensure_quest_slot_available(&state, &quest_id, false, true, false, true, owner.as_deref())?;
+    ensure_quest_slot_available(
+        &state,
+        &quest_id,
+        false,
+        true,
+        false,
+        true,
+        owner.as_deref(),
+    )?;
 
     let quest_id_for_state = quest_id.clone();
     let outcome = new_quest_outcome();
