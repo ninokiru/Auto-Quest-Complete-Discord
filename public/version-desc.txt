@@ -2,20 +2,38 @@
 
 Auto-complete Discord **video, stream and game quests** from one window. Tauri 2 + Rust behind the scenes, Vue 3 on the surface, and no cloud service in between: everything runs on your machine.
 
-## v0.0.5 L2#5 — the portable build updates into the installed one
+## v0.0.5 L2#6 — parallel progress you can read
 
-Everything in L2#1 to L2#4 is still here. This patch is the remaining half of the update fix: the installed build restarted correctly since L2#2, but a copy started from the `portable.zip` kept coming back as the old file.
+L2#5 fixed the update path. This patch is the batch that was held back behind it: the progress panel finally shows what each quest is really doing, and four new controls land in Settings. Nothing here adds a server you did not choose yourself.
 
 ### Fixed
 
-- **Updating from the portable build now lands on the new version.** The update helper was told to restart the executable it was launched from. For an installed build that is the file the installer had just replaced, but for a portable copy it is the extracted file the installer never touches — so the window reopened on the old build while the new one sat unused in `%LOCALAPPDATA%`. The helper now receives both paths, prefers the installed executable once the installer has created it, and falls back to the launcher only when it does not exist. Your portable folder is left as it was; from now on the app runs from the installed copy.
+- **Each running quest moves its own bar.** The `quest-progress` event now carries the quest id. Until now a single broadcast percent was applied to whichever running slot the panel reached first, so two CDP quests running side by side dragged each other's progress around. A bare number is still accepted, so an event from an older build cannot leave a bar stuck.
+- **A CDP quest can no longer hold a slot forever.** Play and stream poll loops now carry a wall-clock ceiling — three times the quest's own target, ten minutes minimum. A quest that runs past it is ended properly: its spoofed title is released, its slot frees up, and the app stops asking an API that quit reporting. A quest whose target resolves to zero seconds is refused at start instead of polling in a loop that could never finish.
+- **CDP bars are solid blue.** A play or video quest reporting through CDP now paints exactly the percent the server gave back, instead of the green "still counting locally" tail that made the bar look further along than the quest really was.
+
+### New
+
+- **Settings preset.** Advanced settings export your whole configuration as one JSON file and import it back: game mode, completion speed, request and polling intervals, CDP port, Orbs balance, checkpoint range, keep-alive, auto-claim, simulation folder, theme and list density. Importing restarts the app. A file that is not a preset for this app, or one from a newer preset version, is refused rather than half-applied.
+- **Custom webhook.** Turn it on and each quest end POSTs a small JSON document — `event`, `quest_id`, `name`, `error`, `sent_at` — to an endpoint you own. Choose completion and failure separately, set an optional `Authorization: Bearer` token, and press **Send test** to confirm the endpoint before you rely on it. Only http and https URLs are accepted, redirects are never followed, a send gives up after 10 seconds, and a failed delivery never blocks or slows a quest.
+- **Auto-claim rewards.** Off by default. When a quest finishes, the app waits for the refreshed list to show it completed and still unclaimed, claims the reward, then re-reads the list. A refused claim is left alone, so the reward stays claimable from the card.
+- **List density.** Appearance settings gains Comfortable and Compact. Compact tightens the card padding and the grid gap, so a long quest list reads as one column instead of a wall of boxes.
+- **Collapsible progress groups.** The floating progress panel groups running quests by type — game, video, stream, activity — and every group header collapses on its own. With one quest running the headers stay out of the way entirely.
+
+### Also in this build, announced here for the first time
+
+These shipped inside the L2#5 binaries but never appeared in that release's notes:
+
+- The account menu lists your Discord **badges** and jumps to the quests each one is farming.
+- Game quests on one account now **share up to 20 running quests** when they run through CDP or the direct API; a simulated game quest still wants the client to itself.
+- Starting more than five quests at once shows a **risk warning**, and batch-accept clicks are spaced 0.4–0.8s apart instead of firing every accept in the same instant.
 
 ### Checks
 
-- The translation check, the frontend test suite, the runtime identity checks, and the full Rust test suite run on Windows for this release.
-- The helper script's shape (no machine paths, CRLF, both restart targets) is pinned by a unit test.
+- rustfmt, clippy, the full Rust test suite, the frontend test suite and the translation parity check all run on Windows for this release.
+- The webhook module has no Rust test of its own yet — **Send test** in Advanced settings is the way to verify an endpoint.
 
-**Full Changelog**: https://github.com/ninokiru/Auto-Quest-Complete-Discord/compare/0.0.5-L2.4...0.0.5-L2.5
+**Full Changelog**: https://github.com/ninokiru/Auto-Quest-Complete-Discord/compare/0.0.5-L2.5...0.0.5-L2.6
 
 ### How the in-app update works
 
@@ -37,8 +55,8 @@ These binaries are **not code-signed**. The app rewrites its own process identit
 
 | File | Use |
 | --- | --- |
-| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.5-setup.exe` | Windows installer (NSIS) |
-| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.5-portable.zip` | Windows portable, no installation |
+| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.6-setup.exe` | Windows installer (NSIS) |
+| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.6-portable.zip` | Windows portable, no installation |
 
 This release publishes **Windows x64 only**. macOS (Apple Silicon) and Linux (x86_64 `.deb` / AppImage) builds are still fully supported by the source tree and are compiled and tested in CI — only their release publishing is temporarily switched off to keep a release run on one runner. They will return in a later release. If you need one of them now, build it from source (`pnpm tauri:build`).
 
