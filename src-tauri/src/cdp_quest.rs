@@ -5014,7 +5014,7 @@ mod tests {
     #[test]
     fn play_spoof_js_appends_synthetic_game_instead_of_replacing() {
         let js = js_spoof_play_game_for("123", "Cool Game", DetectableOs::Win32, Vec::new());
-        assert!(js.contains("if (list.some(g => sameGame(g, fake))) return list"));
+        assert!(js.contains("if (!list.some(g => sameGame(g, fake))) list.push(fake)"));
         assert!(!js.contains("reuseNativeAndReturn"));
         assert!(!js.contains("notifyGameLaunched"));
         assert!(!js.contains("nativeAlreadyPresent"));
@@ -5024,7 +5024,7 @@ mod tests {
         ));
         assert!(js.contains("if (dqh._spoofActive && dqh._fakeGame) return dqh._fakeGame"));
         assert!(js.contains("if (visible) return visible"));
-        assert!(js.contains("const already = Array.isArray(event.games)"));
+        assert!(js.contains("const before = Array.isArray(event.games)"));
         assert!(js.contains("function allocateSyntheticPid(games)"));
         assert!(js.contains("const syntheticPidMin = 1000000000"));
         assert!(js.contains("fakeGame.pid = allocateSyntheticPid(realGames)"));
