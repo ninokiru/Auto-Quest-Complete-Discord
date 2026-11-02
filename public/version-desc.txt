@@ -2,42 +2,20 @@
 
 Auto-complete Discord **video, stream and game quests** from one window. Tauri 2 + Rust behind the scenes, Vue 3 on the surface, and no cloud service in between: everything runs on your machine.
 
-## v0.0.5 L2#6 — up to twenty shared game quests per account
+## v0.0.5 L2#5 — the portable build updates into the installed one
 
-Everything in L2#1 to L2#5 is still here. This patch lifts the rule that made a second game quest wait: a direct-API heartbeat quest posts its own heartbeats and a CDP play quest keeps its own spoofed title inside the client, so neither needs the account's local presence and up to twenty can run at the same time.
-
-### Changed
-
-- **Discord's Orbs artwork replaces the test token.** Settings, the Home balance and a quest's reward row now show the real Orbs art, shipped inside the app: the still is the poster, the clip is a bundled 400 KB webm. A video quest shows the video orb, every other kind the game orb. The animation is opt-in — a long list keeps the still so dozens of rows do not each decode a video — and it falls back to the still, then to the drawn icon, if playback fails or the system asks for reduced motion.
-- **Settings can pin the theme.** Appearance now offers **System / Light / Dark**: System keeps following the operating system while the window is open, the other two pin the palette until changed. The header button still flips light and dark in one click, and an older saved choice is read as-is.
-- **Game quests run in parallel, up to twenty per account.** Heartbeat quests need no local presence, and each CDP play quest now holds its own spoofed game in Discord's running-games set instead of replacing the previous one, so Discord can heartbeat several quests at once. A quest that ends releases only its own resources while the others keep going; the full CDP cleanup runs when the last one stops. Starting a second one no longer queues it behind the first.
-- **Home warns when more than five quests run together.** From the sixth parallel quest, an amber banner names the count and the risk of a Discord warning or account ban.
-- **Batch acceptance is paced like a person.** "Accept all" now waits a random 0.4–0.8 seconds between enrollments, including failed ones, instead of a fixed half-second burst.
-- **Account badges are visible again.** The account menu shows games played, quests completed and hours played when Discord returns them; the games and hours rows carry a shortcut to the Game Simulator.
-- **The old rules still hold where they matter.** A simulated game, an Activity, or a mix of those with a CDP play quest still occupies the account alone, and video/stream/activity CDP quests still take the Discord window exclusively — those kinds cannot run beside a play quest in either direction.
+Everything in L2#1 to L2#4 is still here. This patch is the remaining half of the update fix: the installed build restarted correctly since L2#2, but a copy started from the `portable.zip` kept coming back as the old file.
 
 ### Fixed
 
-- **The percentage no longer trails the bar the app draws.** A running card and the progress panel read only the value Discord had banked, while the bar itself fills up to the local clock — so a CDP game showed 92% next to a 99% Discord. The number now ends where the bar ends and steps back only if the polled value is higher.
-- **"Waiting for local processing" is gone for Discord-run quests.** That legend described time this app counted and had not submitted yet, which only happens on the direct-API video path; a CDP game or Activity is counted by Discord, so the legend no longer claims a wait that does not exist.
-
-- **A failed CDP game quest no longer takes its siblings with it.** The task wrapper used to wipe every injected bridge when any CDP quest ended with an error, which killed the other running play quests. It now leaves them alone while another play quest is live.
-- **Two quests for one game can run together.** The spoofed titles are refcounted, so finishing one quest no longer removes the game the other is still playing for.
-- **The module budget is actually six seconds.** Each evaluation still had a two-second socket timeout inside the six-second window, so a cold scan failed early; the evaluation now gets the whole budget.
-- **Cleanup and the "last quest" decision are exact.** A quest that joins a running sibling still waits out a cleanup detached from an earlier stop, a second spoof no longer overwrites the first one's restore records, and two quests finishing together can no longer both skip the full cleanup.
-- **The progress number stays honest while running.** A running quest caps at 99%, a checkpoint slot shows the count Discord banked instead of the local clock, and the collapsed bubble now shows the same value as its bar.
-- **A CDP video or Activity start is refused while another quest runs**, instead of being sent to a backend that would reject it.
-- **The window paints the stored theme immediately**, and the orb falls back to its still image (not the drawn icon) if the clip cannot play.
+- **Updating from the portable build now lands on the new version.** The update helper was told to restart the executable it was launched from. For an installed build that is the file the installer had just replaced, but for a portable copy it is the extracted file the installer never touches — so the window reopened on the old build while the new one sat unused in `%LOCALAPPDATA%`. The helper now receives both paths, prefers the installed executable once the installer has created it, and falls back to the launcher only when it does not exist. Your portable folder is left as it was; from now on the app runs from the installed copy.
 
 ### Checks
 
-- New Rust tests pin the admission rules: twenty shared slots fill and the twenty-first is refused, another account has its own budget, a simulated game and a shared game quest never share an account, and heartbeat and CDP play quests mix with each other but not with API video quests.
-- The injected scripts are syntax-checked separately, and the usual Windows gate list (fmt, clippy, tests, build) runs for this release.
+- The translation check, the frontend test suite, the runtime identity checks, and the full Rust test suite run on Windows for this release.
+- The helper script's shape (no machine paths, CRLF, both restart targets) is pinned by a unit test.
 
-> [!NOTE]
-> This is the first build with parallel game quests. If a game quest behaves oddly while several run together, stop them and switch the mode back to simulate; tell me what the card showed and I will follow up.
-
-**Full Changelog**: https://github.com/ninokiru/Auto-Quest-Complete-Discord/compare/0.0.5-L2.5...0.0.5-L2.6
+**Full Changelog**: https://github.com/ninokiru/Auto-Quest-Complete-Discord/compare/0.0.5-L2.4...0.0.5-L2.5
 
 ### How the in-app update works
 
@@ -59,10 +37,10 @@ These binaries are **not code-signed**. The app rewrites its own process identit
 
 | File | Use |
 | --- | --- |
-| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.6-setup.exe` | Windows installer (NSIS) |
-| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.6-portable.zip` | Windows portable, no installation |
+| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.5-setup.exe` | Windows installer (NSIS) |
+| `auto-quest-complete-discord-Windows-x64-0.0.5-L2.5-portable.zip` | Windows portable, no installation |
 
-This release publishes **Windows x64 only**, and the release gate now runs on Windows too: the Linux/macOS trees are no longer compiled by CI, so they build from source but are not verified automatically. If you need one of them, build it yourself (`pnpm tauri:build`).
+This release publishes **Windows x64 only**. macOS (Apple Silicon) and Linux (x86_64 `.deb` / AppImage) builds are still fully supported by the source tree and are compiled and tested in CI — only their release publishing is temporarily switched off to keep a release run on one runner. They will return in a later release. If you need one of them now, build it from source (`pnpm tauri:build`).
 
 > [!WARNING]
 > Automating Discord quests can violate Discord's Terms of Service and may put your account at risk. Use it on an account you are prepared to lose.
