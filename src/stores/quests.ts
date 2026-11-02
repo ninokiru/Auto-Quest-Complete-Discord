@@ -1058,6 +1058,7 @@ export const useQuestsStore = defineStore('quests', () => {
   function isBusyStartRefusal(message: string): boolean {
     const text = message.toLowerCase()
     return text.includes('owns the discord client')
+      || text.includes('needs the discord client to itself')
       || text.includes('runs at a time per account')
       || (text.includes('at most') && text.includes('quests run at the same time'))
   }
@@ -1922,7 +1923,9 @@ export const useQuestsStore = defineStore('quests', () => {
         startProgressSimulation()
         setupListeners()
         syncPolling()
-
+        // No local process was started, so there is no simulation-history
+        // segment to record; the fallback path does the same.
+        return
       } else if (gameQuestMode.value === 'heartbeat') {
         // [LEGACY] Direct heartbeat mode - no game simulation needed
 

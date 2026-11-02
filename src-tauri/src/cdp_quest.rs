@@ -59,9 +59,9 @@ struct PlayQuestGuard {
 }
 
 impl PlayQuestGuard {
-    fn acquire() -> Self {
-        ACTIVE_CDP_PLAY_QUESTS.fetch_add(1, Ordering::SeqCst);
-        Self { claimed: false }
+    fn acquire() -> (Self, usize) {
+        let previous = ACTIVE_CDP_PLAY_QUESTS.fetch_add(1, Ordering::SeqCst);
+        (Self { claimed: false }, previous)
     }
 
     /// Drop this quest's count now and report how many others are still live.
@@ -474,14 +474,17 @@ fn js_play_activity_status(quest_id: &str) -> String {
             return JSON.stringify({{ success: false, error: "Quest not found in /quests/@me" }});
         }}
         const userStatus = quest.user_status ?? quest.userStatus;
-        const progress = Number(
-            userStatus?.progress?.PLAY_ACTIVITY?.value ?? 0
-        );
+        const progress = Number(userStatus?.progress?.PLAY_ACTIVITY?.value);
         const completedAt = userStatus?.completed_at ?? userStatus?.completedAt ?? null;
+        // A missing counter is a schema break, not zero progress: reporting 0
+        // makes the confirmation loop time out with a misleading message.
+        if (!Number.isFinite(progress)) {{
+            return JSON.stringify({{ success: false, error: "PLAY_ACTIVITY status has no numeric progress" }});
+        }}
 
         return JSON.stringify({{
             success: true,
-            progress: Number.isFinite(progress) ? progress : 0,
+            progress,
             completed: completedAt != null
         }});
     }} catch (error) {{
@@ -940,7 +943,9 @@ fn js_remove_spoofed_game(app_id: &str) -> String {
         if (!dqh || !dqh.initialized) return JSON.stringify({{ success: true, remaining: 0 }});
 
         const applicationId = {safe_app_id};
+        let removedGame = null;
         if (dqh._fakeGames && typeof dqh._fakeGames === "object") {{
+            removedGame = dqh._fakeGames[applicationId] || null;
             delete dqh._fakeGames[applicationId];
         }}
         const remaining = dqh._fakeGames ? Object.keys(dqh._fakeGames).length : 0;
@@ -963,7 +968,7 @@ fn js_remove_spoofed_game(app_id: &str) -> String {
                 }}
                 const pending = dqh.FluxDispatcher.dispatch({{
                     type: "RUNNING_GAMES_CHANGE",
-                    removed: [],
+                    removed: removedGame ? [removedGame] : [],
                     added: [],
                     games: Array.isArray(realGames) ? realGames : []
                 }});
@@ -1831,15 +1836,17 @@ async fn initialize_modules_with<T>(
     let deadline = tokio::time::Instant::now() + CDP_MODULE_INIT_BUDGET;
     // Discover first; no cache or client state is installed until all required methods exist.
     for attempt in 0..3 {
-        let result =
-            tokio::time::timeout_at(deadline, execute(&verified, module_script(operation, true)))
-                .await
-                .map_err(|_| {
-                    anyhow::Error::from(capability_error(
-                        operation,
-                        &serde_json::json!({"missing":["module_discovery_timeout"]}),
-                    ))
-                })??;
+        // The discovery pass reads the same process-scoped bridge as the install
+        // pass, so it must use the rewritten identifier too.
+        let discovery = with_bridge(&module_script(operation, true));
+        let result = tokio::time::timeout_at(deadline, execute(&verified, discovery))
+            .await
+            .map_err(|_| {
+                anyhow::Error::from(capability_error(
+                    operation,
+                    &serde_json::json!({"missing":["module_discovery_timeout"]}),
+                ))
+            })??;
         let parsed: serde_json::Value = serde_json::from_str(&result)?;
         if parsed["success"] == true {
             // The page already holds the modules this operation needs, so the
@@ -2004,6 +2011,12 @@ async fn cdp_cleanup_before_init(port: u16) -> Result<()> {
 }
 
 pub(crate) async fn cdp_cleanup_after_stop(port: u16, context: &str, cancelled: bool) {
+    // A stop path for video/stream/activity can land after its slot was released
+    // and play quests were admitted; wiping every bridge would take their spoofs
+    // with it. The last play quest cleans up after itself.
+    if ACTIVE_CDP_PLAY_QUESTS.load(Ordering::SeqCst) > 0 {
+        return;
+    }
     let attempts = if cancelled {
         CDP_CLEANUP_CANCEL_ATTEMPTS
     } else {
@@ -2467,8 +2480,7 @@ pub async fn complete_play_quest_via_cdp(
     // Defensive pre-cleanup: prevent stale spoof state from a previous run from
     // leaking into the new quest session. It wipes every spoof, so it only runs
     // when this is the first CDP play quest; later ones join the running set.
-    let active_before = ACTIVE_CDP_PLAY_QUESTS.load(Ordering::SeqCst);
-    let mut play_guard = PlayQuestGuard::acquire();
+    let (mut play_guard, active_before) = PlayQuestGuard::acquire();
     if active_before == 0 {
         cdp_cleanup_before_init(port).await?;
     } else {

@@ -1208,9 +1208,19 @@ async fn stop_simulation(
                 }
             }
         }
-        RunningSimulation::Cdp { port } => crate::cdp_quest::stop_manual_game_spoof(*port)
-            .await
-            .map_err(|error| error.to_string()),
+        RunningSimulation::Cdp { port } => {
+            // The client that held the spoof is gone; there is nothing left to
+            // clean, and retrying a 45-second cleanup would wedge game-idle.
+            if !crate::cdp_client::check_cdp_available(*port)
+                .await
+                .connected
+            {
+                return Ok(());
+            }
+            crate::cdp_quest::stop_manual_game_spoof(*port)
+                .await
+                .map_err(|error| error.to_string())
+        }
     }
 }
 

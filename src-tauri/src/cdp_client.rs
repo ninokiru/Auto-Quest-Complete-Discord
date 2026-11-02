@@ -83,7 +83,7 @@ async fn read_browser_metadata(port: u16) -> Result<serde_json::Value, String> {
         .timeout(Duration::from_secs(2))
         .build()
         .map_err(|error| format!("Could not inspect CDP client: {error}"))?;
-    let response = client
+    let mut response = client
         .get(format!("http://127.0.0.1:{port}/json/version"))
         .send()
         .await
@@ -99,12 +99,18 @@ async fn read_browser_metadata(port: u16) -> Result<serde_json::Value, String> {
     {
         return Err(metadata_oversized());
     }
-    let body = response
-        .bytes()
+    // Check the size while reading: a chunked reply has no Content-Length, and
+    // buffering it all first would let a local endpoint exhaust memory.
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|error| format!("Could not read CDP client metadata: {error}"))?;
-    if body.len() > CDP_METADATA_MAX_BYTES {
-        return Err(metadata_oversized());
+        .map_err(|error| format!("Could not read CDP client metadata: {error}"))?
+    {
+        if body.len() + chunk.len() > CDP_METADATA_MAX_BYTES {
+            return Err(metadata_oversized());
+        }
+        body.extend_from_slice(&chunk);
     }
     serde_json::from_slice(&body).map_err(|_| {
         format!("Invalid CDP client information on port {port}. Use official Discord or Vesktop.")
@@ -413,8 +419,12 @@ fn classify_bound_target_probe(runtime: &CdpRuntime, bound_generation: &str) -> 
             }
         }
         Some(_) => BoundTargetProbe::Reloaded,
-        // The TCP, handshake or close path failed, so this target cannot come back.
-        None if !runtime.web_socket_reachable => BoundTargetProbe::Closed,
+        // A refused connect or failed handshake is a transient probe failure;
+        // only an observed close means the target cannot come back.
+        None if !runtime.web_socket_reachable => match runtime.reason_code.as_deref() {
+            Some("target_closed") => BoundTargetProbe::Closed,
+            _ => BoundTargetProbe::Stalled,
+        },
         None => match runtime.reason_code.as_deref() {
             Some("target_closed") => BoundTargetProbe::Closed,
             _ => BoundTargetProbe::Stalled,

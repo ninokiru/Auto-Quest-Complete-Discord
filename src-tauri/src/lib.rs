@@ -1543,8 +1543,15 @@ async fn switch_account(
     if previous.as_deref() == Some(user_id.as_str()) {
         return Ok(session.user);
     }
+    // The manual spoof lives in the client being switched away from.
+    state.manual_cdp_game.lock().await.ensure_idle()?;
     if let Some(left) = &previous {
-        stop_quest_tasks(&state, |task| task.exclusive && task_belongs_to(task, left)).await;
+        // CDP play quests are not exclusive, but they still inject into the
+        // client that is about to hold another account's session.
+        stop_quest_tasks(&state, |task| {
+            (task.exclusive || task.cdp_play) && task_belongs_to(task, left)
+        })
+        .await;
     }
     *state.authenticated_user.lock().unwrap() = Some(session.user.clone());
     *state.client.lock().unwrap() = Some(session.client);
@@ -2530,6 +2537,7 @@ async fn navigate_discord_spa(
     if has_running_exclusive_quest(&state) {
         return Err("Stop the active CDP quest first".to_string());
     }
+    cdp_client::ensure_supported_automation_client(cdp_port).await?;
     cdp_quest::navigate_discord_spa(cdp_port, &target_path)
         .await
         .map_err(|e| format!("Failed to navigate Discord SPA: {}", e))

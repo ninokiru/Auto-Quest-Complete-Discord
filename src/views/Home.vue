@@ -897,11 +897,9 @@ const acceptingAllQuestIds = ref<Set<string>>(new Set())
 const preparingQuestId = ref<string | null>(null)
 const startingQuestId = computed(() => preparingQuestId.value ?? questsStore.startingQuestId)
 
-/** Whether a parallel slot is free. CDP mode drives the single Discord client,
- *  so the backend only admits one CDP task at a time there. */
-const parallelCap = computed(() =>
-  questsStore.gameQuestMode === 'cdp' ? 1 : questsStore.maxParallelQuests
-)
+/** Whether a parallel slot is free. CDP play quests share the client up to the
+ *  store's own limit; an exclusive CDP video/activity start is refused there. */
+const parallelCap = computed(() => questsStore.maxParallelQuests)
 
 const hasFreeQuestSlot = computed(() => questsStore.runningQuests.length < parallelCap.value)
 
