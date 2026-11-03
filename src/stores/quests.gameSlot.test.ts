@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { Quest } from '@/api/tauri'
-import { useQuestsStore } from './quests'
+import { useQuestsStore, type RunningQuest } from './quests'
 
 const mocks = vi.hoisted(() => ({
   getPlatformCapabilities: vi.fn(),
@@ -180,5 +180,51 @@ describe('game quest slots per account', () => {
     await store.startVideo('video', 60, 0)
 
     expect(store.runningQuests.map(slot => slot.questId)).toEqual(['game-a', 'video'])
+  })
+
+  it('runs simulated quests for different games and queues the same title', () => {
+    const store = useQuestsStore()
+    const slot = (id: string, patch: Partial<RunningQuest> = {}): RunningQuest => ({
+      questId: id,
+      type: 'game',
+      targetDuration: 600,
+      progressUnit: 'time',
+      taskKey: 'PLAY_ON_DESKTOP',
+      serverProgress: 0,
+      localProgress: 0,
+      gameExe: null,
+      simulationAppId: null,
+      rpcConnected: false,
+      hasBackendTask: true,
+      ...patch,
+    })
+
+    expect(store.gameSlotBlockReason('app-a')).toBe('none')
+
+    // A simulated quest occupies its own title, not the whole account.
+    store.gameQuestMode = 'simulate'
+    store.runningQuests.push(slot('sim-a', { simulationAppId: 'app-a' }))
+    expect(store.gameSlotBusy('app-b')).toBe(false)
+    expect(store.gameSlotBlockReason('app-b')).toBe('none')
+    expect(store.gameSlotBusy('app-a')).toBe(true)
+    expect(store.gameSlotBlockReason('app-a')).toBe('same-title')
+
+    // A CDP or heartbeat quest cannot be joined by a simulated one.
+    store.runningQuests.splice(0)
+    store.runningQuests.push(slot('cdp', { cdpPlay: true }))
+    expect(store.gameSlotBlockReason('app-b')).toBe('simulated')
+
+    // A cloud-game activity holds the client on its own.
+    store.runningQuests.splice(0)
+    store.runningQuests.push(slot('activity', { type: 'activity' }))
+    expect(store.gameSlotBlockReason('app-b')).toBe('activity')
+
+    // Twenty shared game quests really is the cap.
+    store.gameQuestMode = 'cdp'
+    store.runningQuests.splice(0)
+    for (let index = 0; index < 20; index += 1) {
+      store.runningQuests.push(slot(`game-${index}`, { cdpPlay: true }))
+    }
+    expect(store.gameSlotBlockReason()).toBe('limit')
   })
 })

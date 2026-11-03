@@ -37,17 +37,18 @@ import {
 // the whole runtime audit) and splitting them keeps the first chunk small enough
 // that the shell appears immediately after login.
 const GameSimulator = defineAsyncComponent(() => import('./views/GameSimulator.vue'))
+const GlobalQuests = defineAsyncComponent(() => import('./views/GlobalQuests.vue'))
 const Settings = defineAsyncComponent(() => import('./views/Settings.vue'))
 const Debug = defineAsyncComponent(() => import('./views/Debug.vue'))
 
 const { t, locale } = useI18n()
 const currentTab = ref<AppTab>('home')
-// The window normally reopens on the tab it was last used on. Only Game and
+// The window normally reopens on the tab it was last used on. Game, Global and
 // Settings are restored: Home is both the dashboard and the login screen, and a
 // saved tab is applied once a session exists so signing out still lands there.
 const LAST_TAB_STORAGE_KEY = 'questHelper_lastTab'
 const savedTab = localStorage.getItem(LAST_TAB_STORAGE_KEY)
-const tabToRestore: AppTab | null = savedTab === 'game' || savedTab === 'settings' ? savedTab : null
+const tabToRestore: AppTab | null = savedTab === 'game' || savedTab === 'global' || savedTab === 'settings' ? savedTab : null
 let tabChosenByUser = false
 
 function selectTab(tab: AppTab) {
@@ -228,7 +229,7 @@ onUnmounted(() => {
 
 function handleAppNavigate(e: Event) {
   const tab = (e as CustomEvent<string>).detail
-  if (tab === 'home' || tab === 'game' || tab === 'settings' || tab === 'debug') {
+  if (tab === 'home' || tab === 'global' || tab === 'game' || tab === 'settings' || tab === 'debug') {
     selectTab(tab)
   }
 }
@@ -421,6 +422,8 @@ watch(
             </LoginPanel>
           </template>
         
+          <GlobalQuests v-else-if="currentTab === 'global'" />
+
           <GameSimulator v-else-if="currentTab === 'game'" />
         
           <Settings

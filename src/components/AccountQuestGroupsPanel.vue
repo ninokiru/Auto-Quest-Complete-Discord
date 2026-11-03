@@ -95,10 +95,16 @@ function noteOf(
   return { note: '', isError: false }
 }
 
-/** Whether this account already runs a game quest. A game quest holds the
- *  account's single game slot, so a second one is refused by the backend. */
+/** Game quests this account already runs. */
+function runningGameCount(accountId: string, group: AccountQuestGroup): number {
+  return group.quests.filter(quest => isRunning(accountId, quest.id) && isGameQuest(quest)).length
+}
+
+/** Whether this account's game slots are full. Quests started from this panel go
+ *  through the direct API, which the backend lets share the account up to the
+ *  same cap as CDP play, so the shared limit is the only ceiling here. */
 function gameSlotBusy(accountId: string, group: AccountQuestGroup): boolean {
-  return group.quests.some(quest => isRunning(accountId, quest.id) && isGameQuest(quest))
+  return runningGameCount(accountId, group) >= questsStore.maxSharedGameQuests
 }
 
 /** Eligible for the group's Run all: unfinished, not already running and drivable
@@ -106,10 +112,9 @@ function gameSlotBusy(accountId: string, group: AccountQuestGroup): boolean {
  *  a batch cannot queue starts it would reject. An unenrolled quest counts, because
  *  Run all accepts it first.
  *
- *  One game quest runs at a time per account: the account already running one
- *  leaves no room for another, and a batch that is not already running one starts
- *  exactly one of them. The quests it leaves out are not failures — they wait for
- *  the running game to end. */
+ *  Game quests share the account up to the shared limit because this panel starts
+ *  them through the direct API, so a batch fills every free game slot instead of
+ *  stopping at the first one. */
 function runnableQuests(group: AccountQuestGroup): Quest[] {
   const accountId = group.account.user.id
   const running = group.quests.filter(quest => isRunning(accountId, quest.id)).length
@@ -119,12 +124,12 @@ function runnableQuests(group: AccountQuestGroup): Quest[] {
     .filter(quest => !quest.user_status?.completed_at)
     .filter(quest => !isRunning(accountId, quest.id))
     .filter(quest => foreignQuestBlocker(quest) === null)
-  let gameTaken = gameSlotBusy(accountId, group)
+  let gameRoom = Math.max(0, questsStore.maxSharedGameQuests - runningGameCount(accountId, group))
   const queue: Quest[] = []
   for (const quest of candidates) {
     if (isGameQuest(quest)) {
-      if (gameTaken) continue
-      gameTaken = true
+      if (gameRoom <= 0) continue
+      gameRoom -= 1
     }
     queue.push(quest)
     if (queue.length >= free) break
@@ -227,8 +232,8 @@ async function handleRunAll(group: ForeignGroupView): Promise<void> {
   if (!source) return
   const queue = runnableQuests(source)
   if (queue.length === 0) return
-  // The game quests the batch leaves out are not failures: one game quest runs at
-  // a time per account, so the rest wait for the one that started.
+  // The game quests the batch leaves out are not failures: they wait for a free
+  // game slot on that account.
   const eligible = source.quests
     .filter(quest => !quest.user_status?.completed_at)
     .filter(quest => !isRunning(group.accountId, quest.id))

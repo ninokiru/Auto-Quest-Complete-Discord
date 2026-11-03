@@ -14,10 +14,10 @@ const iconMap = {
 }
 
 const styleMap = {
-  success: 'border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-400',
+  success: 'border-ok/30 bg-ok/10 text-ok',
   error: 'border-destructive/30 bg-destructive/10 text-error',
-  warning: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400',
-  info: 'border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400',
+  warning: 'border-warn/30 bg-warn/10 text-warn',
+  info: 'border-info/30 bg-info/10 text-info',
 }
 </script>
 

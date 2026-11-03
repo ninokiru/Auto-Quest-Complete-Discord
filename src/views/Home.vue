@@ -55,13 +55,13 @@
            for; state the risk once the user crosses five running quests. -->
       <div
         v-if="questsStore.runningQuests.length > PARALLEL_WARNING_THRESHOLD"
-        class="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4"
+        class="flex items-start gap-3 rounded-lg border border-warn/30 bg-warn/10 p-4"
       >
-        <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/20">
-          <ShieldAlert class="h-5 w-5 text-amber-700 dark:text-amber-400" />
+        <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-warn/20">
+          <ShieldAlert class="h-5 w-5 text-warn" />
         </div>
         <div class="min-w-0 space-y-1">
-          <p class="font-semibold text-amber-800 dark:text-amber-300">
+          <p class="font-semibold text-warn">
             {{ t('home.parallel_warning_title', { count: questsStore.runningQuests.length }) }}
           </p>
           <p class="text-sm text-muted-foreground text-pretty">
@@ -303,7 +303,7 @@
                   <div v-else-if="quest.user_status?.completed_at && !quest.user_status?.claimed_at" class="relative -mt-1 mb-1">
                     <Button
                       :disabled="claimingQuest === quest.id || isBatchAccepting"
-                      class="bg-green-600 hover:bg-green-700 text-white gap-1.5"
+                      class="bg-ok hover:bg-ok/90 text-primary-foreground gap-1.5"
                       @click="claimReward(quest)"
                     >
                       <Loader2 v-if="claimingQuest === quest.id" class="w-4 h-4 animate-spin" />
@@ -312,12 +312,12 @@
                     </Button>
                     <span
                       v-if="claimedNoticeQuestId === quest.id"
-                      class="absolute top-full right-0 mt-1.5 whitespace-nowrap text-[11px] text-green-700 dark:text-green-400 notice-fade"
+                      class="absolute top-full right-0 mt-1.5 whitespace-nowrap text-[11px] text-ok notice-fade"
                     >
                       {{ t('home.claim_navigated') }}
                     </span>
                   </div>
-                   <span v-else-if="quest.user_status?.completed_at" class="self-center px-2 text-sm font-medium text-green-700 dark:text-green-400">
+                   <span v-else-if="quest.user_status?.completed_at" class="self-center px-2 text-sm font-medium text-ok">
                     {{ t('home.completed') }}
                   </span>
                 </Transition>
@@ -364,7 +364,7 @@
               <div class="border rounded-md p-3 bg-secondary/20 max-h-[300px] overflow-y-auto space-y-2 text-xs">
                 <div v-for="quest in pendingAcceptQuests" :key="quest.id" class="flex justify-between items-center gap-4">
                   <span class="font-medium truncate flex-1">{{ quest.config.messages.quest_name }}</span>
-                  <span class="text-muted-foreground whitespace-nowrap font-mono">
+                  <span class="text-muted-foreground whitespace-nowrap font-mono tabular-nums">
                     {{ quest.config.expires_at ? formatDateTime(quest.config.expires_at, locale) : t('quest.no_expiry') }}
                   </span>
                 </div>
@@ -390,7 +390,7 @@
               <div class="border rounded-md p-3 bg-secondary/20 max-h-[300px] overflow-y-auto space-y-2 text-xs">
                  <div v-for="q in pendingCompleteQuests" :key="q.id" class="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1">
                     <span class="font-medium truncate text-foreground">{{ q.config.messages.quest_name }}</span>
-                    <span :class="cn('font-mono', getExpiryColor(q.config.expires_at))">
+                    <span :class="cn('font-mono tabular-nums', getExpiryColor(q.config.expires_at))">
                       {{ getExpiryText(q.config.expires_at) }}
                     </span>
                     <span class="text-xs text-muted-foreground col-span-2 truncate">
@@ -445,7 +445,7 @@
           </DialogDescription>
         </DialogHeader>
         <div class="space-y-4 py-2">
-          <div class="p-3 bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 rounded-md text-sm border border-yellow-500/20 space-y-1">
+          <div class="p-3 bg-warn/10 text-warn rounded-md text-sm border border-warn/20 space-y-1">
             <p>{{ t('game_sim.no_exe_hint') }}</p>
             <p>{{ t('game_sim.no_exe_custom_warning') }}</p>
           </div>
@@ -510,19 +510,19 @@
         <div class="space-y-4 py-2">
           <div class="space-y-3 text-sm">
             <div class="flex items-start gap-3">
-              <div class="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-medium">1</div>
+              <div class="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-medium font-mono tabular-nums">1</div>
               <p>{{ t('home.activity_launch_step1') }}</p>
             </div>
             <div class="flex items-start gap-3">
-              <div class="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-medium">2</div>
+              <div class="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-medium font-mono tabular-nums">2</div>
               <p>{{ t('home.activity_launch_step2') }}</p>
             </div>
             <div class="flex items-start gap-3">
-              <div class="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-medium">3</div>
+              <div class="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-medium font-mono tabular-nums">3</div>
               <p>{{ t('home.activity_launch_step3') }}</p>
             </div>
             <div class="flex items-start gap-3">
-              <div class="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-medium">4</div>
+              <div class="flex-shrink-0 w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-medium font-mono tabular-nums">4</div>
               <p>{{ t('home.activity_launch_step4') }}</p>
             </div>
           </div>
@@ -569,7 +569,7 @@
               <div class="border rounded-md p-3 bg-secondary/20 max-h-[300px] overflow-y-auto space-y-2 text-xs">
                  <div v-for="q in pendingBatchCompleteQuests" :key="q.id" class="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1">
                     <span class="font-medium truncate text-foreground">{{ q.config.messages.quest_name }}</span>
-                    <span :class="cn('font-mono', getExpiryColor(q.config.expires_at))">
+                    <span :class="cn('font-mono tabular-nums', getExpiryColor(q.config.expires_at))">
                       {{ getExpiryText(q.config.expires_at) }}
                     </span>
                     <span class="text-xs text-muted-foreground col-span-2 truncate">
@@ -1559,13 +1559,36 @@ async function startOrQueuePlay(
   initialProgress: number,
   exeName?: string,
 ) {
-  if (questsStore.gameSlotBusy()) {
+  // Simulate allows one quest per title, so the gate is asked about this game.
+  const gameAppId = questApplicationId(quest)
+  if (questsStore.gameSlotBusy(gameAppId)) {
     questsStore.addToQueue(quest, exeName)
     void questsStore.startQueue()
-    toast.info({
-      title: t('toast.game_queued_title'),
-      description: t('toast.game_queued_desc'),
-    })
+    // The queued quest waits either way, but the reason decides the wording:
+    // one simulated game holding the account is not "all 20 slots are busy".
+    const messages = {
+      limit: {
+        title: t('toast.game_queued_limit_title'),
+        description: t('toast.game_queued_limit_desc'),
+      },
+      activity: {
+        title: t('toast.game_queued_activity_title'),
+        description: t('toast.game_queued_activity_desc'),
+      },
+      simulated: {
+        title: t('toast.game_queued_simulated_title'),
+        description: t('toast.game_queued_simulated_desc'),
+      },
+      'same-title': {
+        title: t('toast.game_queued_same_title_title'),
+        description: t('toast.game_queued_same_title_desc'),
+      },
+      none: {
+        title: t('toast.game_queued_title'),
+        description: t('toast.game_queued_desc'),
+      },
+    }
+    toast.info(messages[questsStore.gameSlotBlockReason(gameAppId)])
     return
   }
   await questsStore.startPlay(quest, secondsNeeded, initialProgress, exeName)
@@ -1623,8 +1646,8 @@ function getExpiryColor(dateStr: string | null | undefined): string {
   const diff = expires.getTime() - now.getTime()
   
   if (diff < 0) return 'text-error font-bold' // Expired
-  if (diff < 1000 * 60 * 60 * 24) return 'text-orange-700 dark:text-orange-400' // < 24h
-  return 'text-green-700 dark:text-green-400'
+  if (diff < 1000 * 60 * 60 * 24) return 'text-warn' // < 24h
+  return 'text-ok'
 }
 
 function getExpiryText(dateStr: string | null | undefined): string {

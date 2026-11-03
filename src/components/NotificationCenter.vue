@@ -48,10 +48,10 @@ const kindIcon: Record<NotificationKind, Component> = {
 
 const kindTone: Record<NotificationKind, string> = {
   update_available: 'text-primary',
-  quest_completed: 'text-green-700 dark:text-green-400',
+  quest_completed: 'text-ok',
   quest_failed: 'text-error',
   new_quests: 'text-primary',
-  error: 'text-amber-700 dark:text-amber-400',
+  error: 'text-warn',
 }
 
 const badgeText = computed(() => {
@@ -145,7 +145,7 @@ const latestTag = computed(() => versionStore.latestRelease?.tag_name ?? '')
         <Bell class="h-4 w-4" />
         <span
           v-if="badgeText"
-          class="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold leading-none text-primary-foreground"
+          class="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 font-mono tabular-nums text-[10px] font-semibold leading-none text-primary-foreground"
         >{{ badgeText }}</span>
       </Button>
     </DropdownMenuTrigger>
@@ -160,7 +160,7 @@ const latestTag = computed(() => versionStore.latestRelease?.tag_name ?? '')
         >
           <Bell class="h-3.5 w-3.5" />
           {{ t('notify.tab_inbox') }}
-          <span v-if="notifications.unreadCount > 0" class="rounded-full bg-primary/15 px-1.5 text-[10px] font-semibold text-primary">
+          <span v-if="notifications.unreadCount > 0" class="rounded-full bg-primary/15 px-1.5 font-mono tabular-nums text-[10px] font-semibold text-primary">
             {{ notifications.unreadCount }}
           </span>
         </button>
@@ -200,7 +200,7 @@ const latestTag = computed(() => versionStore.latestRelease?.tag_name ?? '')
                 <span class="mt-0.5 block break-words text-xs leading-relaxed text-muted-foreground">{{ bodyOf(item) }}</span>
               </button>
               <div class="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground/80">
-                <span>{{ timeOf(item) }}</span>
+                <span class="font-mono tabular-nums">{{ timeOf(item) }}</span>
                 <button
                   v-if="item.params.url"
                   type="button"
@@ -285,15 +285,15 @@ const latestTag = computed(() => versionStore.latestRelease?.tag_name ?? '')
               class="border-t border-border/50 py-3 first:border-t-0 first:pt-0"
             >
               <div class="mb-2 flex flex-wrap items-center gap-2">
-                <h4 class="font-mono text-sm font-semibold text-foreground">{{ formatVersionLabel(release.tag_name) }}</h4>
+                <h4 class="font-mono tabular-nums text-sm font-semibold text-foreground">{{ formatVersionLabel(release.tag_name) }}</h4>
                 <Badge v-if="index === 0" variant="outline" class="border-primary/40 text-[10px] text-primary">
                   {{ t('notify.log_latest') }}
                 </Badge>
                 <Badge v-if="release.tag_name.replace(/^v/, '') === currentTag" variant="outline" class="text-[10px] text-muted-foreground">
                   {{ t('notify.log_current') }}
                 </Badge>
-                <span v-if="release.prerelease" class="text-[10px] text-amber-700 dark:text-amber-300">{{ t('settings.version_prerelease') }}</span>
-                <span v-if="formatPublishedDate(release.published_at, appLocale)" class="text-[11px] text-muted-foreground">
+                <span v-if="release.prerelease" class="text-[10px] text-warn">{{ t('settings.version_prerelease') }}</span>
+                <span v-if="formatPublishedDate(release.published_at, appLocale)" class="font-mono tabular-nums text-[11px] text-muted-foreground">
                   {{ formatPublishedDate(release.published_at, appLocale) }}
                 </span>
                 <button

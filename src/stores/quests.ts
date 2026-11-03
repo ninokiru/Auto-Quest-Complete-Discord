@@ -248,6 +248,9 @@ function readRecentGameIds(): string[] {
   }
 }
 
+/** Why an account's game slot refused another game quest. */
+export type GameSlotReason = 'none' | 'limit' | 'activity' | 'simulated' | 'same-title'
+
 export const useQuestsStore = defineStore('quests', () => {
   const quests = ref<Quest[]>([])
   const excludedQuests = ref<ExcludedQuest[]>([])
@@ -373,23 +376,65 @@ export const useQuestsStore = defineStore('quests', () => {
    *
    *  Every local slot belongs to the account the page is on. CDP play and
    *  direct-API heartbeat quests keep no local presence, so they share the
-   *  account up to the limit; a simulated game, an Activity or a mix of the two
-   *  still owns the account alone. */
-  function gameSlotAllows(shared: boolean): boolean {
+   *  account up to the limit; an Activity still owns the account alone.
+   *
+   *  Simulated game quests also share, one per title: each quest runs its own
+   *  simulated executable and its own history segment, and Discord counts every
+   *  running game, so two different titles progress together. Two quests for the
+   *  same title share one executable and one segment, so the second waits for the
+   *  first to finish rather than tearing its resources down. */
+  function gameSlotAllows(shared: boolean, appId?: string | null): boolean {
     const games = runningQuests.value.filter(
       slot => slot.type === 'game' || slot.type === 'activity',
     )
     if (games.length === 0) return true
-    if (!shared) return false
-    const allShared = games.every(
-      slot => slot.type === 'game' && (slot.cdpPlay || slot.heartbeatPlay),
+    if (shared) {
+      const allShared = games.every(
+        slot => slot.type === 'game' && (slot.cdpPlay || slot.heartbeatPlay),
+      )
+      return allShared && games.length < MAX_SHARED_GAME_QUESTS
+    }
+    const allSimulated = games.every(
+      slot => slot.type === 'game' && !slot.cdpPlay && !slot.heartbeatPlay,
     )
-    return allShared && games.length < MAX_SHARED_GAME_QUESTS
+    if (!allSimulated || !appId) return false
+    // A slot whose title is not recorded yet may be this same game mid-start.
+    if (games.some(slot => !slot.simulationAppId)) return false
+    return games.every(slot => slot.simulationAppId !== appId)
   }
 
   /** Whether a start of the current mode would be refused by the game slot. */
-  function gameSlotBusy(): boolean {
-    return !gameSlotAllows(gameQuestMode.value !== 'simulate')
+  function gameSlotBusy(appId?: string | null): boolean {
+    return !gameSlotAllows(gameQuestMode.value !== 'simulate', appId)
+  }
+
+  /**
+   * Why the game slot refuses a start. A queued quest keeps waiting either way;
+   * this only decides what the user is told, because "all slots are busy" is
+   * false when one game quest holds the account on its own.
+   */
+  function gameSlotBlockReason(appId?: string | null): GameSlotReason {
+    const games = runningQuests.value.filter(
+      slot => slot.type === 'game' || slot.type === 'activity',
+    )
+    if (games.length === 0) return 'none'
+    // A cloud-game Activity drives the client through the API and runs alone.
+    if (games.some(slot => slot.type === 'activity')) return 'activity'
+    if (gameQuestMode.value !== 'simulate') {
+      // A simulated game holds the account's only local presence.
+      if (games.some(slot => !slot.cdpPlay && !slot.heartbeatPlay)) return 'simulated'
+      if (games.length >= MAX_SHARED_GAME_QUESTS) return 'limit'
+      return 'none'
+    }
+    // Simulate mode: a new title can join, the same title cannot.
+    const allSimulated = games.every(
+      slot => slot.type === 'game' && !slot.cdpPlay && !slot.heartbeatPlay,
+    )
+    if (!allSimulated) return 'simulated'
+    if (appId && games.every(slot => slot.simulationAppId && slot.simulationAppId !== appId)) {
+      return 'none'
+    }
+    return 'same-title'
   }
 
   /**
@@ -412,18 +457,18 @@ export const useQuestsStore = defineStore('quests', () => {
   }
 
   /**
-   * Reject a game quest while another one runs. An account publishes one game
-   * presence, and on the simulated path one executable and one history segment
-   * per title rather than per quest, so the first quest to finish would tear
-   * down the second's resources. The queue defers these candidates instead of
-   * calling in, so this covers a manual Start; the backend enforces the same
-   * rule for the paths it owns.
+   * Reject a game quest the account cannot take. Shared path: up to twenty
+   * CDP and heartbeat game quests. Simulated path: one quest per title, because
+   * a title has one simulated executable and one history segment, so the first
+   * quest to finish would tear down the second's resources. The queue defers
+   * these candidates instead of calling in, so this covers a manual Start; the
+   * backend enforces the shared limit for the paths it owns.
    */
-  function ensureGameSlotFree(shared = false) {
-    if (gameSlotAllows(shared)) return
+  function ensureGameSlotFree(shared = false, appId?: string | null) {
+    if (gameSlotAllows(shared, appId)) return
     const message = shared
       ? `At most ${MAX_SHARED_GAME_QUESTS} game quests run at a time per account`
-      : 'One game quest runs at a time per account; wait for the running one to finish'
+      : 'Another game quest already holds this account; wait for it to finish'
     error.value = message
     throw new Error(message)
   }
@@ -539,9 +584,9 @@ export const useQuestsStore = defineStore('quests', () => {
    * Hold a finished quest's game open for the configured time. The hold defers
    * the teardown only: the completion itself is announced right away.
    *
-   * The slot stays in `runningQuests` for the whole hold, so the account's
-   * single game slot remains taken and no second game quest can start while
-   * the first one's game is still connected. The completion claim stays too, so
+   * The slot stays in `runningQuests` for the whole hold, so that title keeps
+   * its simulated process and a second quest for the same game cannot start. The
+   * completion claim stays too, so
    * polling and late events cannot finalize the same slot twice.
    *
    * Returns false when no hold applies — the feature is off, or the quest never
@@ -1930,7 +1975,8 @@ export const useQuestsStore = defineStore('quests', () => {
     taskKey?: string | null
   ) {
     ensureLocalQuestSlot(quest.id)
-    ensureGameSlotFree(gameQuestMode.value !== 'simulate')
+    // Simulate allows one quest per title, so the gate needs the app id.
+    ensureGameSlotFree(gameQuestMode.value !== 'simulate', questApplicationId(quest))
     startingQuestId.value = quest.id
     error.value = null
     // Remember the request so a soft error can offer "switch to CDP and retry".
@@ -2629,7 +2675,8 @@ export const useQuestsStore = defineStore('quests', () => {
         // simulated game or an Activity still owns it alone.
         const queueItem = questQueue.value.find(item =>
           !questSlot(item.id)
-          && (!isGameQuest(item) || gameSlotAllows(isSharedGameCandidate(item))))
+          && (!isGameQuest(item)
+            || gameSlotAllows(isSharedGameCandidate(item), questApplicationId(item))))
         if (!queueItem) return
 
         // The task this quest actually runs decides both its target and the
@@ -2994,6 +3041,8 @@ export const useQuestsStore = defineStore('quests', () => {
     startStream,
     startPlay,
     gameSlotBusy,
+    gameSlotBlockReason,
+    maxSharedGameQuests: MAX_SHARED_GAME_QUESTS,
     startActivity,
     startPlayActivity,
     stop,

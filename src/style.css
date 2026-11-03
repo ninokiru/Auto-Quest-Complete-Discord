@@ -25,6 +25,14 @@
      text tone for error copy painted on light red tints. */
   --color-error: hsl(var(--error));
 
+  /* Quest state tones. Feature code used Tailwind palette utilities directly
+     (amber-500, green-600, sky-500, violet-500), which drifted from the blue
+     identity and had no dark counterpart. These three carry the same meaning
+     through both themes. */
+  --color-warn: hsl(var(--warn));
+  --color-ok: hsl(var(--ok));
+  --color-info: hsl(var(--info));
+
   --color-muted: hsl(var(--muted));
   --color-muted-foreground: hsl(var(--muted-foreground));
 
@@ -50,6 +58,10 @@
    covers Latin, Vietnamese and Thai; the CJK families catch zh/ja/ko. No webfont
    download, because the app runs offline inside the Tauri window. */
 @theme {
+  /* Cascadia ships with Windows Terminal and Console; Segoe UI Mono and
+     Consolas cover the rest. Every timer, count and port uses this stack with
+     tabular figures so numbers stop shifting as they tick. */
+  --font-mono: "Cascadia Mono", "Cascadia Code", "Segoe UI Mono", Consolas, ui-monospace, monospace;
   --font-sans:
     "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Leelawadee UI",
     "Noto Sans", "PingFang SC", "Microsoft YaHei", "Hiragino Sans", "Yu Gothic UI",
@@ -133,6 +145,11 @@
     --input: 214 45% 89%;
     --ring: 221 83% 53%;
 
+    /* Amber-700 / green-700 / sky-600: readable as text on light tints. */
+    --warn: 32 95% 38%;
+    --ok: 142 71% 31%;
+    --info: 201 96% 32%;
+
     --radius: 0.5rem;
   }
 
@@ -168,6 +185,11 @@
     --border: 230 33% 25%;
     --input: 230 33% 25%;
     --ring: 221 83% 68%;
+
+    /* Lifted tints so the same words stay above 4.5:1 on the navy card. */
+    --warn: 43 96% 64%;
+    --ok: 142 69% 60%;
+    --info: 199 89% 64%;
   }
 }
 

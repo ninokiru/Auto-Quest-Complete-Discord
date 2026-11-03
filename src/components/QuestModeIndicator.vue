@@ -70,8 +70,8 @@ const modeState = computed<ModeState>(() => {
 
 const toneClass = computed(() => {
   switch (modeState.value.tone) {
-    case 'success': return 'text-green-700 dark:text-green-400 bg-green-500/10 border-green-500/20 hover:bg-green-500/15'
-    case 'warning': return 'text-amber-700 dark:text-amber-400 bg-amber-500/10 border-amber-500/20 hover:bg-amber-500/15'
+    case 'success': return 'text-ok bg-ok/10 border-ok/20 hover:bg-ok/15'
+    case 'warning': return 'text-warn bg-warn/10 border-warn/20 hover:bg-warn/15'
     case 'danger': return 'text-error bg-destructive/10 border-destructive/20 hover:bg-destructive/15'
     default: return 'text-muted-foreground bg-muted/40 border-border hover:bg-muted/60'
   }

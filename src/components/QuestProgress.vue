@@ -233,10 +233,10 @@ function slotTypeIcon(slot: RunningQuest) {
 }
 
 function slotTypeIconClass(slot: RunningQuest): string {
-  if (slot.type === 'video') return 'text-sky-600 dark:text-sky-400'
-  if (slot.type === 'activity') return 'text-amber-600 dark:text-amber-400'
-  if (slot.type === 'stream') return 'text-violet-600 dark:text-violet-400'
-  return 'text-indigo-600 dark:text-indigo-400'
+  if (slot.type === 'video') return 'text-info'
+  if (slot.type === 'activity') return 'text-primary'
+  if (slot.type === 'stream') return 'text-info'
+  return 'text-primary'
 }
 
 async function handleStop() {
@@ -311,12 +311,12 @@ function barStyleFor(local: number, submitted: number): Record<string, string> {
   const hasPending = local > submitted + 0.5
   const bg = !hasPending
     ? 'hsl(var(--primary))'
-    : `linear-gradient(to right, hsl(var(--primary)) ${stop1}%, rgb(74,222,128) ${stop2}%, rgb(74,222,128) 100%)`
+    : `linear-gradient(to right, hsl(var(--primary)) ${stop1}%, hsl(var(--ok)) ${stop2}%, hsl(var(--ok)) 100%)`
   return {
     width: `${local}%`,
     background: bg,
     boxShadow: hasPending
-      ? '0 1px 3px hsl(var(--primary) / 0.35), 1px 0 5px rgb(74 222 128 / 0.25)'
+      ? '0 1px 3px hsl(var(--primary) / 0.35), 1px 0 5px hsl(var(--ok) / 0.25)'
       : '0 1px 3px hsl(var(--primary) / 0.35)',
   }
 }
@@ -415,13 +415,13 @@ const keepAliveRemainingText = computed(() => {
           <div class="flex items-center justify-between gap-3">
             <p class="truncate text-sm font-semibold">{{ floatingTitle }}</p>
             <div class="flex shrink-0 items-center gap-2">
-              <span v-if="questsStore.runningQuests.length > 0" class="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary">
+              <span v-if="questsStore.runningQuests.length > 0" class="rounded-full bg-primary/15 px-2 py-0.5 font-mono text-[11px] font-medium tabular-nums text-primary">
                 {{ t('quest.running_count', { count: questsStore.runningQuests.length, max: questsStore.maxParallelQuests }) }}
               </span>
-              <span v-if="queuedBehindCount > 0" class="rounded-full bg-secondary px-2 py-0.5 text-[11px] font-medium text-secondary-foreground">
+              <span v-if="queuedBehindCount > 0" class="rounded-full bg-secondary px-2 py-0.5 font-mono text-[11px] font-medium tabular-nums text-secondary-foreground">
                 {{ t('home.queue_count', { count: queuedBehindCount }) }}
               </span>
-              <span v-if="questsStore.activeQuestId" class="text-sm font-semibold">
+              <span v-if="questsStore.activeQuestId" class="font-mono text-sm font-semibold tabular-nums">
                 {{ primaryDisplayProgress }}%
               </span>
             </div>
@@ -450,7 +450,7 @@ const keepAliveRemainingText = computed(() => {
           </span>
           <CardTitle class="min-w-0 truncate text-sm">
             {{ floatingTitle }}
-            <span v-if="queuedBehindCount > 0" class="ml-2 rounded-full bg-secondary px-2 py-0.5 text-[11px] font-medium text-secondary-foreground">
+            <span v-if="queuedBehindCount > 0" class="ml-2 rounded-full bg-secondary px-2 py-0.5 font-mono text-[11px] font-medium tabular-nums text-secondary-foreground">
               {{ t('home.queue_count', { count: queuedBehindCount }) }}
             </span>
           </CardTitle>
@@ -552,7 +552,7 @@ const keepAliveRemainingText = computed(() => {
               <span>{{ t('quest.submitted') }}</span>
             </div>
             <div v-if="showsLocalPendingLegend" class="flex items-center gap-1.5">
-              <div class="h-2 w-2 rounded-full bg-green-400"></div>
+              <div class="h-2 w-2 rounded-full bg-ok"></div>
               <span>{{ t('quest.pending') }}</span>
             </div>
           </div>
@@ -595,7 +595,7 @@ const keepAliveRemainingText = computed(() => {
               :key="quest.id"
               class="flex items-center gap-2.5 rounded-lg border border-border/50 bg-background/60 px-2.5 py-2"
             >
-              <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-secondary text-[10px] font-medium tabular-nums text-muted-foreground">
+              <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-secondary font-mono text-[10px] font-medium tabular-nums text-muted-foreground">
                 {{ index + 1 }}
               </span>
               <div class="min-w-0 flex-1">

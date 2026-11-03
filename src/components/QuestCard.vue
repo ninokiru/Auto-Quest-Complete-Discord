@@ -147,15 +147,15 @@ const statusLabel = computed(() => {
 // what makes a quest list look like every other quest list.
 const statusTextClass = computed(() => {
   if (isNotAccepted.value) return 'text-muted-foreground'
-  if (isPendingClaim.value) return 'text-amber-700 dark:text-amber-400'
-  if (isClaimed.value) return 'text-green-700 dark:text-green-400'
+  if (isPendingClaim.value) return 'text-warn'
+  if (isClaimed.value) return 'text-ok'
   return 'text-primary'
 })
 
 const statusDotClass = computed(() => {
   if (isNotAccepted.value) return 'bg-muted-foreground/40'
-  if (isPendingClaim.value) return 'bg-amber-500'
-  if (isClaimed.value) return 'bg-green-600 dark:bg-green-500'
+  if (isPendingClaim.value) return 'bg-warn'
+  if (isClaimed.value) return 'bg-ok'
   return 'bg-primary'
 })
 
@@ -163,10 +163,10 @@ const statusDotClass = computed(() => {
 // the column instead of reading every badge.
 const railClass = computed(() => {
   if (isActiveQuest.value) return 'bg-primary'
-  if (isPendingClaim.value) return 'bg-amber-500'
-  if (isClaimed.value) return 'bg-green-600 dark:bg-green-500'
+  if (isPendingClaim.value) return 'bg-warn'
+  if (isClaimed.value) return 'bg-ok'
   if (isNotAccepted.value) return 'bg-border'
-  return 'bg-sky-500 dark:bg-sky-400'
+  return 'bg-info'
 })
 
 const typeIcon = computed(() => {
@@ -176,11 +176,11 @@ const typeIcon = computed(() => {
   return Gamepad2
 })
 
+// The chip is identity, not state, so it never borrows the claim/claimed tones.
 const typeIconClass = computed(() => {
-  if (props.questType === 'video') return 'text-sky-600 dark:text-sky-400'
-  if (isCloudGameActivity.value) return 'text-violet-600 dark:text-violet-400'
-  if (props.questType === 'activity') return 'text-amber-600 dark:text-amber-400'
-  return 'text-indigo-600 dark:text-indigo-400'
+  if (props.questType === 'video' || isCloudGameActivity.value) return 'text-info'
+  if (props.questType === 'activity') return 'text-warn'
+  return 'text-primary'
 })
 
 const rewardViews = computed(() => getQuestRewardViews(props.quest, authStore.user?.premium_type, locale.value))
@@ -286,12 +286,12 @@ const progressBarStyle = computed(() => {
   const hasPending = local > submitted + 0.5
   const bg = !hasPending
     ? 'hsl(var(--primary))'
-    : `linear-gradient(to right, hsl(var(--primary)) ${stop1}%, rgb(74,222,128) ${stop2}%, rgb(74,222,128) 100%)`
+    : `linear-gradient(to right, hsl(var(--primary)) ${stop1}%, hsl(var(--ok)) ${stop2}%, hsl(var(--ok)) 100%)`
   return {
     width: `${local}%`,
     background: bg,
     boxShadow: hasPending
-      ? '0 1px 3px hsl(var(--primary) / 0.35), 1px 0 5px rgb(74 222 128 / 0.25)'
+      ? '0 1px 3px hsl(var(--primary) / 0.35), 1px 0 5px hsl(var(--ok) / 0.25)'
       : '0 1px 3px hsl(var(--primary) / 0.35)',
   }
 })
@@ -490,7 +490,7 @@ async function copyRewardCode() {
               :kind="rewardOrbKind"
               class="h-5 w-5"
             />
-            <Gift v-else class="h-4 w-4 text-pink-400" />
+            <Gift v-else class="h-4 w-4 text-primary" />
           </div>
         </div>
         <span class="min-w-0 truncate text-[11px] text-muted-foreground">{{ rewardSummary }}</span>

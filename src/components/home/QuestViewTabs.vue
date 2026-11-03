@@ -19,11 +19,11 @@ const emit = defineEmits<{
 }>()
 
 const tabs = computed(() => [
-  { key: 'recommended' as QuestViewPreset, label: t('home.view_recommended'), icon: Sparkles, iconClass: 'text-violet-500' },
-  { key: 'to_accept' as QuestViewPreset, label: t('home.view_to_accept'), icon: ListTodo, iconClass: 'text-slate-500' },
-  { key: 'ready_to_run' as QuestViewPreset, label: t('home.view_ready_to_run'), icon: PlayCircle, iconClass: 'text-sky-500' },
-  { key: 'ready_to_claim' as QuestViewPreset, label: t('home.view_ready_to_claim'), icon: Gift, iconClass: 'text-emerald-500' },
-  { key: 'completed' as QuestViewPreset, label: t('home.view_completed'), icon: CheckCircle2, iconClass: 'text-green-500' },
+  { key: 'recommended' as QuestViewPreset, label: t('home.view_recommended'), icon: Sparkles, iconClass: 'text-primary' },
+  { key: 'to_accept' as QuestViewPreset, label: t('home.view_to_accept'), icon: ListTodo, iconClass: 'text-muted-foreground' },
+  { key: 'ready_to_run' as QuestViewPreset, label: t('home.view_ready_to_run'), icon: PlayCircle, iconClass: 'text-primary' },
+  { key: 'ready_to_claim' as QuestViewPreset, label: t('home.view_ready_to_claim'), icon: Gift, iconClass: 'text-warn' },
+  { key: 'completed' as QuestViewPreset, label: t('home.view_completed'), icon: CheckCircle2, iconClass: 'text-ok' },
   { key: 'all' as QuestViewPreset, label: t('home.view_all'), icon: Layers3, iconClass: 'text-muted-foreground' },
 ])
 </script>
@@ -49,7 +49,7 @@ const tabs = computed(() => [
       <Badge
         variant="outline"
         :class="cn(
-          'ml-auto h-5 min-w-5 shrink-0 justify-center px-1.5 text-[10px] tabular-nums',
+          'ml-auto h-5 min-w-5 shrink-0 justify-center px-1.5 font-mono text-[10px] tabular-nums',
           selected === tab.key && 'border-primary/25 bg-primary/10 text-primary',
         )"
       >

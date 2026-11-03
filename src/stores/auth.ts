@@ -410,9 +410,9 @@ export const useAuthStore = defineStore('auth', () => {
   const nitroStatus = computed<{ label: string; class: string } | null>(() => {
     const pt = user.value?.premium_type
     if (!pt || pt === 0) return null
-    if (pt === 1) return { label: t('user.nitro_classic'), class: 'text-sky-700 dark:text-sky-400' }
-    if (pt === 2) return { label: t('user.nitro'), class: 'text-violet-600 dark:text-violet-400' }
-    if (pt === 3) return { label: t('user.nitro_basic'), class: 'text-indigo-600 dark:text-indigo-400' }
+    if (pt === 1) return { label: t('user.nitro_classic'), class: 'text-info' }
+    if (pt === 2) return { label: t('user.nitro'), class: 'text-primary' }
+    if (pt === 3) return { label: t('user.nitro_basic'), class: 'text-primary' }
     return null
   })
 
