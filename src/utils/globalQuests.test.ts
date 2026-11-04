@@ -12,7 +12,7 @@ function raw(id = '111', extra: Record<string, unknown> = {}) {
   return {
     id,
     config: {
-      messages: { quest_name: 'Sample', game_title: 'Game' },
+      messages: { quest_name: `Sample ${id}`, game_title: 'Game' },
       starts_at: '2026-10-01T00:00:00Z',
       expires_at: '2026-10-10T00:00:00Z',
       ...extra,
@@ -105,8 +105,11 @@ describe('search matching', () => {
 
 describe('catalogue dedupe', () => {
   it('keeps one row per regional variant unless the reward differs', () => {
-    const orb = (amount: number) => ({ rewards_config: { rewards: [{ type: 4, orb_quantity: amount }] } })
-    const quests = parseGlobalQuests([raw('111', orb(200)), raw('222', orb(200)), raw('333', orb(700))])
+    const twin = (id: string, amount: number) => raw(id, {
+      messages: { quest_name: 'Regional twin', game_title: 'Game' },
+      rewards_config: { rewards: [{ type: 4, orb_quantity: amount }] },
+    })
+    const quests = parseGlobalQuests([twin('111', 200), twin('222', 200), twin('333', 700)])
     expect(quests.map(quest => quest.id)).toEqual(['111', '333'])
   })
 })
