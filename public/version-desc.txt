@@ -2,27 +2,30 @@
 
 Auto-complete Discord **video, stream and game quests** from one window. Tauri 2 + Rust behind the scenes, Vue 3 on the surface, and no cloud service in between: everything runs on your machine.
 
-## v0.0.5 L3#1 — several game quests at once, and a catalogue to plan them from
+## v0.0.5 L3#2 — how much you run at once, how fast it goes, and how you sign in
 
-This is the first build of the third patch round. Two things people kept asking for, plus the visual cleanup that makes the numbers readable.
+Second build of the third patch round. Everything here is a dial you can turn: how many quests share one account, how fast video and Activity quests finish, and two new ways to get an account into the window.
 
 ### New
 
-- **Simulation mode now runs several game quests at a time — one per game.** A simulated game publishes the presence of its own title, so quests for *different* games progress together; two quests for the *same* title still wait for each other, because a title has one simulated executable and one play-time record, and the first to finish would tear down the second's. CDP and heartbeat game quests are unchanged and keep sharing up to 20.
-- **A Global quests tab.** A read-only catalogue of every live Discord quest, fetched from the public `api.discordquest.com` dataset: search by quest or game name, filter by task type (Watch / Play / Activity / Stream) and reward type (Orbs / Nitro / Role / Item), a mono countdown to each deadline, and **Open in Discord** — which routes through the attached client when CDP is on and otherwise opens the quest page in your browser. It never accepts, starts or claims anything, sends no account data, and does no IP lookup. Results are cached for five minutes, a stalled request gives up after 20 seconds, and a failed refresh keeps the list you already had.
-- **The queue finally says why it is waiting.** Four distinct reasons instead of one blanket message: all 20 game slots busy, a cloud-game Activity holding the client, another game quest holding the account, or another quest already running for this same game.
-- **State colours and numerals are consistent.** Pending, completed and video/stream now come from three semantic tokens that each have a dark counterpart, so nothing drifts back to the palette defaults; every timer, percentage, count and port is set in a monospaced tabular figure, so a ticking clock no longer shifts the row around it.
+- **Quests at once.** Settings → Quest Behavior has a cap you control from **1 to 20**, and it now starts at **3** instead of 20. Every quest past the cap waits in the queue and starts by itself when a slot frees up. Moving the dial above 5 asks first: the warning explains that each extra quest is another presence on one account, and **Accept risk** stays unclickable until a five second countdown finishes. The cap is remembered between runs and travels with a settings preset.
+- **Video completion speed up to 10x.** The slider now runs **1.0x to 10.0x in whole steps** and starts at 1.0x. A 10-minute video quest takes 1 minute at 10x. It still has no effect in CDP mode, which drives the real player and stays on Discord's own clock — the panel says so.
+- **A break after three fast video quests.** From 5.0x up, the third video quest that *finishes* inside a minute parks video work for **one to two minutes**, chosen at random. Only video quests wait: game, stream and Activity quests keep running, and a queued video starts again on its own when the break ends. Pressing Start on a video card during the break opens the same five-second **Accept risk** dialog, and accepting runs video until that break is over. The progress panel shows the countdown.
+- **Activity quests read faster, and you can push them further.** The default checkpoint cadence is halved from 180–300 s to **90–150 s**, so a three-checkpoint quest drops from about 12 minutes to about 6. A new **1.0x–5.0x** dial in the advanced Activity block divides that cadence again — 5x brings it to 18–30 s per checkpoint, with a 15 s floor so progress requests never stack up back to back. The progress bar and its estimate follow the same number, so nothing lies about how far along a quest is.
+- **Vesktop is a token source on Windows.** Auto Detect used to read only Discord Stable, PTB and Canary. On Windows it now also reads a Vesktop profile, because that profile carries its own key in its own `Local State` and is decrypted the same way. macOS and Linux are unchanged there: their keys are looked up by a per-client keychain or Secret Service name, and those names are not assumed.
+- **Paste many tokens at once.** Under the manual login disclosure, drop a list of tokens — one per line — and press **Add to the list**. Blank and repeated lines are ignored, one bad token never stops the others, each surviving token is verified against Discord first, and the accounts land in the same picker a scan uses. The account you are signed into, and the quests it is running, do not change.
+- **A failed scan tells you what it checked.** Instead of one line saying nothing was found, the message now names every client and its state, for example `Discord Stable: not installed; Discord Canary: not installed; Vesktop: signed out, or no token stored`. Only client names and states appear — never a path, never a token, never the text of a decryption error.
 
 ### Fixed
 
-- **Run all on another account can fill the game slots.** The account panel still capped each account at one game quest, even though quests started there go through the direct API and share the account up to 20. It now batches against the real limit.
-- **Regional duplicates no longer flood the catalogue.** The dataset lists one row per regional variant of the same quest; identical entries collapse to a single row, and are kept apart only when the reward actually differs. The same applies to task badges, where a desktop and a mobile task with one goal used to print twice.
+- **The pace test states its own cadence.** The Activity pacing test had baked in the old 180–300 s default, so halving it made the bar move twice as far as the assertion expected. The test now pins the interval it measures against, which is what a default change should not be able to break.
+- **The settings note no longer contradicts the app.** It claimed local token extraction always uses the official client, and the docs repeated it. Both now say what the scan actually reads, per platform.
 
 ### Checks
 
-- rustfmt, clippy, the Rust suite, the frontend suite and the translation parity check all run on Windows for this release, and the catalogue parser is covered against the shape of the live dataset.
+- rustfmt, clippy, the Rust suite, the frontend suite and the translation parity check all pass on Windows for this release. New coverage: the parallel cap and its persistence, the burst window and the break, the Activity speed dial, batch token import, and the Vesktop profile path.
 
-**Full Changelog**: https://github.com/ninokiru/Auto-Quest-Complete-Discord/compare/0.0.5-L2.6...0.0.5-L3.1
+**Full Changelog**: https://github.com/ninokiru/Auto-Quest-Complete-Discord/compare/0.0.5-L3.1...0.0.5-L3.2
 
 ### How the in-app update works
 
@@ -44,8 +47,8 @@ These binaries are **not code-signed**. The app rewrites its own process identit
 
 | File | Use |
 | --- | --- |
-| `auto-quest-complete-discord-Windows-x64-0.0.5-L3.1-setup.exe` | Windows installer (NSIS) |
-| `auto-quest-complete-discord-Windows-x64-0.0.5-L3.1-portable.zip` | Windows portable, no installation |
+| `auto-quest-complete-discord-Windows-x64-0.0.5-L3.2-setup.exe` | Windows installer (NSIS) |
+| `auto-quest-complete-discord-Windows-x64-0.0.5-L3.2-portable.zip` | Windows portable, no installation |
 
 This release publishes **Windows x64 only**. macOS (Apple Silicon) and Linux (x86_64 `.deb` / AppImage) builds are still fully supported by the source tree and are compiled and tested in CI — only their release publishing is temporarily switched off to keep a release run on one runner. They will return in a later release. If you need one of them now, build it from source (`pnpm tauri:build`).
 
