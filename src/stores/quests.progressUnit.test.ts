@@ -210,10 +210,12 @@ describe('quest progress units', () => {
     store.cdpAvailable = true
     // Keep the polling cadence past the frame window so only the frame runs.
     store.gamePollingInterval = 300
+    // Pin the cadence rather than trusting the built-in default: one
+    // checkpoint's worth of this interval must move the bar by exactly a third.
+    store.activityCheckpointMin = 240
+    store.activityCheckpointMax = 240
     await store.startActivity(activityQuest('activity', 0))
 
-    // The built-in checkpoint interval averages one checkpoint per 240 s, so one
-    // checkpoint's worth of elapsed time moves the bar by exactly one third.
     await vi.advanceTimersByTimeAsync(240_000)
     runFrame()
 
