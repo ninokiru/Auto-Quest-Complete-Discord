@@ -204,13 +204,9 @@ pub async fn complete_video_quest(
                     // The last timestamp was accepted but Discord may not have
                     // written completed_at yet; report the run as finished only
                     // once the account's own quest payload agrees.
-                    let confirmation = confirm_video_completion(
-                        client,
-                        &quest_id,
-                        &app_handle,
-                        &mut cancel_rx,
-                    )
-                    .await?;
+                    let confirmation =
+                        confirm_video_completion(client, &quest_id, &app_handle, &mut cancel_rx)
+                            .await?;
                     match confirmation {
                         Some(true) => {
                             let _ = app_handle.emit("quest-complete", ());
