@@ -747,8 +747,6 @@
     "game_queued_activity_desc": "Quest hoạt động cloud-game chạy một mình. Quest này sẽ chạy sau khi nó xong.",
     "game_queued_simulated_title": "Quest game khác đang giữ tài khoản",
     "game_queued_simulated_desc": "Quest đang chạy qua CDP hoặc heartbeat nên chế độ giả lập không chen vào được. Dừng nó, hoặc chuyển quest này sang CDP, để chạy ngay.",
-    "game_queued_same_title_title": "Đã có quest khác cho game này",
-    "game_queued_same_title_desc": "Hai quest cùng một game dùng chung tiến trình giả lập. Quest này sẽ chạy khi quest kia xong.",
     "failed_start_activity": "Không thể bắt đầu nhiệm vụ hoạt động",
     "failed_claim": "Không thể nhận phần thưởng",
     "failed_stop_quest": "Không thể dừng quest",

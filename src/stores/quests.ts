@@ -249,7 +249,7 @@ function readRecentGameIds(): string[] {
 }
 
 /** Why an account's game slot refused another game quest. */
-export type GameSlotReason = 'none' | 'limit' | 'activity' | 'simulated' | 'same-title'
+export type GameSlotReason = 'none' | 'limit' | 'activity' | 'simulated'
 
 export const useQuestsStore = defineStore('quests', () => {
   const quests = ref<Quest[]>([])
@@ -418,7 +418,9 @@ export const useQuestsStore = defineStore('quests', () => {
     if (!allSimulated || !appId) return false
     // A slot whose title is not recorded yet may be this same game mid-start.
     if (games.some(slot => !slot.simulationAppId)) return false
-    return games.every(slot => slot.simulationAppId !== appId)
+    // Another title keeps its own simulated process; the same title shares the
+    // one that is already running, so several quests for it progress together.
+    return true
   }
 
   /** Whether a start of the current mode would be refused by the game slot. */
@@ -444,15 +446,16 @@ export const useQuestsStore = defineStore('quests', () => {
       if (games.length >= MAX_SHARED_GAME_QUESTS) return 'limit'
       return 'none'
     }
-    // Simulate mode: a new title can join, the same title cannot.
+    // Simulate mode: every different title keeps a session of its own, and a
+    // second quest for a title already running joins the session it has.
     const allSimulated = games.every(
       slot => slot.type === 'game' && !slot.cdpPlay && !slot.heartbeatPlay,
     )
     if (!allSimulated) return 'simulated'
-    if (appId && games.every(slot => slot.simulationAppId && slot.simulationAppId !== appId)) {
-      return 'none'
-    }
-    return 'same-title'
+    // A quest with no application id cannot be matched to a session, and a slot
+    // whose title is not recorded yet may still be starting one.
+    if (!appId || games.some(slot => !slot.simulationAppId)) return 'simulated'
+    return 'none'
   }
 
   /**
@@ -772,7 +775,7 @@ export const useQuestsStore = defineStore('quests', () => {
       slot.rpcConnected = false
       await emit('event_disconnect').catch(() => undefined)
     }
-    if (appId) {
+    if (appId && !simulationSharedByOthers(slot, appId)) {
       try {
         await stopGameSimulationUsage(appId)
       } catch (cleanupError) {
@@ -1242,12 +1245,25 @@ export const useQuestsStore = defineStore('quests', () => {
     return value instanceof Error ? value.message : String(value)
   }
 
+  /** Whether another live slot is still working on the same simulated game.
+   *  That game has one process and one recorded segment, so only the last quest
+   *  to finish may turn them off. */
+  function simulationSharedByOthers(slot: RunningQuest, appId: string): boolean {
+    return runningQuests.value.some(other =>
+      other.questId !== slot.questId && other.simulationAppId === appId)
+  }
+
   /** Finalize the history segment one quest owns. A quest that never began a
    *  segment must not finish somebody else's recording — that would silently
    *  freeze the play time of a game the user expects to keep counting. */
   async function finishSlotSimulationUsage(slot: RunningQuest) {
     const appId = slot.simulationAppId
     if (!appId) return
+    if (simulationSharedByOthers(slot, appId)) {
+      // Hand the shared segment over instead of closing it under the others.
+      slot.simulationAppId = null
+      return
+    }
     // Keep the ownership on a failed save so a retried Stop can finish the
     // same segment instead of leaving it recording forever.
     await stopGameSimulationUsage(appId)
@@ -2288,12 +2304,20 @@ export const useQuestsStore = defineStore('quests', () => {
         // run always use the same path for this quest.
         const installPath = await initSimulationPath()
 
-        // 4. Create simulated game executable
-        await createSimulatedGame(installPath, exeName, appId)
-        slot.gameExe = exeName
+        // A second quest for a game that is already simulated rides the session
+        // that exists: one process and one recorded segment, which matches what
+        // Discord sees when the game runs once and several quests tick on it.
+        const sharesRunningGame = runningQuests.value.some(other =>
+          other.questId !== quest.id && other.simulationAppId === appId)
 
-        // 5. Run simulated game
-        await runSimulatedGame(game.name, installPath, exeName, appId)
+        // 4. Create simulated game executable
+        if (!sharesRunningGame) {
+          await createSimulatedGame(installPath, exeName, appId)
+          slot.gameExe = exeName
+
+          // 5. Run simulated game
+          await runSimulatedGame(game.name, installPath, exeName, appId)
+        }
 
         // 6. Connect RPC. There is one RPC client per account and connecting a
         // second presence drops the first, so only the quest that has not yet
@@ -2325,15 +2349,23 @@ export const useQuestsStore = defineStore('quests', () => {
       }
       const slot = questSlot(quest.id)
       if (!slot) return
-      try {
-        const recording = await startGameSimulationUsage(appId, appName)
-        if (recording) slot.simulationAppId = appId
-      } catch (historyError) {
-        // A quest must not keep running without its account-scoped history
-        // segment: roll back the started work and fail the start so the UI does
-        // not report success for a simulation that cannot be recorded.
-        await rollbackQuestSimulation(slot)
-        throw new Error(`Failed to start game simulation history: ${errorMessage(historyError)}`)
+      // The backend records one segment per game, so a quest for a title another
+      // slot already records joins that segment instead of opening a second one.
+      const recordingShared = runningQuests.value.some(other =>
+        other.questId !== quest.id && other.simulationAppId === appId)
+      if (recordingShared) {
+        slot.simulationAppId = appId
+      } else {
+        try {
+          const recording = await startGameSimulationUsage(appId, appName)
+          if (recording) slot.simulationAppId = appId
+        } catch (historyError) {
+          // A quest must not keep running without its account-scoped history
+          // segment: roll back the started work and fail the start so the UI does
+          // not report success for a simulation that cannot be recorded.
+          await rollbackQuestSimulation(slot)
+          throw new Error(`Failed to start game simulation history: ${errorMessage(historyError)}`)
+        }
       }
     } catch (e) {
       error.value = errorMessage(e)

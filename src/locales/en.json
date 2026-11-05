@@ -748,8 +748,6 @@
     "game_queued_activity_desc": "A cloud-game activity runs on its own. This quest starts after it finishes.",
     "game_queued_simulated_title": "Another game quest holds the account",
     "game_queued_simulated_desc": "A CDP or heartbeat quest is running, and simulation cannot join it. Stop it, or switch this quest to CDP, to run it now.",
-    "game_queued_same_title_title": "Another quest for this game is running",
-    "game_queued_same_title_desc": "Two quests on one title share the same simulated process. This one starts when that quest ends.",
     "failed_start_activity": "Failed to start activity quest",
     "failed_claim": "Failed to claim reward",
     "failed_stop_quest": "Failed to stop quest",

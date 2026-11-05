@@ -17,6 +17,12 @@ const PLAY_ACTIVITY_TIMEOUT_GRACE_SECS: u64 = 300;
 const VIDEO_PROGRESS_RETRY_DELAY_SECS: u64 = 3;
 const VIDEO_PROGRESS_MAX_CONSECUTIVE_ERRORS: u32 = 3;
 
+/// Discord writes `completed_at` a moment after the last timestamp lands, so a
+/// run that stops at the target leaves the quest reading as unfinished in the
+/// list. Poll the account's own quest payload for a minute before deciding.
+const VIDEO_CONFIRM_ATTEMPTS: u32 = 12;
+const VIDEO_CONFIRM_DELAY_SECS: u64 = 5;
+
 async fn confirm_play_activity_via_api(
     client: &DiscordApiClient,
     quest_id: &str,
@@ -69,6 +75,47 @@ async fn confirm_play_activity_via_api(
     }
 
     anyhow::bail!("PLAY_ACTIVITY reached its target, but Discord did not confirm completion")
+}
+
+/// Wait for Discord to write `completed_at` after the last accepted timestamp.
+/// `Some(true)` means the quest is done, `Some(false)` means the window closed
+/// without it, and `None` means the user stopped the quest while waiting.
+async fn confirm_video_completion(
+    client: &DiscordApiClient,
+    quest_id: &str,
+    app_handle: &tauri::AppHandle,
+    cancel_rx: &mut tokio::sync::mpsc::Receiver<()>,
+) -> Result<Option<bool>> {
+    for attempt in 1..=VIDEO_CONFIRM_ATTEMPTS {
+        tokio::select! {
+            _ = sleep(Duration::from_secs(VIDEO_CONFIRM_DELAY_SECS)) => {},
+            _ = cancel_rx.recv() => {
+                println!("Video quest cancelled while waiting for confirmation");
+                let _ = app_handle.emit("quest-stopped", ());
+                return Ok(None);
+            }
+        }
+
+        match client.get_quest_progress(quest_id).await {
+            Ok((progress, completed)) => {
+                println!(
+                    "Video quest confirmation {}/{}: progress={}, completed={}",
+                    attempt, VIDEO_CONFIRM_ATTEMPTS, progress, completed
+                );
+                if completed {
+                    return Ok(Some(true));
+                }
+            }
+            Err(e) => {
+                println!(
+                    "Video quest confirmation {}/{} failed: {}",
+                    attempt, VIDEO_CONFIRM_ATTEMPTS, e
+                );
+            }
+        }
+    }
+
+    Ok(Some(false))
 }
 
 /// Complete a video quest
@@ -147,9 +194,35 @@ pub async fn complete_video_quest(
                     progress, timestamp, seconds_needed
                 );
 
-                if completed || timestamp >= seconds_needed as f64 {
+                if completed {
                     let _ = app_handle.emit("quest-complete", ());
                     println!("Video quest completed!");
+                    return Ok(());
+                }
+
+                if timestamp >= seconds_needed as f64 {
+                    // The last timestamp was accepted but Discord may not have
+                    // written completed_at yet; report the run as finished only
+                    // once the account's own quest payload agrees.
+                    let confirmation = confirm_video_completion(
+                        client,
+                        &quest_id,
+                        &app_handle,
+                        &mut cancel_rx,
+                    )
+                    .await?;
+                    match confirmation {
+                        Some(true) => {
+                            let _ = app_handle.emit("quest-complete", ());
+                            println!("Video quest completed!");
+                        }
+                        Some(false) => {
+                            let message = "Progress reached the target, but Discord did not confirm the quest. Open Discord to claim it, or run it again later.";
+                            let _ = app_handle.emit("quest-error", message.to_string());
+                            println!("Video quest not confirmed: {}", message);
+                        }
+                        None => {}
+                    }
                     return Ok(());
                 }
             }

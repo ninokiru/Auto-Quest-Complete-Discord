@@ -1624,7 +1624,8 @@ async function startOrQueuePlay(
   initialProgress: number,
   exeName?: string,
 ) {
-  // Simulate allows one quest per title, so the gate is asked about this game.
+  // Simulate runs one session per title; quests for that title share it, so the
+  // gate is asked about this game rather than about the account.
   const gameAppId = questApplicationId(quest)
   if (questsStore.gameSlotBusy(gameAppId)) {
     questsStore.addToQueue(quest, exeName)
@@ -1643,10 +1644,6 @@ async function startOrQueuePlay(
       simulated: {
         title: t('toast.game_queued_simulated_title'),
         description: t('toast.game_queued_simulated_desc'),
-      },
-      'same-title': {
-        title: t('toast.game_queued_same_title_title'),
-        description: t('toast.game_queued_same_title_desc'),
       },
       none: {
         title: t('toast.game_queued_title'),

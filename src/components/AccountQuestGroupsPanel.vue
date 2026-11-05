@@ -23,7 +23,7 @@ const toast = useToastStore()
 const REFRESH_MS = 30_000
 
 /** What a row's single button does, in the order the active account's list uses. */
-type RowAction = 'accept' | 'stop' | 'claim' | 'start' | 'completed'
+type RowAction = 'accept' | 'expired' | 'stop' | 'claim' | 'start' | 'completed'
 
 interface ForeignRow {
   key: string
@@ -68,9 +68,23 @@ function isRunning(accountId: string, questId: string): boolean {
   return runningByKey.value.has(`${accountId}|${questId}`)
 }
 
+/** A quest with no deadline, or an unreadable one, is treated as still open —
+ *  the same rule the active account's list uses. */
+function isExpiredQuest(quest: Quest): boolean {
+  const raw = quest.config.expires_at
+  if (!raw) return false
+  const at = Date.parse(raw)
+  return Number.isFinite(at) && at <= Date.now()
+}
+
 function actionOf(quest: Quest, running: boolean): RowAction {
   const status = quest.user_status
-  if (!status?.enrolled_at) return 'accept'
+  if (!status?.enrolled_at) {
+    // A quest past its deadline cannot be enrolled at all: Discord answers the
+    // enroll call with "Quest has expired", so the row says that instead of
+    // offering a button that can only fail.
+    return isExpiredQuest(quest) ? 'expired' : 'accept'
+  }
   if (running) return 'stop'
   if (status.completed_at) return status.claimed_at ? 'completed' : 'claim'
   return 'start'
@@ -123,6 +137,9 @@ function runnableQuests(group: AccountQuestGroup): Quest[] {
   const candidates = group.quests
     .filter(quest => !quest.user_status?.completed_at)
     .filter(quest => !isRunning(accountId, quest.id))
+    // An expired quest that was never enrolled can only fail, so "run all"
+    // leaves it out instead of spending a request on it.
+    .filter(quest => !(isExpiredQuest(quest) && !quest.user_status?.enrolled_at))
     .filter(quest => foreignQuestBlocker(quest) === null)
   let gameRoom = Math.max(0, questsStore.maxSharedGameQuests - runningGameCount(accountId, group))
   const queue: Quest[] = []
@@ -392,6 +409,13 @@ onBeforeUnmount(stopTimer)
                   <Loader2 v-if="row.busy" class="mr-2 h-4 w-4 animate-spin" />
                   {{ t('home.accept_quest') }}
                 </Button>
+
+                <span
+                  v-else-if="row.action === 'expired'"
+                  class="text-xs font-medium text-muted-foreground"
+                >
+                  {{ t('quest.expired') }}
+                </span>
 
                 <Button
                   v-else-if="row.action === 'stop'"

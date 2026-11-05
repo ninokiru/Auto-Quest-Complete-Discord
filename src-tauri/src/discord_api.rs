@@ -1083,6 +1083,12 @@ impl DiscordApiClient {
         let first_status = response.status();
         let first_body = response.text().await.unwrap_or_default();
 
+        // Code 260017 is Discord's "Quest has expired": the enrollment window is
+        // closed, so the retry below can only fail the same way.
+        if first_body.contains("Quest has expired") || first_body.contains("260017") {
+            anyhow::bail!("This quest has expired in Discord, so it can no longer be accepted");
+        }
+
         let minimal_payload = serde_json::json!({ "location": QUEST_LOCATION_HOME_DESKTOP });
         let fallback_response = self
             .send_respecting_rate_limit(self.request(Method::POST, &url).json(&minimal_payload))

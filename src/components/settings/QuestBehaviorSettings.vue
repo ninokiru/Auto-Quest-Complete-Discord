@@ -121,26 +121,30 @@ function stopRiskTimer() {
   riskTimer = null
 }
 
-function onCapChange() {
+function onCapInput() {
   const ceiling = questsStore.maxParallelQuestsCeiling
   const value = Math.min(ceiling, Math.max(1, Math.round(Number(requestedCap.value) || 1)))
   requestedCap.value = value
 
-  if (value > PARALLEL_RISK_THRESHOLD && questsStore.maxParallelQuests <= PARALLEL_RISK_THRESHOLD) {
-    pendingRiskCap.value = value
-    riskSeconds.value = PARALLEL_RISK_SECONDS
+  // At or below the threshold, and anywhere above it once the user has already
+  // accepted that tier, the cap follows the slider while it is being dragged.
+  if (value <= PARALLEL_RISK_THRESHOLD || questsStore.maxParallelQuests > PARALLEL_RISK_THRESHOLD) {
+    pendingRiskCap.value = null
+    riskSeconds.value = 0
     stopRiskTimer()
-    riskTimer = setInterval(() => {
-      riskSeconds.value -= 1
-      if (riskSeconds.value <= 0) stopRiskTimer()
-    }, 1000)
+    questsStore.maxParallelQuests = value
     return
   }
 
-  pendingRiskCap.value = null
-  riskSeconds.value = 0
-  stopRiskTimer()
-  questsStore.maxParallelQuests = value
+  // Crossing into the risky tier arms the countdown once. Dragging further keeps
+  // the gate running and only moves the number it will apply.
+  pendingRiskCap.value = value
+  if (riskTimer) return
+  riskSeconds.value = PARALLEL_RISK_SECONDS
+  riskTimer = setInterval(() => {
+    riskSeconds.value -= 1
+    if (riskSeconds.value <= 0) stopRiskTimer()
+  }, 1000)
 }
 
 function acceptRisk() {
@@ -312,7 +316,7 @@ onMounted(() => {
                 step="1"
                 :aria-label="t('settings.parallel_quests')"
                 class="w-48 accent-primary"
-                @change="onCapChange"
+                @input="onCapInput"
               />
               <Badge
                 variant="outline"

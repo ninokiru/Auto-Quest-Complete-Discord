@@ -185,7 +185,7 @@ describe('game quest slots per account', () => {
     expect(store.runningQuests.map(slot => slot.questId)).toEqual(['game-a', 'video'])
   })
 
-  it('runs simulated quests for different games and queues the same title', () => {
+  it('shares one simulation per title and keeps other titles apart', () => {
     const store = useQuestsStore()
     const slot = (id: string, patch: Partial<RunningQuest> = {}): RunningQuest => ({
       questId: id,
@@ -204,13 +204,20 @@ describe('game quest slots per account', () => {
 
     expect(store.gameSlotBlockReason('app-a')).toBe('none')
 
-    // A simulated quest occupies its own title, not the whole account.
+    // A simulated quest occupies its own title, not the whole account, and a
+    // second quest for that title joins the simulation it already has.
     store.gameQuestMode = 'simulate'
     store.runningQuests.push(slot('sim-a', { simulationAppId: 'app-a' }))
     expect(store.gameSlotBusy('app-b')).toBe(false)
     expect(store.gameSlotBlockReason('app-b')).toBe('none')
-    expect(store.gameSlotBusy('app-a')).toBe(true)
-    expect(store.gameSlotBlockReason('app-a')).toBe('same-title')
+    expect(store.gameSlotBusy('app-a')).toBe(false)
+    expect(store.gameSlotBlockReason('app-a')).toBe('none')
+
+    // A slot that has not recorded its title yet may still be starting one, so
+    // nothing joins it.
+    store.runningQuests.splice(0)
+    store.runningQuests.push(slot('sim-starting'))
+    expect(store.gameSlotBlockReason('app-a')).toBe('simulated')
 
     // A CDP or heartbeat quest cannot be joined by a simulated one.
     store.runningQuests.splice(0)
