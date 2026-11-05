@@ -348,21 +348,6 @@ export async function listAccounts(): Promise<AccountSummary[]> {
   return await invoke('list_accounts')
 }
 
-/** One remembered account and the quests Discord lists for it. The active account
- *  is never in this list: the page already shows it as its own quest list. */
-export interface AccountQuestGroup {
-  account: AccountSummary
-  quests: Quest[]
-  /** Set when that account's token could not read its list — the group still
-   *  arrives so one expired token cannot blank the whole panel. */
-  error?: string | null
-}
-
-/** Quest lists of every other signed-in account, read with their own tokens. */
-export async function getQuestsForAccounts(): Promise<AccountQuestGroup[]> {
-  return await invoke('get_quests_for_accounts')
-}
-
 /** Sign in an extra account without touching the active one. */
 export async function addAccount(token: string): Promise<AccountSummary> {
   return await invoke('add_account', { token })

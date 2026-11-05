@@ -1,9 +1,8 @@
 import { defineStore } from 'pinia'
 import { computed, ref, toRaw, watch } from 'vue'
-import type { Quest, DetectableGame, DesktopClientArg, ExcludedQuest, GameIdleDuration, GameQuestMode, PlatformCapabilities, QuestTaskStatus, AccountQuestGroup } from '@/api/tauri'
+import type { Quest, DetectableGame, DesktopClientArg, ExcludedQuest, GameIdleDuration, GameQuestMode, PlatformCapabilities, QuestTaskStatus } from '@/api/tauri'
 import {
   firstProgressValue,
-  foreignQuestBlocker,
   getQuestKind,
   getQuestTasks,
   isGameQuest,
@@ -175,7 +174,6 @@ import {
   startGameSimulationUsage,
   stopGameSimulationUsage,
   getQuestTaskStatuses,
-  getQuestsForAccounts,
   claimQuestReward,
 } from '@/api/tauri'
 import { appLocalDataDir, join } from '@tauri-apps/api/path'
@@ -250,6 +248,9 @@ function readRecentGameIds(): string[] {
 
 /** Why an account's game slot refused another game quest. */
 export type GameSlotReason = 'none' | 'limit' | 'activity' | 'simulated'
+
+/** Why switching to another account has to wait, or 'none' once it can go ahead. */
+export type AccountSwitchBlockReason = 'none' | 'quest_running'
 
 export const useQuestsStore = defineStore('quests', () => {
   const quests = ref<Quest[]>([])
@@ -1414,18 +1415,13 @@ export const useQuestsStore = defineStore('quests', () => {
       // Only a task this page saw running reports an ending: the backend keeps a
       // finished record until Stop, so an old one must not re-announce itself.
       if (!reportedRunning.has(key)) continue
-      const accountName = accountDisplayName(status.accountId)
-      const questName = questDisplayName(status.questId, status.accountId)
-      announceQuestEnd(questName, status.error ?? undefined, accountName || undefined)
+      const questName = questDisplayName(status.questId)
+      announceQuestEnd(questName, status.error ?? undefined)
       useNotificationsStore().push(
         status.state === 'failed' ? 'quest_failed' : 'quest_completed',
         status.state === 'failed'
-          ? {
-              name: questName,
-              error: status.error ?? undefined,
-              account: accountName || undefined,
-            }
-          : { name: questName, account: accountName || undefined },
+          ? { name: questName, error: status.error ?? undefined }
+          : { name: questName },
       )
     }
     accountTasks.value = running
@@ -1458,12 +1454,9 @@ export const useQuestsStore = defineStore('quests', () => {
     questsFetchGeneration++
     orbsFetchGeneration++
     queueGeneration++
-    foreignQuestsGeneration++
     questsFetchInFlight = null
     quests.value = []
     excludedQuests.value = []
-    foreignQuestGroups.value = []
-    foreignQuestsError.value = null
     questEnrollmentBlockedUntil.value = null
     lastQuestsFetchTime.value = 0
     loading.value = false
@@ -1501,142 +1494,18 @@ export const useQuestsStore = defineStore('quests', () => {
     )
   }
 
-  /** Quest lists of every other signed-in account, each group tagged with the
-   *  account it belongs to. The account the page is on is never in here, because
-   *  the page already lists it as its own quests. */
-  const foreignQuestGroups = ref<AccountQuestGroup[]>([])
-  const foreignQuestsLoading = ref(false)
-  const foreignQuestsError = ref<string | null>(null)
-
-  /** The group read that is currently awaiting, so two timers cannot both fetch. */
-  let foreignQuestsReadInFlight: Promise<void> | null = null
-  let foreignQuestsGeneration = 0
-
-  /** Display names seen in a group read. A quest ending is reported after the read
-   *  that listed it, and a later failed read would otherwise leave the ending with
-   *  no account to name, so the names outlive the list they came with. */
-  const foreignAccountNames = new Map<string, string>()
-
-  function accountDisplayName(accountId: string | null | undefined): string {
-    return accountId ? foreignAccountNames.get(accountId) ?? '' : ''
-  }
-
-  async function readForeignQuests(): Promise<void> {
-    const generationAtStart = ++foreignQuestsGeneration
-    foreignQuestsLoading.value = true
-    try {
-      const groups = await getQuestsForAccounts()
-      if (generationAtStart !== foreignQuestsGeneration) return
-      foreignQuestGroups.value = groups
-      for (const group of groups) {
-        foreignAccountNames.set(
-          group.account.user.id,
-          group.account.user.global_name || group.account.user.username,
-        )
-      }
-      foreignQuestsError.value = null
-    } catch (e) {
-      if (generationAtStart !== foreignQuestsGeneration) return
-      foreignQuestGroups.value = []
-      foreignQuestsError.value = errorMessage(e)
-    } finally {
-      if (generationAtStart === foreignQuestsGeneration) foreignQuestsLoading.value = false
-    }
-  }
-
   /**
-   * Ask every other account for its own quests. Each group is read with that
-   * account's token, so an account whose token expired comes back as a group
-   * carrying an error rather than vanishing from the panel.
-   */
-  function refreshForeignQuests(): Promise<void> {
-    if (foreignQuestsReadInFlight) return foreignQuestsReadInFlight
-    const inFlight = readForeignQuests().finally(() => {
-      if (foreignQuestsReadInFlight === inFlight) foreignQuestsReadInFlight = null
-    })
-    foreignQuestsReadInFlight = inFlight
-    return inFlight
-  }
-
-  /** Whether another account already runs this quest. The backend registry is the
-   *  only truth: a foreign run has no local slot to consult. */
-  function isForeignQuestRunning(accountId: string, questId: string): boolean {
-    const key = accountTaskKey(accountId, questId)
-    return accountTasks.value.some(task => accountTaskKey(task.accountId, task.questId) === key)
-  }
-
-  /**
-   * Start one quest of another account without moving the page onto it. Every
-   * branch posts through the direct API with that account's own client, which is
-   * why a checkpoint Activity or a real Stream is refused: those need the desktop
-   * window or a broadcast, and the window belongs to one account.
+   * Why an account switch cannot happen yet, or 'none'.
    *
-   * No local slot is opened. The progress panel stays the active account's, so a
-   * foreign run shows only its own percentage, read from its own quest payload.
+   * A switch hands the page to another account while this account's quests keep
+   * running in the background, and the page then has no controls over work it is
+   * still being notified about. Quests must reach their end, or be stopped, first.
    */
-  async function startForeignQuest(accountId: string, quest: Quest): Promise<void> {
-    const blocker = foreignQuestBlocker(quest)
-    if (blocker) {
-      throw new Error(`This quest cannot run for another account (${blocker})`)
+  function accountSwitchBlockReason(): AccountSwitchBlockReason {
+    if (stopping.value || runningQuests.value.length > 0 || isQueueRunning.value) {
+      return 'quest_running'
     }
-    // The driven task is the same one the local batch drives, so a quest that
-    // lists a game task beside a video task banks its progress on the same
-    // task here as it does on this account.
-    const task = questRunTask(quest)
-    const secondsNeeded = task?.target ?? 0
-    if (!task || secondsNeeded <= 0) {
-      throw new Error(`Quest ${quest.id} has no timed task to run`)
-    }
-    const initialProgress = firstProgressValue(quest, task.key)
-    const progressPct = (initialProgress / secondsNeeded) * 100
-
-    try {
-      if (isVideoTask(task)) {
-        await startVideoQuest(
-          quest.id,
-          secondsNeeded,
-          progressPct,
-          speedMultiplier.value,
-          heartbeatInterval.value,
-          accountId
-        )
-      } else {
-        const appId = questApplicationId(quest)
-        if (!appId) throw new Error(`Quest ${quest.id} is missing an application ID`)
-        if (isPlayActivityTask(task)) {
-          // A cloud-game Activity counts seconds, and the direct-API transport is
-          // the only one that is not bound to the desktop client.
-          await startPlayActivityQuest(
-            quest.id,
-            appId,
-            secondsNeeded,
-            initialProgress,
-            'heartbeat',
-            cdpPort.value,
-            heartbeatInterval.value,
-            gamePollingInterval.value,
-            accountId
-          )
-        } else {
-          await startGameHeartbeatQuest(quest.id, appId, secondsNeeded, progressPct, accountId)
-        }
-      }
-    } finally {
-      // The registry read is what tells the page that another account now has work
-      // in flight, and unattributed quest events stop being trusted from then on.
-      // Reading it here closes the window between starting and the next tick.
-      await pollQuestTaskStatuses(true)
-    }
-  }
-
-  /** Enroll one quest of another account, so its progress can be posted at all. */
-  async function acceptForeignQuest(accountId: string, questId: string): Promise<void> {
-    await acceptQuest(questId, accountId)
-  }
-
-  /** Take one finished quest's reward on another account. */
-  async function claimForeignQuest(accountId: string, questId: string): Promise<void> {
-    await claimQuestReward(questId, undefined, accountId)
+    return 'none'
   }
 
   const autoClaimInFlight = new Set<string>()
@@ -1659,15 +1528,6 @@ export const useQuestsStore = defineStore('quests', () => {
     }
   }
 
-  /** Stop one quest another account is running, then re-read the registry so the
-   *  row can flip back to Start without waiting for the next tick. */
-  async function stopForeignQuest(accountId: string, questId: string): Promise<void> {
-    await stopAccountQuest({ accountId, questId, state: 'running' })
-    // Forced: this row may be the only record the page knows, and leaving it behind
-    // would keep the card showing Stop for a quest that already ended.
-    await pollQuestTaskStatuses(true)
-  }
-
   /**
    * Route one ended quest. `failedWith` is the backend error text when the quest
    * ended with an error instead of completing.
@@ -1682,16 +1542,10 @@ export const useQuestsStore = defineStore('quests', () => {
   }
 
   /** A running slot only carries the quest id, so a notification reads the name
-   *  from whichever list still holds the quest at the moment it ends: the queue,
-   *  this account's own list, or the group of the account that was asked to run it. */
-  function questDisplayName(questId: string, accountId?: string | null): string {
-    const groupQuest = accountId
-      ? foreignQuestGroups.value
-          .find(group => group.account.user.id === accountId)
-          ?.quests.find(item => item.id === questId)
-      : undefined
+   *  from whichever list still holds the quest at the moment it ends: the queue
+   *  or this account's own list. */
+  function questDisplayName(questId: string): string {
     const quest =
-      groupQuest ??
       questQueue.value.find(item => item.id === questId) ??
       quests.value.find(item => item.id === questId)
     return quest?.config?.messages?.quest_name ?? questId
@@ -3224,15 +3078,7 @@ export const useQuestsStore = defineStore('quests', () => {
     accountTasks,
     resetForAccountSwitch,
     stopAccountQuest,
-    foreignQuestGroups,
-    foreignQuestsLoading,
-    foreignQuestsError,
-    refreshForeignQuests,
-    isForeignQuestRunning,
-    startForeignQuest,
-    acceptForeignQuest,
-    claimForeignQuest,
-    stopForeignQuest,
+    accountSwitchBlockReason,
     maxParallelQuests,
     maxParallelQuestsCeiling: MAX_PARALLEL_QUESTS,
     speedMultiplier,

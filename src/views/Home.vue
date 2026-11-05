@@ -343,10 +343,6 @@
         </template>
       </div>
 
-      <!-- Every other signed-in account's quests, with its avatar and name, so a
-           whole account can be farmed without signing into it. -->
-      <AccountQuestGroupsPanel />
-
       <!-- The only way to stop a quest the page no longer drives. -->
       <BackgroundQuestsPanel />
     </div>
@@ -691,7 +687,6 @@ import { useVersionStore, formatVersionLabel } from '@/stores/version'
 import { useGameIdleStore } from '@/stores/gameIdle'
 import OrbsNitroStatus from '@/components/OrbsNitroStatus.vue'
 import BackgroundQuestsPanel from '@/components/BackgroundQuestsPanel.vue'
-import AccountQuestGroupsPanel from '@/components/AccountQuestGroupsPanel.vue'
 import QuestListHeader from '@/components/home/QuestListHeader.vue'
 import QuestViewTabs from '@/components/home/QuestViewTabs.vue'
 import QuestCard from '@/components/QuestCard.vue'

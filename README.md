@@ -8,7 +8,7 @@
 
 <p><strong>🎮 Automate your Discord Quests with one click</strong></p>
 
-<p>Complete Discord video, stream, activity, and game quests from one desktop app — up to twenty at a time per account, in the background, for every account you have signed in, without downloading the games.</p>
+<p>Complete Discord video, stream, activity, and game quests from one desktop app — up to twenty at a time per account, in the background, without downloading the games.</p>
 
 <p>⭐ <strong>If you find this helpful, please give it a star!</strong> ⭐</p>
 
@@ -94,7 +94,6 @@ server of its own, and no telemetry.
 | 🎮 **Zero-download game quests** | Simulate a game process so Play/Install quests complete without downloading or installing the real game. A CDP injection mode covers games the simulator cannot handle. |
 | 🎯 **Activity quests** | Drive Discord's own Activity page through CDP: navigate to the quest, launch the Activity, then take over progress reporting. |
 | 🔀 **Twenty quests in parallel** | Run up to twenty quests at the same time per account from a queue, and stop any single one of them without touching the rest. Game quests take turns: an account runs one at a time and the others stay queued until it finishes. |
-| 🪟 **Every account at once** | The dashboard lists the quests of each remembered account under its avatar and name, and **Run** starts them with that account's own token — no sign-out, no switching. Quests that need the desktop client stay listed with the reason they cannot run from here. |
 | 🔍 **Batch actions** | Accept All, Complete All Video Quests, Complete All Game Quests, Complete All Quests, and Stop Queue. |
 | 🗂️ **Filters and views** | Preset views (Recommended, To Accept, Ready to Run, Ready to Claim, Completed, All), free-text search, and filters by type, reward, status, and expiry. Filter state is saved between sessions. |
 | 💎 **Reward context** | Current Orbs balance and a countdown to the next monthly Nitro Orbs claim, plus reward details per quest. |
@@ -104,7 +103,7 @@ server of its own, and no telemetry.
 | | |
 | --- | --- |
 | 🌙 **Keep-awake** | While at least one quest is running, the app asks the OS not to sleep, and releases the request as soon as nothing is running. Windows and macOS. |
-| 🔔 **Completion notifications** | An OS notification when a quest finishes or fails, worded in the language the app is currently showing. A quest that ran for another account says which. |
+| 🔔 **Completion notifications** | An OS notification when a quest finishes or fails, worded in the language the app is currently showing. |
 | 🚦 **Rate-limit aware requests** | Parallel quests share one release budget per API route, and a 429 holds the whole route instead of every slot collecting its own. |
 | ⏳ **Enrollment cooldown surfaced** | When Discord temporarily blocks the account from accepting new quests, the dashboard says so and shows the deadline instead of failing every accept with an opaque error. |
 
@@ -239,10 +238,8 @@ Bundles land in `target/release/bundle/`. Platform notes that still apply to you
 
 The dashboard fetches the quests available to the signed-in account. If Discord has put the account on
 an enrollment cooldown, a red banner states the deadline; quests already running are unaffected.
-
-Below it, every other remembered account is listed under its own avatar and name, with its quests.
-Those lists are read with each account's stored token, so a second account's work does not spend the
-first one's twenty slots, and switching is only needed for quests that require the desktop client.
+Switching to another account waits for your quests to finish or stop, so the app never loses track of
+work it is still driving.
 
 ### 3. Run quests
 
@@ -287,10 +284,9 @@ very fast client. The REST client therefore paces itself:
 - Accepted trade-off: batch actions are about 0.6 s slower per quest than an unpaced client. That is
   deliberate — it is what keeps one 429 from stopping the entire set.
 
-Cross-account runs share this pacing. The release gap and any 429 hold live in process-global tables
-keyed by route, not by token, so several accounts heartbeating the same route still release only one
-request per gap. Discord counts each token on its own, so that shared queue is stricter than the API
-requires: it costs cross-account batches some speed and keeps every account further inside its budget.
+Running quests share this pacing. The release gap and any 429 hold live in process-global tables
+keyed by route, not by task, so several quests heartbeating the same route still release only one
+request per gap.
 
 ### Enrollment cooldown
 
@@ -414,7 +410,7 @@ every error code, what it means, and what to do.
 | Blank window on Linux, especially in a VM | WebKitGTK's accelerated compositor renders nothing on some drivers. The app already falls back to software compositing for known cases; if it still happens, launch with `WEBKIT_DISABLE_COMPOSITING_MODE=1`. |
 | Every accept fails with an unclear error, or a red banner appears | Discord has the account on an enrollment cooldown. The banner names the deadline; wait it out. Running quests are unaffected. |
 | Quests stopped when the machine slept | Keep-awake covers Windows and macOS only. On Linux, enable idle inhibition in your compositor. |
-| Twenty parallel quests feel slow | Expected: requests are paced per route to avoid 429 storms, and that pacing is shared by every account in the app. Lower the parallelism or the submission interval if you want fewer, slower requests. |
+| Twenty parallel quests feel slow | Expected: requests are paced per route to avoid 429 storms, and that pacing is shared by every running quest. Lower the parallelism or the submission interval if you want fewer, slower requests. |
 
 ## 🛠️ Development
 

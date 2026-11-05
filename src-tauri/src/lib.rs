@@ -1468,91 +1468,6 @@ fn list_accounts(state: State<'_, AppState>) -> Vec<AccountSummary> {
     summarize_accounts(&state, |_| true)
 }
 
-/// One account's own quest list, as the page needs it to show and start quests
-/// without switching to that account first.
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AccountQuestList {
-    account: AccountSummary,
-    quests: Vec<serde_json::Value>,
-    /// Why this account's list could not be read. The group is still reported, so
-    /// one expired token cannot blank the whole panel.
-    error: Option<String>,
-}
-
-/// The `quests` array of a `/quests/@me` payload, empty when Discord sent none.
-fn quest_array_of(payload: &serde_json::Value) -> Vec<serde_json::Value> {
-    payload
-        .get("quests")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-}
-
-#[cfg(test)]
-mod quest_array_tests {
-    use super::quest_array_of;
-    use serde_json::json;
-
-    #[test]
-    fn reads_the_quests_array_of_a_payload() {
-        let payload = json!({ "quests": [{ "id": "quest-1" }, { "id": "quest-2" }] });
-        assert_eq!(quest_array_of(&payload).len(), 2);
-    }
-
-    #[test]
-    fn a_payload_without_quests_is_an_empty_list_not_a_missing_one() {
-        assert_eq!(quest_array_of(&json!({})), Vec::<serde_json::Value>::new());
-    }
-}
-
-/// Quest lists for every remembered account except the one the page is already
-/// showing. Each account is asked with its own token and the reads run together,
-/// because they are network-bound, not local work. Nothing here hands a token to
-/// the page: a group carries the same summary the account menu shows.
-#[tauri::command]
-async fn get_quests_for_accounts(
-    state: State<'_, AppState>,
-) -> Result<Vec<AccountQuestList>, String> {
-    let active = active_account_id(&state);
-    let summaries = summarize_accounts(&state, |_| true);
-    let sessions: Vec<AccountSession> = state
-        .accounts
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|session| Some(session.user_id.as_str()) != active.as_deref())
-        .cloned()
-        .collect();
-    let requests = sessions
-        .into_iter()
-        .map(|session| async move {
-            let user_id = session.user_id.clone();
-            (user_id, session.client.get_quests_raw().await)
-        })
-        .collect::<Vec<_>>();
-    let reads = futures_util::future::join_all(requests).await;
-
-    let mut groups = Vec::with_capacity(reads.len());
-    for (user_id, outcome) in reads {
-        let summary = match summaries.iter().find(|summary| summary.user.id == user_id) {
-            Some(summary) => summary.clone(),
-            // A session that lost its summary mid-read has no row to draw.
-            None => continue,
-        };
-        let (quests, error) = match outcome {
-            Ok(payload) => (quest_array_of(&payload), None),
-            Err(error) => (Vec::new(), Some(error.to_string())),
-        };
-        groups.push(AccountQuestList {
-            account: summary,
-            quests,
-            error,
-        });
-    }
-    Ok(groups)
-}
-
 /// Builds the page-facing view of the remembered accounts a filter selects. The
 /// quest counts come from the task registry, so a background quest of an account
 /// the page is not looking at still shows up.
@@ -3734,7 +3649,6 @@ pub fn run() {
             forget_account,
             get_quests,
             get_quests_full,
-            get_quests_for_accounts,
             start_video_quest,
             start_stream_quest,
             start_game_heartbeat_quest,

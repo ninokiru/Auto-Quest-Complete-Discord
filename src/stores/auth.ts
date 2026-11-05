@@ -284,17 +284,25 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * Make a remembered account the one the page works on, without signing out.
    *
-   * This is deliberately not `loginWithToken`: that path stops every quest, while
-   * a direct-API quest of the account being left keeps posting with the client it
-   * captured at start. Only the page's ownership of those slots ends here. A CDP
-   * quest is stopped by the backend, because the one desktop client window is
-   * signed into one account and cannot drive another's session.
+   * This is deliberately not `loginWithToken`: that path tears down the session to
+   * start a new one, while a switch only hands over the page. It refuses while a
+   * quest of the current account is still running or queued, so the account being
+   * left never has work going on that this page can neither see nor stop; the
+   * caller offers Stop for that. The backend refuses too when game idle mode owns
+   * the activity slot.
    */
   async function switchToAccount(userId: string) {
     if (!userId || user.value?.id === userId) return false
+    const questsStore = useQuestsStore()
+    if (questsStore.accountSwitchBlockReason() !== 'none') {
+      // The page keeps its controls only over the account it shows, so a switch
+      // while work runs would leave this account's quests firing events nobody can
+      // stop. The message is a fallback: the account menu translates the reason.
+      error.value = 'Finish or stop your running quests before switching accounts.'
+      return false
+    }
     loading.value = true
     error.value = null
-    const questsStore = useQuestsStore()
     const previousId = user.value?.id ?? null
     try {
       const next = await switchAccount(userId)

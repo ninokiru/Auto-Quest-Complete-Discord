@@ -8,7 +8,7 @@ import type { AccountSummary, DiscordUser } from '@/api/tauri'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Check, ChevronDown, Gamepad2, Loader2, LogOut, Search, Swords, Trophy, UserPlus, X } from 'lucide-vue-next'
+import { Check, ChevronDown, Gamepad2, Loader2, LogOut, Search, Square, Swords, Trophy, UserPlus, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 
 const { t, locale } = useI18n()
@@ -31,6 +31,24 @@ const failedBadgeIds = ref<Set<number>>(new Set())
 
 const accounts = computed(() => authStore.knownAccounts)
 const busy = computed(() => switching.value || authStore.loading)
+
+// Switching hands the page to another account, and this page cannot control the
+// quests of the one it leaves, so the list stays locked until they are finished
+// or stopped.
+const switchBlocked = computed(() => questsStore.accountSwitchBlockReason() !== 'none')
+const stoppingAll = ref(false)
+
+async function stopAllForSwitch() {
+  if (stoppingAll.value) return
+  stoppingAll.value = true
+  menuError.value = null
+  try {
+    await questsStore.stop()
+    if (questsStore.error) menuError.value = questsStore.error
+  } finally {
+    stoppingAll.value = false
+  }
+}
 
 const badgeRows = computed(() => ACCOUNT_BADGES.flatMap(definition => {
   const badge = badgesStore.badges.find(item => item.badge_id === definition.id && item.owned === true)
@@ -205,6 +223,22 @@ onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside))
             {{ t('account.switch_title') }}
           </p>
 
+          <div v-if="switchBlocked" class="mx-1 mb-1 rounded-md border border-border/60 bg-muted/40 p-2">
+            <p class="text-[10px] leading-relaxed text-pretty text-muted-foreground">
+              {{ t('account.switch_blocked') }}
+            </p>
+            <button
+              type="button"
+              class="mt-1.5 flex items-center gap-1.5 rounded px-1 py-0.5 text-[10px] font-semibold text-error outline-none transition-colors hover:bg-destructive/10 focus-visible:ring-2 focus-visible:ring-ring"
+              :disabled="stoppingAll"
+              @click="stopAllForSwitch"
+            >
+              <Loader2 v-if="stoppingAll" class="h-3 w-3 animate-spin" />
+              <Square v-else class="h-3 w-3" />
+              {{ t('account.stop_quests') }}
+            </button>
+          </div>
+
           <div
             v-for="summary in accounts"
             :key="summary.user.id"
@@ -224,7 +258,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside))
 
             <button
               class="min-w-0 flex-1 rounded text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              :disabled="summary.active || busy"
+              :disabled="summary.active || busy || switchBlocked"
               @click="handleSwitch(summary)"
             >
               <span class="flex items-center gap-1.5">

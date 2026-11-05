@@ -253,6 +253,22 @@ describe('quest tasks across an account switch', () => {
     expect(carried(store)).toEqual(['account-b/shared-quest/running'])
   })
 
+  it('refuses an account switch while a quest or a queue is still working', () => {
+    const store = useQuestsStore()
+    expect(store.accountSwitchBlockReason()).toBe('none')
+
+    store.runningQuests.push(slot('video-quest', true))
+    expect(store.accountSwitchBlockReason()).toBe('quest_running')
+
+    store.runningQuests.splice(0, store.runningQuests.length)
+    // A queue that has not reached its end starts the next quest on its own.
+    store.isQueueRunning = true
+    expect(store.accountSwitchBlockReason()).toBe('quest_running')
+
+    store.isQueueRunning = false
+    expect(store.accountSwitchBlockReason()).toBe('none')
+  })
+
   it('skips the registry read while nothing is tracked here or abroad', async () => {
     const store = useQuestsStore()
     store.startIdleRefresh()
@@ -340,9 +356,9 @@ describe('quest tasks across an account switch', () => {
     expect(store.error).toBeNull()
     expect(mocks.stopQuest).not.toHaveBeenCalled()
     // The other account's copy is listed while it runs, and its ending is
-    // announced rather than tearing this page's quest down. No group was read
-    // here, so there is no display name to add.
-    expect(mocks.announceQuestEnd).toHaveBeenCalledWith('shared', 'ended abroad', undefined)
+    // announced rather than tearing this page's quest down. The notification names
+    // no account: the page never runs a quest for one it is not signed into.
+    expect(mocks.announceQuestEnd).toHaveBeenCalledWith('shared', 'ended abroad')
     expect(carried(store)).toEqual([])
   })
 
@@ -357,7 +373,7 @@ describe('quest tasks across an account switch', () => {
 
     await vi.advanceTimersByTimeAsync(120_000)
 
-    expect(mocks.announceQuestEnd).toHaveBeenCalledWith('theirs', undefined, undefined)
+    expect(mocks.announceQuestEnd).toHaveBeenCalledWith('theirs', undefined)
     expect(carried(store)).toEqual([])
     expect(runningIds(store)).toEqual(['mine'])
   })

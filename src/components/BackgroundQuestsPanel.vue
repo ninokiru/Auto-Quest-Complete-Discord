@@ -31,22 +31,9 @@ interface BackgroundGroup {
   rows: BackgroundRow[]
 }
 
-// Grouped by first-seen account so one account's quests read as one block instead
-// of repeating its avatar. The store replaces the whole list on every tick, so the
-// group order is the registry's.
-const backgroundTasks = computed(() => questsStore.accountTasks.filter(task => !listedInGroups(task)))
-
-/** A quest the other accounts' panel already lists has its Stop button there, so
- *  this panel keeps only what that one cannot show: a forgotten account, an
- *  account whose list read failed, or a quest that left its list. */
-function listedInGroups(task: AccountQuestTask): boolean {
-  if (!task.accountId) return false
-  return questsStore.foreignQuestGroups.some(
-    group =>
-      group.account.user.id === task.accountId &&
-      group.quests.some(quest => quest.id === task.questId),
-  )
-}
+// Every running quest is listed here, grouped by first-seen account so one
+// account's quests read as one block instead of repeating its avatar.
+const backgroundTasks = computed(() => questsStore.accountTasks)
 
 const groups = computed<BackgroundGroup[]>(() => {
   const byAccount = new Map<string, BackgroundGroup>()

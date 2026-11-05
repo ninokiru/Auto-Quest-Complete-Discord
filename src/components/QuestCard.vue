@@ -33,15 +33,6 @@ const props = defineProps<{
   questType?: 'video' | 'stream' | 'activity'
   showDeveloperDetails?: boolean
   busy?: boolean
-  /**
-   * True when the card shows a quest that belongs to another account. Slots are
-   * matched by quest id alone, and two accounts can each run the same quest, so a
-   * foreign card must not read this account's slot for its progress, unit or
-   * target — its own `user_status` is the only truth it has.
-   */
-  foreign?: boolean
-  /** The account that owns this quest, when it is not the signed-in one. */
-  accountId?: string
   /** Tighter spacing for the Home list's compact density. */
   compact?: boolean
 }>()
@@ -68,9 +59,7 @@ const questTypeLabel = computed(() => {
 // their progress from their own slot: with several quests running, the store's
 // primary-quest getters belong to a different quest.
 const runningSlot = computed(
-  () => props.foreign
-    ? null
-    : questsStore.runningQuests.find(slot => slot.questId === props.quest.id) ?? null
+  () => questsStore.runningQuests.find(slot => slot.questId === props.quest.id) ?? null
 )
 const isActiveQuest = computed(() => runningSlot.value !== null)
 
@@ -347,7 +336,7 @@ async function loadRewardCode() {
   rewardCodeLoading.value = true
   rewardCodeFailed.value = false
   try {
-    const response = await getQuestRewardCode(props.quest.id, props.accountId ?? null)
+    const response = await getQuestRewardCode(props.quest.id)
     const code = response?.code?.trim() ?? ''
     if (!code) {
       rewardCodeFailed.value = true

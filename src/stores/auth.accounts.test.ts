@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
     stop: vi.fn(),
     resetForLogout: vi.fn(),
     resetForAccountSwitch: vi.fn(),
+    accountSwitchBlockReason: vi.fn(),
     startIdleRefresh: vi.fn(),
   },
   gameIdleStore: {
@@ -99,6 +100,8 @@ describe('known account management', () => {
     mocks.questsStore.getDetectableGames.mockResolvedValue(undefined)
     mocks.questsStore.fetchOrbsBalance.mockResolvedValue(undefined)
     mocks.questsStore.resetForAccountSwitch.mockResolvedValue(undefined)
+    // Every case but the one that tests the gate starts from a quiet account.
+    mocks.questsStore.accountSwitchBlockReason.mockReturnValue('none')
   })
 
   it('re-reads the accounts the backend remembers while signed in', async () => {
@@ -193,6 +196,19 @@ describe('known account management', () => {
 
     await expect(authStore.switchToAccount('123')).resolves.toBe(false)
 
+    expect(mocks.switchAccount).not.toHaveBeenCalled()
+    expect(mocks.questsStore.resetForAccountSwitch).not.toHaveBeenCalled()
+    expect(authStore.user?.id).toBe('123')
+  })
+
+  it('refuses a switch while this account still has quest work', async () => {
+    const authStore = useAuthStore()
+    authStore.user = user
+    mocks.questsStore.accountSwitchBlockReason.mockReturnValue('quest_running')
+
+    await expect(authStore.switchToAccount('456')).resolves.toBe(false)
+
+    // The refusal happens before the backend is asked, so no handover starts.
     expect(mocks.switchAccount).not.toHaveBeenCalled()
     expect(mocks.questsStore.resetForAccountSwitch).not.toHaveBeenCalled()
     expect(authStore.user?.id).toBe('123')

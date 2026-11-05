@@ -3,8 +3,8 @@
 What the app does, in the order you will actually do it: install, sign in, connect to your Discord
 client, run a quest, collect the reward, and keep it running while you use the computer normally.
 
-The app automates Discord's Quests page. It runs up to twenty quests in parallel, and every account you
-have signed in can work at the same time. It runs entirely on your machine: no server of ours, no
+The app automates Discord's Quests page. It runs up to twenty quests in parallel, and a quest you
+start keeps running in the background. It runs entirely on your machine: no server of ours, no
 telemetry, no subscription.
 
 > [!WARNING]
@@ -112,10 +112,8 @@ deadline, and a status.
 - A **red banner naming a date and time** means Discord has put the account on an enrollment
   cooldown — you cannot accept new quests until then. Quests already running are unaffected, and the
   banner clears on its own when the deadline passes.
-- **Under your own list** are the quest groups of the other accounts this app remembers, each headed
-  by that account's avatar and name. Their quests can be accepted, started, claimed and stopped from
-  here, and none of it signs you out of the account you are looking at. A quest that needs the
-  desktop client is still listed, but greyed, with the reason printed under the button.
+- **One account at a time.** The list is the account you are on. Switch accounts from the account
+  menu, but only while that account has no quest running or queued — finish them or stop them first.
 
 ## Run each kind of quest
 
@@ -176,8 +174,7 @@ and ask you to finish there yourself.
 Some quests pay out a code instead of Orbs or an item. A claimed quest of that kind shows a
 **Show reward code** line under its reward row. Pressing it asks Discord for the code and shows it
 next to a **Copy** button — the code is copied to the clipboard, never redeemed by the app, and
-nothing is taken from your balance. The code belongs to the account that owns the quest, so a quest
-in another account's row shows that account's code.
+nothing is taken from your balance.
 
 The request is made on demand: a list of twenty quests never spends a request per row, and a quest
 that was never claimed has no code to ask for.
@@ -205,12 +202,12 @@ about a reward you had not earned yet.
   Quests, Stop Queue.
 - **Twenty quests run at once** per account. Anything beyond that waits in a queue and starts as a slot
   frees. You can stop any single quest without touching the others.
-- **Other accounts run alongside this one.** The dashboard groups every remembered account by avatar
-  and name, and **Run** on those rows works for that account without signing out of the current one.
-  Quests that need the desktop client stay greyed with the reason under the button.
+- Switching accounts waits for your quests: the account menu refuses the change while one is running
+  or queued, and offers **Stop all quests** so you can switch right away. The background quests panel
+  lists whatever the app is still tracking and stops any one of them.
 - Requests are **paced per API route with a 600 ms gap**, and a `429` rate-limit response holds the
-  whole route rather than each slot collecting its own. The pacing tables are shared by every account
-  in the app, so several accounts on one route still release one request at a time. Batch actions are
+  whole route rather than each slot collecting its own. The pacing tables are shared by every running
+  quest in the app, so several quests on one route still release one request at a time. Batch actions are
   therefore about 0.6 s slower per quest than an unpaced client would be. That is deliberate: it is
   what stops Discord from throttling the entire set because one quest moved too fast.
 
@@ -218,13 +215,13 @@ about a reward you had not earned yet.
 
 - **Keep-awake**: while at least one quest is running, the app asks the operating system not to sleep
   and releases that request as soon as nothing is running. The guard is set from the running-task
-  registry, so a quest started for another account holds the machine awake exactly like your own does.
+  registry, so a quest holds the machine awake however long it runs.
   Windows uses `SetThreadExecutionState`, macOS uses `caffeinate` bound to the app's process so it
   dies with the app. **Linux does nothing** — turn on idle inhibition in your compositor or the machine
   can sleep mid-quest.
 - **Notifications**: an OS notification when a quest finishes or fails, worded in the language the app
-  is currently displaying, and the same events collected in the bell panel until you clear them. A
-  quest that ran for another account names that account. There is no toggle for either yet.
+  is currently displaying, and the same events collected in the bell panel until you clear them.
+  There is no toggle for either yet.
 - Hiding or minimizing the window does not stop anything. Closing the app does, and if a quest is
   running you will be asked before the CDP session is torn down — **Cancel** leaves everything running.
 
