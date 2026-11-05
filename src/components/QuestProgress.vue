@@ -421,6 +421,9 @@ const keepAliveRemainingText = computed(() => {
               <span v-if="queuedBehindCount > 0" class="rounded-full bg-secondary px-2 py-0.5 font-mono text-[11px] font-medium tabular-nums text-secondary-foreground">
                 {{ t('home.queue_count', { count: queuedBehindCount }) }}
               </span>
+              <span v-if="questsStore.videoRestWaiting" class="rounded-full bg-warn/15 px-2 py-0.5 font-mono text-[11px] font-medium tabular-nums text-warn">
+                {{ t('quest.video_rest_notice', { seconds: questsStore.videoRestSeconds }) }}
+              </span>
               <span v-if="questsStore.activeQuestId" class="font-mono text-sm font-semibold tabular-nums">
                 {{ primaryDisplayProgress }}%
               </span>

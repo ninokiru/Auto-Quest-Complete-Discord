@@ -129,6 +129,7 @@ describe('game quest slots per account', () => {
   it('starts a queued game quest when a shared slot frees up', async () => {
     const store = useQuestsStore()
     store.gameQuestMode = 'heartbeat'
+    store.maxParallelQuests = 20
     for (let index = 0; index < 21; index += 1) {
       store.addToQueue(gameQuest(`game-${index}`))
     }
@@ -147,6 +148,7 @@ describe('game quest slots per account', () => {
   it('refuses the twenty-first game quest started by hand', async () => {
     const store = useQuestsStore()
     store.gameQuestMode = 'heartbeat'
+    store.maxParallelQuests = 20
     for (let index = 0; index < 20; index += 1) {
       await store.startPlay(gameQuest(`game-${index}`), 600, 0)
     }
@@ -162,6 +164,7 @@ describe('game quest slots per account', () => {
     // first or it overwrites the mode set on the next line.
     await store.initPlatformCapabilities()
     store.gameQuestMode = 'cdp'
+    store.maxParallelQuests = 20
     for (let index = 0; index < 20; index += 1) {
       await store.startPlay(gameQuest(`cdp-${index}`), 600, 0)
     }
@@ -226,5 +229,34 @@ describe('game quest slots per account', () => {
       store.runningQuests.push(slot(`game-${index}`, { cdpPlay: true }))
     }
     expect(store.gameSlotBlockReason()).toBe('limit')
+  })
+
+  it('uses three parallel quests until the cap is raised', async () => {
+    const store = useQuestsStore()
+    store.gameQuestMode = 'heartbeat'
+    expect(store.maxParallelQuests).toBe(3)
+
+    await store.startPlay(gameQuest('game-a'), 600, 0)
+    await store.startPlay(gameQuest('game-b'), 600, 0)
+    await store.startPlay(gameQuest('game-c'), 600, 0)
+    await expect(store.startPlay(gameQuest('game-d'), 600, 0))
+      .rejects.toThrow(/At most 3 quests/)
+
+    store.maxParallelQuests = 4
+    await store.startPlay(gameQuest('game-d'), 600, 0)
+    expect(store.runningQuests).toHaveLength(4)
+  })
+
+  it('starts only up to the cap from the queue', async () => {
+    const store = useQuestsStore()
+    store.gameQuestMode = 'heartbeat'
+    for (let index = 0; index < 5; index += 1) {
+      store.addToQueue(gameQuest(`game-${index}`))
+    }
+
+    await store.startQueue()
+
+    expect(store.runningQuests.map(slot => slot.questId)).toEqual(['game-0', 'game-1', 'game-2'])
+    expect(store.questQueue.map(item => item.id)).toHaveLength(5)
   })
 })

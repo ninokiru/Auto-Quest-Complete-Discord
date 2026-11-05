@@ -231,6 +231,36 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  /** Add every token from a pasted list. Blank and repeated lines are dropped,
+   *  and one rejected token never stops the rest: each account that validates
+   *  comes back as a profile, so the caller can offer it for sign-in at once.
+   *  The tokens themselves are only arguments — nothing is kept here. */
+  async function addAccountsFromTokens(
+    rawTokens: string[],
+  ): Promise<{ added: AccountSummary[]; failed: number }> {
+    error.value = null
+    const seen = new Set<string>()
+    const added: AccountSummary[] = []
+    let failed = 0
+
+    for (const entry of rawTokens) {
+      const value = entry.trim()
+      if (!value || seen.has(value)) continue
+      seen.add(value)
+      try {
+        added.push(await addAccount(value))
+      } catch (e) {
+        failed += 1
+        error.value = commandErrorMessage(e)
+      }
+    }
+
+    // Re-read for the same reason `addKnownAccount` does: the backend stamps
+    // running-quest counts and never lists one id twice.
+    if (added.length > 0) await refreshKnownAccounts()
+    return { added, failed }
+  }
+
   /** Scan this machine for the accounts its desktop clients remember and add them
    *  to the switcher. The backend already keeps every account the scan validates,
    *  and this deliberately does not sign the page in: the list changes, the active
@@ -435,6 +465,7 @@ export const useAuthStore = defineStore('auth', () => {
     loginViaCdp,
     refreshKnownAccounts,
     addKnownAccount,
+    addAccountsFromTokens,
     scanKnownAccounts,
     switchToAccount,
     forgetKnownAccount,

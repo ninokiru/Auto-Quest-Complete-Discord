@@ -387,6 +387,54 @@ async function handleManualLogin() {
   }
 }
 
+const batchTokenInput = ref('')
+const batchBusy = ref(false)
+
+/** One token per line. Blank lines and repeats are dropped before any request,
+ *  so pasting the same list twice cannot register an account twice. */
+const batchTokens = computed(() => {
+  const seen = new Set<string>()
+  for (const line of batchTokenInput.value.split(/\r?\n/)) {
+    const value = line.trim()
+    if (value) seen.add(value)
+  }
+  return [...seen]
+})
+
+async function handleBatchAdd() {
+  if (batchTokens.value.length === 0 || batchBusy.value) return
+  if (!begin('manual')) return
+  const tokens = batchTokens.value
+  batchBusy.value = true
+  setProgress('manual', 'running', 'auth.progress.validating_tokens', {
+    current: 0,
+    total: tokens.length,
+  })
+  try {
+    const { added, failed } = await authStore.addAccountsFromTokens(tokens)
+    batchTokenInput.value = ''
+    if (added.length === 0) {
+      setProgress(
+        'manual',
+        'error',
+        'auth.progress.failed',
+        undefined,
+        authStore.error ?? t('auth.batch_none', { count: failed }),
+      )
+      return
+    }
+    if (failed > 0) {
+      setProgress('manual', 'neutral', 'auth.batch_partial', { added: added.length, failed })
+    }
+    // The added accounts go through the same picker a local scan uses, so the
+    // next click signs into one of them without another round trip.
+    await showDetectedAccounts(added)
+  } finally {
+    batchBusy.value = false
+    finish()
+  }
+}
+
 async function finishCdpLogin() {
   const succeeded = await authStore.loginViaCdp(event => handleBackendProgress('cdp', event))
   if (!succeeded) {
@@ -821,6 +869,35 @@ watch(showAutoDetect, maybeRunUnattendedScan, { immediate: true })
                   </div>
                   <p class="text-xs leading-5 text-muted-foreground">{{ t('settings.token_storage_note') }}</p>
                 </form>
+
+                <div class="mt-5 space-y-2 border-t pt-4 pl-0 sm:pl-[3.75rem]">
+                  <label for="batch-token-list" class="text-sm font-medium text-foreground">
+                    {{ t('auth.batch_title') }}
+                  </label>
+                  <textarea
+                    id="batch-token-list"
+                    v-model="batchTokenInput"
+                    rows="4"
+                    spellcheck="false"
+                    autocomplete="off"
+                    :placeholder="t('auth.batch_placeholder')"
+                    :disabled="busy"
+                    class="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs text-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                  />
+                  <div class="flex flex-wrap items-center gap-3">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      class="gap-2"
+                      :disabled="batchTokens.length === 0 || busy"
+                      @click="handleBatchAdd"
+                    >
+                      <Loader2 v-if="batchBusy" class="h-4 w-4 animate-spin" />
+                      {{ t('auth.batch_add', { count: batchTokens.length }) }}
+                    </Button>
+                    <p class="text-xs leading-5 text-muted-foreground">{{ t('auth.batch_hint') }}</p>
+                  </div>
+                </div>
               </div>
             </div>
           </Transition>

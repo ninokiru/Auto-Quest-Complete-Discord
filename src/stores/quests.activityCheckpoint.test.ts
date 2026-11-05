@@ -44,6 +44,13 @@ describe('quests Activity checkpoint settings', () => {
     expect(store.activityCheckpointMax).toBe(480)
   })
 
+  it('opens at the fast checkpoint cadence when nothing is saved', () => {
+    const store = useQuestsStore()
+
+    expect(store.activityCheckpointMin).toBe(90)
+    expect(store.activityCheckpointMax).toBe(150)
+  })
+
   it('persists checkpoint changes synchronously', () => {
     const store = useQuestsStore()
 
@@ -62,5 +69,29 @@ describe('quests Activity checkpoint settings', () => {
     expect(store.activityCheckpointMax).toBe(420)
     expect(localStorage.getItem('questHelper_activityCheckpointMin')).toBe('420')
     expect(localStorage.getItem('questHelper_activityCheckpointMax')).toBe('420')
+  })
+
+  it('shortens the checkpoint cadence with the Activity speed', () => {
+    const store = useQuestsStore()
+
+    expect(store.activitySpeedMultiplier).toBe(1)
+    expect(store.activitySpeedBounds).toEqual({ min: 1, max: 5 })
+    expect(store.activityCheckpointRange).toEqual({ min: 90, max: 150 })
+
+    store.activitySpeedMultiplier = 3
+    expect(store.activityCheckpointRange).toEqual({ min: 30, max: 50 })
+    expect(localStorage.getItem('questHelper_activitySpeedMultiplier')).toBe('3')
+
+    store.activitySpeedMultiplier = 5
+    expect(store.activityCheckpointRange.min).toBeGreaterThanOrEqual(15)
+  })
+
+  it('falls back to 1x for a saved Activity speed outside the range', () => {
+    for (const stored of ['0.5', '5.1', 'nine']) {
+      localStorage.setItem('questHelper_activitySpeedMultiplier', stored)
+      setActivePinia(createPinia())
+
+      expect(useQuestsStore().activitySpeedMultiplier).toBe(1)
+    }
   })
 })

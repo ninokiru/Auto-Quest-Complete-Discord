@@ -81,7 +81,7 @@ server of its own, and no telemetry.
 
 | | |
 | --- | --- |
-| ⚡ **Three login methods** | Auto-detect accounts from supported local Discord profiles, connect through CDP to a running client, or paste a token manually when the other two are unavailable. |
+| ⚡ **Three login methods** | Auto-detect accounts from the Discord and Vesktop profiles on this machine, connect through CDP to a running client, or paste one token — or a list of them, one per line — when the other two are unavailable. |
 | 🖥️ **Discord and Vesktop** | Pick which desktop client and which installation is used for CDP login, including custom or portable paths. Discord Stable, PT, Canary, and Vesktop are all handled. |
 | 👥 **Multi-account** | Keep several Discord accounts in one app, switch between them, and keep separate quest history per account. |
 | 🔑 **Token stays local** | The token is held in memory by the helper process; extraction uses the platform's own credential protection. |
@@ -260,8 +260,8 @@ Quests keep running when the window is hidden. Nothing needs to be clicked to fi
 
 | Section | What it controls |
 | --- | --- |
-| **Account** | Signed-in account, login method, manual token entry, token storage note. |
-| **Quest Behavior** | Video completion speed (0.1x–2.0x, default 1.0x), video progress submission interval (10–30 s, default 15 s), game progress polling interval (30–300 s, default 120 s), game quest mode (Simulate or CDP injection), simulation directory, Orb/Nitro display toggle. |
+| **Account** | Signed-in account, login method, manual token entry (single token, or many tokens one per line added to the switcher), token storage note. |
+| **Quest Behavior** | Video completion speed (1.0x–10.0x, default 1.0x; at 5.0x+ the app rests 1–2 minutes after three video quests finish), video progress submission interval (10–30 s, default 15 s), Activity checkpoint speed (1.0x–5.0x) and checkpoint interval (30–900 s), game progress polling interval (30–300 s, default 120 s), quests at once (1–20, default 3), game quest mode (Simulate or CDP injection), simulation directory, Orb/Nitro display toggle. |
 | **Discord Integration** | Client and installation picker (Discord Stable/PT/Canary, Vesktop, custom path), CDP connection state, launch or restart the client with the debug port, sync client info over CDP. |
 | **Appearance** | Light/dark theme and language. |
 | **Diagnostics** | Export this session's sanitized logs for troubleshooting. |
@@ -367,8 +367,10 @@ Explore the codebase with [![Ask DeepWiki](https://deepwiki.com/badge.svg)](http
 
 - **Tokens are kept in memory by the helper** — the app does not intentionally persist your Discord
   token to disk.
-- **Platform-native credential protection** — auto-detection reads supported Discord profiles through
-  Windows DPAPI, macOS Keychain, or Linux Secret Service.
+- **Platform-native credential protection** — auto-detection reads supported Discord and Vesktop
+  profiles through Windows DPAPI, macOS Keychain, or Linux Secret Service. Only account profiles cross
+  back to the window; a token is never handed to the frontend, and a failed scan reports client names
+  rather than file paths.
 - **HTTPS only for Discord traffic** — all API requests use secure HTTPS.
 - **Sanitized diagnostics** — logs and debug exports redact tokens and account data where applicable,
   and log export covers the current session only.
@@ -403,7 +405,7 @@ every error code, what it means, and what to do.
 | --- | --- |
 | SmartScreen or Defender blocks the download | Unsigned binary. Follow the [Windows steps](#windows) — restore from quarantine and add an exclusion. |
 | macOS says the app is damaged or cannot be opened | Quarantine flag on an unsigned build: `xattr -cr "/Applications/Auto Quest Complete Discord.app"`. |
-| Auto-detect finds no account | Discord is installed in a non-standard location, or the profile is not a supported channel. Use CDP login or manual token entry. |
+| Auto-detect finds no account | The scan names each client it tried — Discord Stable, PTB, Canary and (on Windows) Vesktop — so a "not installed" line means that client's folder is missing. A non-standard install location is not scanned; use CDP login or paste the token instead. |
 | "CDP not available. Start Discord with debug port." | Discord was launched normally, without `--remote-debugging-port`. Use **Settings → Discord Integration → Launch/Restart Discord with CDP**, and approve the restart prompt. |
 | CDP connects but quests do not progress | Confirm the right client and installation are selected, then re-sync client info from the same panel. The Debug view shows the live CDP state. |
 | A game quest refuses to simulate | Some titles ship a Windows-only executable, which cannot be process-simulated on Linux; others have no known executable. Switch to CDP injection mode and retry. |

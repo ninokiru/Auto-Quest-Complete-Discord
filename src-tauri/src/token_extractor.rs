@@ -109,6 +109,25 @@ fn official_profile_for_client(appdata: &Path, client: &DiscordClient) -> Chromi
     }
 }
 
+/// Wrapper clients that keep a Discord session in a Chromium profile of their
+/// own. Windows needs nothing beyond these names: each profile carries its own
+/// `Local State`, and the key inside it is protected by the per-user DPAPI
+/// master key, so reading a wrapper is the same path as reading an official
+/// client. macOS and Linux look their key up by keychain service or Secret
+/// Service application name, which is per-client and not assumed here.
+#[cfg(target_os = "windows")]
+const WINDOWS_WRAPPER_CLIENTS: &[(&str, &str)] = &[("Vesktop", "vesktop")];
+
+#[cfg(target_os = "windows")]
+fn wrapper_profile(appdata: &Path, name: &'static str, dir: &str) -> ChromiumProfile {
+    let root = appdata.join(dir);
+    ChromiumProfile {
+        display_name: name,
+        local_state_path: root.join("Local State"),
+        leveldb_path: root.join("Local Storage").join("leveldb"),
+    }
+}
+
 /// Auto-detect and extract Discord tokens (returns all unique tokens found)
 pub fn extract_tokens() -> Result<Vec<String>> {
     use crate::logger::{log, sanitize_path, LogCategory, LogLevel};
@@ -120,10 +139,18 @@ pub fn extract_tokens() -> Result<Vec<String>> {
         None,
     );
     let mut tokens = HashSet::new();
+    // Why each source came up empty, so a scan that finds nothing can say which
+    // client is missing instead of only reporting failure. Names and reasons
+    // only: no path, token or error text from the profile reaches this list.
+    let mut empty_sources: Vec<String> = Vec::new();
 
     #[cfg(target_os = "windows")]
     {
         for profile in discover_windows_profiles() {
+            let installed = profile
+                .local_state_path
+                .parent()
+                .is_some_and(|root| root.is_dir());
             log(
                 LogLevel::Debug,
                 LogCategory::TokenExtraction,
@@ -142,6 +169,9 @@ pub fn extract_tokens() -> Result<Vec<String>> {
                         ),
                         None,
                     );
+                    if client_tokens.is_empty() {
+                        empty_sources.push(source_label(profile.display_name, installed));
+                    }
                     for token in client_tokens {
                         tokens.insert(token);
                     }
@@ -154,6 +184,7 @@ pub fn extract_tokens() -> Result<Vec<String>> {
                         &format!("No tokens from {}", profile.display_name),
                         Some(&sanitized_error),
                     );
+                    empty_sources.push(source_label(profile.display_name, installed));
                 }
             }
         }
@@ -182,6 +213,9 @@ pub fn extract_tokens() -> Result<Vec<String>> {
                         &format!("Found {} tokens in {:?}", client_tokens.len(), client),
                         None,
                     );
+                    if client_tokens.is_empty() {
+                        empty_sources.push(source_label(client.display_name(), true));
+                    }
                     for token in client_tokens {
                         tokens.insert(token);
                     }
@@ -194,6 +228,7 @@ pub fn extract_tokens() -> Result<Vec<String>> {
                         &format!("No tokens from {:?}", client),
                         Some(&sanitized_error),
                     );
+                    empty_sources.push(source_label(client.display_name(), true));
                 }
             }
         }
@@ -213,10 +248,25 @@ pub fn extract_tokens() -> Result<Vec<String>> {
             "No tokens found in any Discord client",
             None,
         );
-        anyhow::bail!("Could not find tokens in any Discord client")
+        let detail = if empty_sources.is_empty() {
+            "no client folder could be read".to_string()
+        } else {
+            empty_sources.join("; ")
+        };
+        anyhow::bail!("Could not find tokens in any Discord client ({})", detail);
     }
 
     Ok(sorted_tokens(tokens))
+}
+
+/// One clause of the "nothing was found" explanation. Names and a state only:
+/// never a path, a token, or the error text taken from the profile.
+fn source_label(name: &str, installed: bool) -> String {
+    if installed {
+        format!("{name}: signed out, or no token stored")
+    } else {
+        format!("{name}: not installed")
+    }
 }
 
 fn sorted_tokens(tokens: HashSet<String>) -> Vec<String> {
@@ -231,14 +281,20 @@ fn discover_windows_profiles() -> Vec<ChromiumProfile> {
         return Vec::new();
     };
 
-    [
+    let mut profiles: Vec<ChromiumProfile> = [
         DiscordClient::Stable,
         DiscordClient::Canary,
         DiscordClient::Ptb,
     ]
     .iter()
     .map(|client| official_profile_for_client(&appdata, client))
-    .collect()
+    .collect();
+
+    for (name, dir) in WINDOWS_WRAPPER_CLIENTS {
+        profiles.push(wrapper_profile(&appdata, name, dir));
+    }
+
+    profiles
 }
 
 #[cfg(target_os = "windows")]
@@ -1317,6 +1373,39 @@ mod tests {
             ptb.leveldb_path,
             appdata
                 .join("discordptb")
+                .join("Local Storage")
+                .join("leveldb")
+        );
+    }
+
+    #[test]
+    fn empty_source_labels_name_the_client_without_a_path() {
+        assert_eq!(
+            source_label("Discord Canary", false),
+            "Discord Canary: not installed"
+        );
+        assert_eq!(
+            source_label("Vesktop", true),
+            "Vesktop: signed out, or no token stored"
+        );
+        assert!(!source_label("Discord Stable", true).contains('/'));
+        assert!(!source_label("Discord Stable", true).contains('\\'));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_scan_also_covers_the_wrapper_clients() {
+        assert!(WINDOWS_WRAPPER_CLIENTS.contains(&("Vesktop", "vesktop")));
+
+        let profile = wrapper_profile(Path::new("C:/AppData"), "Vesktop", "vesktop");
+        assert_eq!(
+            profile.local_state_path,
+            Path::new("C:/AppData").join("vesktop").join("Local State")
+        );
+        assert_eq!(
+            profile.leveldb_path,
+            Path::new("C:/AppData")
+                .join("vesktop")
                 .join("Local Storage")
                 .join("leveldb")
         );

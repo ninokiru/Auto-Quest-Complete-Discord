@@ -272,9 +272,27 @@ export const useQuestsStore = defineStore('quests', () => {
   const simulationPath = ref(localStorage.getItem(STORAGE_SIMULATION_PATH_KEY) ?? '')
   let simulationPathRevision = 0
 
-  /** Upper bound on concurrently running quests. The backend enforces the same
-   *  cap; this only keeps the UI from issuing starts it would reject. */
+  /** Hard ceiling on concurrently running quests; the backend enforces this one. */
   const MAX_PARALLEL_QUESTS = 20
+
+  const STORAGE_PARALLEL_CAP_KEY = 'questHelper_maxParallelQuests'
+  const DEFAULT_PARALLEL_QUESTS = 3
+
+  /**
+   * How many quests the user lets run at once. Three is the default rather than
+   * the ceiling: every extra quest is another presence on one account, and a
+   * fresh install should not start at the riskiest setting.
+   */
+  function readParallelCap(): number {
+    const stored = Number.parseInt(localStorage.getItem(STORAGE_PARALLEL_CAP_KEY) ?? '', 10)
+    if (!Number.isSafeInteger(stored)) return DEFAULT_PARALLEL_QUESTS
+    return Math.min(MAX_PARALLEL_QUESTS, Math.max(1, stored))
+  }
+
+  const maxParallelQuests = ref(readParallelCap())
+  watch(maxParallelQuests, (value) => {
+    localStorage.setItem(STORAGE_PARALLEL_CAP_KEY, String(value))
+  })
   const runningQuests = ref<RunningQuest[]>([])
 
   function questSlot(questId: string | null): RunningQuest | null {
@@ -362,8 +380,8 @@ export const useQuestsStore = defineStore('quests', () => {
       error.value = message
       throw new Error(message)
     }
-    if (runningQuests.value.length >= MAX_PARALLEL_QUESTS) {
-      const message = `At most ${MAX_PARALLEL_QUESTS} quests can run at the same time`
+    if (runningQuests.value.length >= maxParallelQuests.value) {
+      const message = `At most ${maxParallelQuests.value} quests run at the same time; raise the limit in Settings`
       error.value = message
       throw new Error(message)
     }
@@ -492,14 +510,126 @@ export const useQuestsStore = defineStore('quests', () => {
     },
   })
 
-  // Speed multiplier - read from localStorage, default 1, range 0.1 - 2.0
+  // Each heartbeat post claims `speed` times the seconds that really passed
+  // since the previous one, so the multiplier is the wall-clock dial for a video
+  // quest: 600s of video at 10x finishes in about 60s. CDP mode drives the real
+  // player and stays on Discord's own clock, so it ignores this value.
+  const MIN_VIDEO_SPEED = 1.0
+  const MAX_VIDEO_SPEED = 10.0
+  const DEFAULT_VIDEO_SPEED = 1.0
   const savedSpeed = localStorage.getItem(STORAGE_SPEED_KEY)
-  let initialSpeed = savedSpeed ? parseFloat(savedSpeed) : 1.0
-  // Validate range (0.1 to 2.0)
-  if (isNaN(initialSpeed) || initialSpeed < 0.1 || initialSpeed > 2.0) {
-    initialSpeed = 1.0
+  let initialSpeed = savedSpeed ? parseFloat(savedSpeed) : DEFAULT_VIDEO_SPEED
+  if (isNaN(initialSpeed) || initialSpeed < MIN_VIDEO_SPEED || initialSpeed > MAX_VIDEO_SPEED) {
+    initialSpeed = DEFAULT_VIDEO_SPEED
   }
   const speedMultiplier = ref(initialSpeed)
+
+  /**
+   * Past 5x the app claims video seconds far faster than they happen, and three
+   * of those inside a minute is the point where Discord starts reading the
+   * account as a script. So the third video completion inside a window parks
+   * video work for one to two minutes; game, stream and Activity quests keep
+   * running, and the user can override a break from the card that hit it.
+   */
+  const VIDEO_BURST_SPEED_FLOOR = 5
+  const VIDEO_BURST_COMPLETIONS = 3
+  const VIDEO_BURST_WINDOW_MS = 60_000
+  const VIDEO_REST_MIN_MS = 60_000
+  const VIDEO_REST_MAX_MS = 120_000
+
+  const videoCompletionMoments: number[] = []
+  const videoRestUntil = ref(0)
+  const videoRestSeconds = ref(0)
+  const videoRestAcknowledged = ref(false)
+  let videoRestTicker: ReturnType<typeof setInterval> | null = null
+
+  const videoPacingEnabled = computed(() => speedMultiplier.value >= VIDEO_BURST_SPEED_FLOOR)
+  const videoRestActive = computed(() => videoRestUntil.value > 0)
+  // A break the user accepted no longer holds anything, so the countdown chip
+  // must not claim the app is still waiting.
+  const videoRestWaiting = computed(() => videoRestActive.value && !videoRestAcknowledged.value)
+
+  function stopVideoRestTicker() {
+    if (!videoRestTicker) return
+    clearInterval(videoRestTicker)
+    videoRestTicker = null
+  }
+
+  function beginVideoRest() {
+    const span = VIDEO_REST_MIN_MS + Math.random() * (VIDEO_REST_MAX_MS - VIDEO_REST_MIN_MS)
+    videoRestUntil.value = Date.now() + span
+    videoRestSeconds.value = Math.ceil(span / 1000)
+    videoRestAcknowledged.value = false
+    if (videoRestTicker) return
+    // Plain global timers: the store also runs under vitest's node environment.
+    videoRestTicker = setInterval(() => {
+      const left = videoRestUntil.value - Date.now()
+      if (left > 0) {
+        videoRestSeconds.value = Math.ceil(left / 1000)
+        return
+      }
+      videoRestUntil.value = 0
+      videoRestSeconds.value = 0
+      stopVideoRestTicker()
+      // The break is what held the queued videos back, so the queue needs this
+      // nudge to move again rather than waiting for the next completion.
+      void processQueue()
+    }, 1000)
+  }
+
+  /** Counts a finished quest toward the burst window. Only video quests feed it,
+   *  and only while the speed is high enough for the pacing to apply at all. */
+  function registerVideoCompletion(isVideo: boolean) {
+    if (!isVideo || !videoPacingEnabled.value) return
+    const now = Date.now()
+    videoCompletionMoments.push(now)
+    while (videoCompletionMoments.length > 0 && videoCompletionMoments[0] < now - VIDEO_BURST_WINDOW_MS) {
+      videoCompletionMoments.shift()
+    }
+    if (videoCompletionMoments.length < VIDEO_BURST_COMPLETIONS) return
+    videoCompletionMoments.length = 0
+    beginVideoRest()
+  }
+
+  /** True while a break is running and the user has not accepted the risk of it. */
+  function videoPacingBlocks(isVideo: boolean): boolean {
+    return isVideo && videoRestActive.value && !videoRestAcknowledged.value
+  }
+
+  /** Dropping back under the floor retires the break: there is nothing left to
+   *  protect, and a card should not stay blocked by a rule that no longer applies. */
+  watch(speedMultiplier, (value) => {
+    if (value < VIDEO_BURST_SPEED_FLOOR) clearVideoPacing()
+  }, { flush: 'sync' })
+
+  /** The driven task picks the route, exactly like a card's own Start button. */
+  function isVideoQueueItem(item: Quest): boolean {
+    const task = questRunTask(item)
+    return task !== null && isVideoTask(task)
+  }
+
+  function acknowledgeVideoRest() {
+    videoRestAcknowledged.value = true
+  }
+
+  /** The card's own question: does this quest have to wait for the break? */
+  function videoPacingBlocksQuest(quest: Quest): boolean {
+    return videoPacingBlocks(isVideoQueueItem(quest))
+  }
+
+  /** What the checkpoint cadence actually costs after the Activity speed. */
+  const activityCheckpointRange = computed(() => ({
+    min: scaleCheckpointSeconds(activityCheckpointMin.value),
+    max: scaleCheckpointSeconds(activityCheckpointMax.value),
+  }))
+
+  function clearVideoPacing() {
+    videoCompletionMoments.length = 0
+    videoRestUntil.value = 0
+    videoRestSeconds.value = 0
+    videoRestAcknowledged.value = false
+    stopVideoRestTicker()
+  }
 
   // Heartbeat interval (seconds) - for Video quests API heartbeat requests
   const STORAGE_INTERVAL_KEY = 'questHelper_heartbeatInterval'
@@ -806,29 +936,64 @@ export const useQuestsStore = defineStore('quests', () => {
 
   // Activity quest checkpoint interval (seconds) - min/max time between checkpoints
   const STORAGE_ACTIVITY_CHECKPOINT_MIN_KEY = 'questHelper_activityCheckpointMin'
+  const STORAGE_ACTIVITY_CHECKPOINT_MAX_KEY = 'questHelper_activityCheckpointMax'
+  // An Activity quest is measured in checkpoints, so this cadence is the whole
+  // run: a 3-checkpoint quest costs three of these waits. 90-150 keeps the
+  // spacing uneven and human-shaped while halving what the old 180-300 took.
+  const DEFAULT_ACTIVITY_CHECKPOINT_MIN = 90
+  const DEFAULT_ACTIVITY_CHECKPOINT_MAX = 150
   const savedCheckpointMin = localStorage.getItem(STORAGE_ACTIVITY_CHECKPOINT_MIN_KEY)
-  let initialCheckpointMin = savedCheckpointMin ? parseInt(savedCheckpointMin) : 180
+  let initialCheckpointMin = savedCheckpointMin
+    ? parseInt(savedCheckpointMin)
+    : DEFAULT_ACTIVITY_CHECKPOINT_MIN
   if (isNaN(initialCheckpointMin) || initialCheckpointMin < 30 || initialCheckpointMin > 600) {
-    initialCheckpointMin = 180
+    initialCheckpointMin = DEFAULT_ACTIVITY_CHECKPOINT_MIN
   }
 
-  const STORAGE_ACTIVITY_CHECKPOINT_MAX_KEY = 'questHelper_activityCheckpointMax'
   const savedCheckpointMax = localStorage.getItem(STORAGE_ACTIVITY_CHECKPOINT_MAX_KEY)
-  let initialCheckpointMax = savedCheckpointMax ? parseInt(savedCheckpointMax) : 300
+  let initialCheckpointMax = savedCheckpointMax
+    ? parseInt(savedCheckpointMax)
+    : DEFAULT_ACTIVITY_CHECKPOINT_MAX
   if (isNaN(initialCheckpointMax) || initialCheckpointMax < 60 || initialCheckpointMax > 900) {
-    initialCheckpointMax = 300
+    initialCheckpointMax = DEFAULT_ACTIVITY_CHECKPOINT_MAX
   }
 
   // A stored min above max makes the checkpoint random range
   // `Math.random() * (max - min + 1) + min` degenerate (zero-width or negative).
   // The runtime watchers enforce ordering only on change, so reconcile here too.
   if (initialCheckpointMin > initialCheckpointMax) {
-    initialCheckpointMin = 180
-    initialCheckpointMax = 300
+    initialCheckpointMin = DEFAULT_ACTIVITY_CHECKPOINT_MIN
+    initialCheckpointMax = DEFAULT_ACTIVITY_CHECKPOINT_MAX
   }
 
   const activityCheckpointMin = ref(initialCheckpointMin)
   const activityCheckpointMax = ref(initialCheckpointMax)
+
+  // Activity quests only bank a checkpoint once the activity has really been up
+  // that long, so the dial divides the wait instead of skipping it: 5x turns a
+  // 90-150s cadence into 18-30s, and the floor keeps the posts from stacking up
+  // back to back.
+  const STORAGE_ACTIVITY_SPEED_KEY = 'questHelper_activitySpeedMultiplier'
+  const MIN_ACTIVITY_SPEED = 1.0
+  const MAX_ACTIVITY_SPEED = 5.0
+  const DEFAULT_ACTIVITY_SPEED = 1.0
+  const CHECKPOINT_FLOOR_SECONDS = 15
+  const savedActivitySpeed = localStorage.getItem(STORAGE_ACTIVITY_SPEED_KEY)
+  let initialActivitySpeed = savedActivitySpeed
+    ? parseFloat(savedActivitySpeed)
+    : DEFAULT_ACTIVITY_SPEED
+  if (
+    isNaN(initialActivitySpeed)
+    || initialActivitySpeed < MIN_ACTIVITY_SPEED
+    || initialActivitySpeed > MAX_ACTIVITY_SPEED
+  ) {
+    initialActivitySpeed = DEFAULT_ACTIVITY_SPEED
+  }
+  const activitySpeedMultiplier = ref(initialActivitySpeed)
+
+  function scaleCheckpointSeconds(seconds: number): number {
+    return Math.max(CHECKPOINT_FLOOR_SECONDS, Math.round(seconds / activitySpeedMultiplier.value))
+  }
 
   // Persist speed changes to localStorage
   watch(speedMultiplier, (newSpeed) => {
@@ -884,7 +1049,7 @@ export const useQuestsStore = defineStore('quests', () => {
 
   // Persist activity checkpoint interval changes
   watch(activityCheckpointMin, (newMin) => {
-    const normalizedMin = normalizeCheckpoint(newMin, 180, 30, 600)
+    const normalizedMin = normalizeCheckpoint(newMin, DEFAULT_ACTIVITY_CHECKPOINT_MIN, 30, 600)
     if (normalizedMin !== newMin) {
       activityCheckpointMin.value = normalizedMin
       return
@@ -897,7 +1062,7 @@ export const useQuestsStore = defineStore('quests', () => {
   }, { flush: 'sync' })
 
   watch(activityCheckpointMax, (newMax) => {
-    const normalizedMax = normalizeCheckpoint(newMax, 300, 60, 900)
+    const normalizedMax = normalizeCheckpoint(newMax, DEFAULT_ACTIVITY_CHECKPOINT_MAX, 60, 900)
     if (normalizedMax !== newMax) {
       activityCheckpointMax.value = normalizedMax
       return
@@ -907,6 +1072,17 @@ export const useQuestsStore = defineStore('quests', () => {
     if (activityCheckpointMin.value > normalizedMax) {
       activityCheckpointMin.value = normalizedMax
     }
+  }, { flush: 'sync' })
+
+  // Kept in step with the checkpoint watchers: the slider writes a value already
+  // inside its own range, so the store only has to persist it.
+  watch(activitySpeedMultiplier, (speed) => {
+    const bounded = Math.min(MAX_ACTIVITY_SPEED, Math.max(MIN_ACTIVITY_SPEED, speed))
+    if (bounded !== speed) {
+      activitySpeedMultiplier.value = bounded
+      return
+    }
+    localStorage.setItem(STORAGE_ACTIVITY_SPEED_KEY, String(bounded))
   }, { flush: 'sync' })
 
   let progressUnlisten: (() => void) | null = null
@@ -1540,6 +1716,7 @@ export const useQuestsStore = defineStore('quests', () => {
       releaseQuestSlot(questId)
     }
 
+    registerVideoCompletion(slot.type === 'video')
     announceQuestEnd(questName)
     useNotificationsStore().push('quest_completed', { name: questName })
     notifyQuestWebhook('quest_completed', questId, questName)
@@ -1579,6 +1756,7 @@ export const useQuestsStore = defineStore('quests', () => {
       }
       releaseQuestSlot(questId)
     }
+    registerVideoCompletion(slot.type === 'video')
     announceQuestEnd(questName)
     useNotificationsStore().push('quest_completed', { name: questName })
     notifyQuestWebhook('quest_completed', questId, questName)
@@ -1819,8 +1997,9 @@ export const useQuestsStore = defineStore('quests', () => {
       const now = Date.now()
       const deltaSeconds = (now - simLastTime) / 1000
       simLastTime = now
-      const averageCheckpointSeconds =
-        (activityCheckpointMin.value + activityCheckpointMax.value) / 2
+      const averageCheckpointSeconds = scaleCheckpointSeconds(
+        (activityCheckpointMin.value + activityCheckpointMax.value) / 2,
+      )
 
       let advancing = false
       for (const slot of runningQuests.value) {
@@ -2221,7 +2400,8 @@ export const useQuestsStore = defineStore('quests', () => {
       const max = activityCheckpointMax.value
       const allCheckpointTimes: number[] = []
       for (let i = 0; i < checkpointCount; i++) {
-        allCheckpointTimes.push(Math.floor(Math.random() * (max - min + 1)) + min)
+        const raw = Math.floor(Math.random() * (max - min + 1)) + min
+        allCheckpointTimes.push(scaleCheckpointSeconds(raw))
       }
       const checkpointTimes = allCheckpointTimes.slice(completedCheckpoints)
       const totalSeconds = allCheckpointTimes.reduce((sum, t) => sum + t, 0)
@@ -2669,12 +2849,13 @@ export const useQuestsStore = defineStore('quests', () => {
       isQueueRunning.value = true
       while (!stopping.value
         && questQueue.value.length > 0
-        && runningQuests.value.length < MAX_PARALLEL_QUESTS) {
+        && runningQuests.value.length < maxParallelQuests.value) {
         // A game quest starts only when the account's game slot can take it:
         // heartbeat and CDP play quests share it up to the limit, while a
         // simulated game or an Activity still owns it alone.
         const queueItem = questQueue.value.find(item =>
           !questSlot(item.id)
+          && !videoPacingBlocks(isVideoQueueItem(item))
           && (!isGameQuest(item)
             || gameSlotAllows(isSharedGameCandidate(item), questApplicationId(item))))
         if (!queueItem) return
@@ -2849,6 +3030,7 @@ export const useQuestsStore = defineStore('quests', () => {
     // A held game belongs to a quest that already ended, so it is not carried
     // over past the sign-out: it is closed here.
     void cancelKeepAliveAndStopGame()
+    clearVideoPacing()
     orbsFetchGeneration++
     questsFetchGeneration++
     // Invalidate any in-flight `processQueue()` so it stops committing active
@@ -3019,8 +3201,18 @@ export const useQuestsStore = defineStore('quests', () => {
     acceptForeignQuest,
     claimForeignQuest,
     stopForeignQuest,
-    maxParallelQuests: MAX_PARALLEL_QUESTS,
+    maxParallelQuests,
+    maxParallelQuestsCeiling: MAX_PARALLEL_QUESTS,
     speedMultiplier,
+    videoSpeedBounds: { min: MIN_VIDEO_SPEED, max: MAX_VIDEO_SPEED },
+    videoRestActive,
+    videoRestWaiting,
+    videoRestSeconds,
+    videoPacingBlocksQuest,
+    acknowledgeVideoRest,
+    activitySpeedMultiplier,
+    activitySpeedBounds: { min: MIN_ACTIVITY_SPEED, max: MAX_ACTIVITY_SPEED },
+    activityCheckpointRange,
     heartbeatInterval,
     gamePollingInterval,
     gameQuestMode,

@@ -112,6 +112,37 @@ describe('known account management', () => {
     expect(authStore.knownAccounts.map(account => account.user.id)).toEqual(['123', '456'])
   })
 
+  it('adds each pasted token once and reports the rejects', async () => {
+    const authStore = useAuthStore()
+    authStore.user = user
+    mocks.addAccount
+      .mockResolvedValueOnce(summary(otherUser))
+      .mockRejectedValueOnce(new Error('Invalid token'))
+
+    const result = await authStore.addAccountsFromTokens([
+      'tok-a',
+      '  ',
+      'tok-a',
+      ' tok-b ',
+      '',
+    ])
+
+    expect(mocks.addAccount.mock.calls.map(call => call[0])).toEqual(['tok-a', 'tok-b'])
+    expect(result.added).toHaveLength(1)
+    expect(result.failed).toBe(1)
+    expect(authStore.error).toContain('Invalid token')
+  })
+
+  it('remembers a pasted token without touching the switcher while signed out', async () => {
+    const authStore = useAuthStore()
+
+    const result = await authStore.addAccountsFromTokens(['tok-a'])
+
+    expect(result.added).toHaveLength(1)
+    expect(mocks.listAccounts).not.toHaveBeenCalled()
+    expect(authStore.knownAccounts).toEqual([])
+  })
+
   it('clears the account list and skips the backend while signed out', async () => {
     const authStore = useAuthStore()
     authStore.knownAccounts = [summary(user)]

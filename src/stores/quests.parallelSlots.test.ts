@@ -119,6 +119,28 @@ describe('parallel quest slots', () => {
     expect(store.stopping).toBe(false)
   })
 
+  it('remembers a raised cap across store instances', async () => {
+    const store = useQuestsStore()
+    expect(store.maxParallelQuests).toBe(3)
+    expect(store.maxParallelQuestsCeiling).toBe(20)
+
+    store.maxParallelQuests = 6
+    await vi.advanceTimersByTimeAsync(0)
+    expect(localStorage.getItem('questHelper_maxParallelQuests')).toBe('6')
+
+    setActivePinia(createPinia())
+    expect(useQuestsStore().maxParallelQuests).toBe(6)
+  })
+
+  it('clamps a stored cap back into the supported range', () => {
+    const cases: Array<[string, number]> = [['99', 20], ['0', 1], ['-4', 1], ['banana', 3]]
+    for (const [stored, expected] of cases) {
+      localStorage.setItem('questHelper_maxParallelQuests', stored)
+      setActivePinia(createPinia())
+      expect(useQuestsStore().maxParallelQuests).toBe(expected)
+    }
+  })
+
   it('clears every slot on logout without stopping quests again', () => {
     const store = useQuestsStore()
     store.addToQueue({ id: 'queued' } as Quest)

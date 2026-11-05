@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { AlertTriangle, Bot, Check, Copy, FolderOpen, Gamepad2, MonitorPlay, RotateCw, Wifi } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
@@ -102,6 +102,64 @@ function commitCheckpointMax(event: FocusEvent) {
   questsStore.activityCheckpointMax = raw === '' ? Number.NaN : Number(raw)
 }
 
+// Raising the parallel cap above this threshold needs an explicit acceptance
+// that only becomes clickable after the countdown below reaches zero.
+const PARALLEL_RISK_THRESHOLD = 5
+const PARALLEL_RISK_SECONDS = 5
+
+const requestedCap = ref(questsStore.maxParallelQuests)
+const pendingRiskCap = ref<number | null>(null)
+const riskSeconds = ref(0)
+const needsRiskAcceptance = computed(() => pendingRiskCap.value !== null)
+// Always a number so the risk copy never interpolates null.
+const riskCap = computed(() => pendingRiskCap.value ?? questsStore.maxParallelQuests)
+let riskTimer: ReturnType<typeof setInterval> | null = null
+
+function stopRiskTimer() {
+  if (!riskTimer) return
+  clearInterval(riskTimer)
+  riskTimer = null
+}
+
+function onCapChange() {
+  const ceiling = questsStore.maxParallelQuestsCeiling
+  const value = Math.min(ceiling, Math.max(1, Math.round(Number(requestedCap.value) || 1)))
+  requestedCap.value = value
+
+  if (value > PARALLEL_RISK_THRESHOLD && questsStore.maxParallelQuests <= PARALLEL_RISK_THRESHOLD) {
+    pendingRiskCap.value = value
+    riskSeconds.value = PARALLEL_RISK_SECONDS
+    stopRiskTimer()
+    riskTimer = setInterval(() => {
+      riskSeconds.value -= 1
+      if (riskSeconds.value <= 0) stopRiskTimer()
+    }, 1000)
+    return
+  }
+
+  pendingRiskCap.value = null
+  riskSeconds.value = 0
+  stopRiskTimer()
+  questsStore.maxParallelQuests = value
+}
+
+function acceptRisk() {
+  if (pendingRiskCap.value === null || riskSeconds.value > 0) return
+  questsStore.maxParallelQuests = pendingRiskCap.value
+  pendingRiskCap.value = null
+  riskSeconds.value = 0
+  stopRiskTimer()
+}
+
+function cancelRisk() {
+  pendingRiskCap.value = null
+  riskSeconds.value = 0
+  stopRiskTimer()
+  requestedCap.value = questsStore.maxParallelQuests
+}
+
+onUnmounted(stopRiskTimer)
+
 onMounted(() => {
   questsStore.initSimulationPath().catch(() => {
     simulationDirectoryError.value = t('settings.simulation_directory_resolve_error')
@@ -202,9 +260,9 @@ onMounted(() => {
               <input
                 type="range"
                 v-model.number="questsStore.speedMultiplier"
-                min="0.1"
-                max="2.0"
-                step="0.1"
+                :min="questsStore.videoSpeedBounds.min"
+                :max="questsStore.videoSpeedBounds.max"
+                step="1"
                 :disabled="questsStore.gameQuestMode === 'cdp'"
                 :aria-label="t('settings.completion_speed')"
                 class="w-48 accent-primary disabled:opacity-50"
@@ -236,6 +294,64 @@ onMounted(() => {
             </div>
           </SettingRow>
         </div>
+      </div>
+
+      <div class="space-y-3">
+        <Label>{{ t('settings.parallel_group') }}</Label>
+        <div class="rounded-lg border px-4">
+          <SettingRow
+            :label="t('settings.parallel_quests')"
+            :description="t('settings.parallel_quests_hint')"
+          >
+            <div class="flex items-center gap-3">
+              <input
+                type="range"
+                v-model.number="requestedCap"
+                min="1"
+                :max="questsStore.maxParallelQuestsCeiling"
+                step="1"
+                :aria-label="t('settings.parallel_quests')"
+                class="w-48 accent-primary"
+                @change="onCapChange"
+              />
+              <Badge
+                variant="outline"
+                :class="cn('font-mono tabular-nums', settingToneClass[questsStore.maxParallelQuests > 5 ? 'warning' : 'primary'].badge)"
+              >
+                {{ questsStore.maxParallelQuests }}
+              </Badge>
+            </div>
+          </SettingRow>
+        </div>
+
+        <SettingsStatusPanel v-if="needsRiskAcceptance" tone="danger" :icon="AlertTriangle">
+          <div class="space-y-3">
+            <p>{{ t('settings.parallel_risk_desc', { count: riskCap }) }}</p>
+            <div class="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                :class="cn('gap-2', settingToneClass.danger.buttonSoft)"
+                :disabled="riskSeconds > 0"
+                @click="acceptRisk"
+              >
+                <AlertTriangle class="h-4 w-4" />
+                {{ riskSeconds > 0
+                  ? t('settings.parallel_accept_wait', { seconds: riskSeconds })
+                  : t('settings.parallel_accept') }}
+              </Button>
+              <Button size="sm" variant="ghost" @click="cancelRisk">{{ t('settings.parallel_cancel') }}</Button>
+            </div>
+          </div>
+        </SettingsStatusPanel>
+
+        <SettingsStatusPanel
+          v-else-if="questsStore.maxParallelQuests > PARALLEL_RISK_THRESHOLD"
+          tone="warning"
+          :icon="AlertTriangle"
+        >
+          {{ t('settings.parallel_risk_desc', { count: questsStore.maxParallelQuests }) }}
+        </SettingsStatusPanel>
       </div>
 
       <div class="space-y-3">
@@ -381,6 +497,29 @@ onMounted(() => {
               <span class="text-sm text-muted-foreground">{{ t('settings.activity_checkpoint_unit') }}</span>
             </div>
           </div>
+        </div>
+
+        <div class="mt-4 flex flex-wrap items-center gap-3">
+          <Label for="activity-speed">{{ t('settings.activity_speed') }}</Label>
+          <input
+            id="activity-speed"
+            type="range"
+            v-model.number="questsStore.activitySpeedMultiplier"
+            :min="questsStore.activitySpeedBounds.min"
+            :max="questsStore.activitySpeedBounds.max"
+            step="0.5"
+            :aria-label="t('settings.activity_speed')"
+            class="w-48 accent-primary"
+          />
+          <Badge variant="outline" :class="settingToneClass.primary.badge">
+            {{ questsStore.activitySpeedMultiplier }}x
+          </Badge>
+          <span class="font-mono text-xs tabular-nums text-muted-foreground">
+            {{ t('settings.activity_speed_effective', {
+              min: questsStore.activityCheckpointRange.min,
+              max: questsStore.activityCheckpointRange.max,
+            }) }}
+          </span>
         </div>
       </AdvancedDisclosure>
   </SettingsSectionCard>

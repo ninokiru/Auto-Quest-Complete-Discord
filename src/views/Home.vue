@@ -409,6 +409,29 @@
       </AlertDialogContent>
     </AlertDialog>
 
+    <!-- Video burst break: starting another video quest needs an accepted risk -->
+    <Dialog :open="pendingPacingQuest !== null" @update:open="(open: boolean) => { if (!open) cancelVideoPacing() }">
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{{ t('dialog.video_pacing_title') }}</DialogTitle>
+          <DialogDescription>
+            <div class="space-y-3 py-2">
+              <p>{{ t('dialog.video_pacing_desc', { seconds: questsStore.videoRestSeconds, quest: pendingPacingQuest?.config.messages.quest_name ?? '' }) }}</p>
+              <p class="text-xs text-muted-foreground">{{ t('dialog.video_pacing_note') }}</p>
+            </div>
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" @click="cancelVideoPacing">{{ t('dialog.cancel') }}</Button>
+          <Button :disabled="pacingSeconds > 0" @click="confirmVideoPacing">
+            {{ pacingSeconds > 0
+              ? t('settings.parallel_accept_wait', { seconds: pacingSeconds })
+              : t('settings.parallel_accept') }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
     <!-- Exe Selection Dialog for Play Quests with multiple win32 executables -->
     <Dialog :open="showExeSelectDialog" @update:open="(open: boolean) => { if (!open) cancelExeSelectDialog() }">
       <DialogContent class="sm:max-w-md">
@@ -959,6 +982,48 @@ const pendingCompleteQuests = ref<Quest[]>([])
 const showBatchCompleteDialog = ref(false)
 const batchCompleteType = ref<'video' | 'game' | 'all'>('all')
 const pendingBatchCompleteQuests = ref<Quest[]>([])
+
+// The app rests after three fast video quests; starting another one during that
+// break needs an explicit acceptance that only unlocks once the countdown below
+// has run out.
+const VIDEO_RISK_COUNTDOWN_SECONDS = 5
+const pendingPacingQuest = ref<Quest | null>(null)
+const pacingSeconds = ref(0)
+let pacingTimer: ReturnType<typeof setInterval> | null = null
+
+function stopPacingTimer() {
+  if (!pacingTimer) return
+  clearInterval(pacingTimer)
+  pacingTimer = null
+}
+
+function requestVideoPacing(quest: Quest) {
+  pendingPacingQuest.value = quest
+  stopPacingTimer()
+  pacingSeconds.value = VIDEO_RISK_COUNTDOWN_SECONDS
+  pacingTimer = setInterval(() => {
+    pacingSeconds.value -= 1
+    if (pacingSeconds.value <= 0) stopPacingTimer()
+  }, 1000)
+}
+
+function confirmVideoPacing() {
+  if (pacingSeconds.value > 0) return
+  const quest = pendingPacingQuest.value
+  stopPacingTimer()
+  pendingPacingQuest.value = null
+  if (!quest) return
+  questsStore.acknowledgeVideoRest()
+  void startQuest(quest)
+}
+
+function cancelVideoPacing() {
+  stopPacingTimer()
+  pacingSeconds.value = 0
+  pendingPacingQuest.value = null
+}
+
+onUnmounted(stopPacingTimer)
 
 // Exe pre-selection state for batch game quests
 const batchExeSelections = ref<Map<string, string>>(new Map())
@@ -1700,6 +1765,12 @@ async function startQuest(quest: Quest) {
   
   
   if (isVideoQuest) {
+    // The break counts video quests that finished, so a card pressed during it
+    // asks first instead of starting a fourth run the app meant to hold back.
+    if (questsStore.videoPacingBlocksQuest(quest)) {
+      requestVideoPacing(quest)
+      return
+    }
     // Video quest - uses video-progress API with timestamp
     await questsStore.startVideo(quest.id, secondsNeeded, initialProgress)
   } else if (isPlayQuest) {

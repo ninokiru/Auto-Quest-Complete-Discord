@@ -68,14 +68,16 @@ and none of them sends your credentials anywhere except Discord's own API.
 
 | Method | What it needs | Notes |
 | --- | --- | --- |
-| **Auto Detect Token** | Discord installed in a standard location | Scans supported local profiles and decrypts the stored token using the platform's own credential protection (Windows DPAPI, macOS Keychain, Linux Secret Service). Fastest when it works |
+| **Auto Detect Token** | Discord installed in a standard location | Scans supported local profiles and decrypts the stored token using the platform's own credential protection (Windows DPAPI, macOS Keychain, Linux Secret Service). On Windows it reads Discord Stable, PTB, Canary **and Vesktop**; on macOS and Linux only the three official clients. When nothing is found the message names each client it tried. Fastest when it works |
 | **CDP Login** | The Discord or Vesktop client running with a debug port | Uses the account you are already signed in to; no token is read from disk. If no client is running with CDP, the app offers to launch or restart one for you |
-| **Manual Input** | Nothing | Paste a token yourself. Works when the other two cannot, but a token stops being usable whenever you log out or reset it, and you have to obtain it without help |
+| **Manual Input** | Nothing | Paste one token to sign in, or paste many tokens — one per line — under *Add several accounts at once* to load them into the switcher without leaving the account you are on. Each pasted token is checked with Discord first, and blank or repeated lines are ignored |
 
 The token is held in memory by the helper process; the app does not write it to disk.
 
-Vesktop is supported through CDP only — it is not scanned as a token source. Choose which client and
-which installation to use in **Settings → Discord Integration**, including a custom or portable path.
+Vesktop is always available for CDP login, and on Windows it is also a token source for Auto Detect.
+On macOS and Linux a Vesktop session is not read from disk, so sign in there through CDP or by pasting
+a token. Choose which client and which installation to use in **Settings → Discord Integration**,
+including a custom or portable path.
 
 ## Connect to the Discord client (CDP)
 
@@ -122,8 +124,12 @@ deadline, and a status.
 1. Find the quest whose task is to watch a video or stream.
 2. Press **Start Quest**.
 3. The app enrolls you and submits progress on a timer until the required duration is reached.
-   Default submission interval is 15 s at 1.0x speed; both are adjustable in
-   **Settings → Quest Behavior**.
+   Default submission interval is 15 s at 1.0x speed, so the quest takes the
+   video's own length; both are adjustable in **Settings → Quest Behavior**,
+   and 10.0x cuts a 10-minute video to 1 minute. From 5.0x upward the app also
+   rests one to two minutes after every three video quests that finish, and
+   asks before starting another during that break. Video quests started in CDP
+   mode run on Discord's own clock and ignore the speed slider.
 
 Nothing needs to be clicked to finish it, and nothing needs to stay visible. Your status can show the
 activity while it runs.
@@ -227,7 +233,7 @@ about a reward you had not earned yet.
 | Section | What it controls |
 | --- | --- |
 | **Account** | Signed-in account, login method, manual token entry, token storage note |
-| **Quest Behavior** | Video completion speed (0.1x–2.0x, default 1.0x), video progress submission interval (10–30 s, default 15 s), game progress polling interval (30–300 s, default 120 s), game quest mode (Simulate or CDP injection), simulation directory, Orb/Nitro display toggle |
+| **Quest Behavior** | Video completion speed (1.0x–10.0x, default 1.0x; at 5.0x+ the app rests 1–2 minutes after three video quests finish), video progress submission interval (10–30 s, default 15 s), Activity checkpoint speed (1.0x–5.0x) and checkpoint interval (30–900 s), game progress polling interval (30–300 s, default 120 s), quests at once (1–20, default 3), game quest mode (Simulate or CDP injection), simulation directory, Orb/Nitro display toggle |
 | **Discord Integration** | Client and installation picker (Discord Stable/PT/Canary, Vesktop, custom path), CDP connection state, launch or restart the client with the debug port, sync client info over CDP |
 | **Appearance** | Light/dark theme and language. English and Vietnamese; the language follows your system setting on first run |
 | **Diagnostics** | Export this session's sanitized logs |
