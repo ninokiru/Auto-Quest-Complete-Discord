@@ -275,6 +275,4 @@ Two files are both the biggest and the least tolerant of casual edits: `src-taur
 invariants recorded in [docs/cdp-runtime-validation.md](docs/cdp-runtime-validation.md) and
 [docs/USAGE.md](docs/USAGE.md#how-progress-is-counted) true.
 
-Automating Discord quests can violate Discord's Terms of Service and may put your account at risk.
-Nothing in this repository is intended to bypass payment, billing, or anti-abuse systems; scope is
-quest automation only.
+Nothing in this repository is intended to bypass payment or invoicing systems.

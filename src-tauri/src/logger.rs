@@ -116,7 +116,7 @@ pub fn sanitize_user_id(id: &str) -> String {
 }
 
 /// Sanitize a username (keep first character only)
-/// Example: "Masterain" -> "M***"
+/// Example: "lumina" -> "l***"
 #[allow(dead_code)]
 pub fn sanitize_username(username: &str) -> String {
     if username.is_empty() {
@@ -373,16 +373,16 @@ mod tests {
 
     #[test]
     fn test_sanitize_username() {
-        assert_eq!(sanitize_username("Masterain"), "M***");
+        assert_eq!(sanitize_username("lumina"), "l***");
         assert_eq!(sanitize_username(""), "***");
     }
 
     #[test]
     fn test_sanitize_path() {
-        let win_path = r"C:\Users\Masterain\Documents\file.txt";
+        let win_path = r"C:\Users\lumina\Documents\file.txt";
         let sanitized = sanitize_path(win_path);
         assert!(sanitized.contains("[USER]"));
-        assert!(!sanitized.contains("Masterain"));
+        assert!(!sanitized.contains("lumina"));
     }
 
     #[test]
