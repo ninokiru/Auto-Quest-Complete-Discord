@@ -174,8 +174,13 @@ pub async fn complete_video_quest(
         // of skipping it.
         let timestamp = (current_seconds + speed * (wait_secs as f64)).min(seconds_needed as f64);
 
-        // Add some randomness to look more natural
-        let timestamp_with_jitter = timestamp + rand::rng().random_range(0.0..0.5);
+        // Add some randomness to look more natural. The jitter has to stay under
+        // the target as well: the payload is rounded to whole seconds, so a step
+        // that lands half a second past the required duration is posted as one
+        // second past it, and Discord answers past-the-video with a 400 that ends
+        // the run right when it looked finished.
+        let jitter = rand::rng().random_range(0.0..0.5);
+        let timestamp_with_jitter = (timestamp + jitter).min(seconds_needed as f64);
 
         // Send progress update
         match client
