@@ -174,17 +174,22 @@ pub async fn complete_video_quest(
         // of skipping it.
         let timestamp = (current_seconds + speed * (wait_secs as f64)).min(seconds_needed as f64);
 
-        // Add some randomness to look more natural. The jitter has to stay under
-        // the target as well: the payload is rounded to whole seconds, so a step
-        // that lands half a second past the required duration is posted as one
-        // second past it, and Discord answers past-the-video with a 400 that ends
-        // the run right when it looked finished.
+        // The payload is rounded to whole seconds, so the target is held one
+        // second below the video's length until the final submission: a jitter
+        // landing past the last second is answered with a bare 400 that reads
+        // like a broken client rather than a finished quest.
+        let final_step = timestamp >= seconds_needed as f64;
+        let reported_target = if final_step {
+            seconds_needed as f64
+        } else {
+            (seconds_needed as f64) - 1.0
+        };
         let jitter = rand::rng().random_range(0.0..0.5);
-        let timestamp_with_jitter = (timestamp + jitter).min(seconds_needed as f64);
+        let submitted_timestamp = (timestamp + jitter).min(reported_target);
 
         // Send progress update
         match client
-            .update_video_progress(&quest_id, timestamp_with_jitter)
+            .update_video_progress(&quest_id, submitted_timestamp)
             .await
         {
             Ok(completed) => {
@@ -228,6 +233,25 @@ pub async fn complete_video_quest(
                 }
             }
             Err(e) => {
+                // A 400 on the final second means Discord will not accept the last
+                // second of the video, which is an enrollment or client problem,
+                // not a rounding accident. Retrying it three times only buries the
+                // reason under a generic error.
+                if final_step
+                    && e
+                        .downcast_ref::<crate::discord_api::VideoProgressRejected>()
+                        .is_some()
+                {
+                    let message = format!(
+                        "Discord rejected the final second of this video quest ({}s). \
+                         The enrollment has probably expired or the client properties are \
+                         stale for your Discord build - open Settings > Discord Integration, \
+                         re-sync client info, then start the quest again.",
+                        seconds_needed
+                    );
+                    let _ = app_handle.emit("quest-error", message.clone());
+                    anyhow::bail!(message);
+                }
                 consecutive_errors += 1;
                 if consecutive_errors >= VIDEO_PROGRESS_MAX_CONSECUTIVE_ERRORS {
                     println!("Video progress update failed: {}", e);

@@ -9,6 +9,21 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// Marker for the bare `400 {"code": 0}` Discord returns for a rejected
+/// video-progress submission. It carries no message: an expired enrollment and a
+/// past-the-end timestamp answer identically, and only the caller knows which one
+/// it submitted, so the wording is theirs to write.
+#[derive(Debug)]
+pub struct VideoProgressRejected;
+
+impl std::fmt::Display for VideoProgressRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Discord rejected the video progress submission")
+    }
+}
+
+impl std::error::Error for VideoProgressRejected {}
+
 const DISCORD_API_BASE: &str = "https://discord.com/api/v9";
 const PROXY_STATE_CHECK_INTERVAL_MS: u64 = 5_000;
 const QUEST_HOME_REFERER: &str = "https://discord.com/quest-home";
@@ -933,8 +948,14 @@ impl DiscordApiClient {
             .await
             .context("Failed to send video progress")?;
 
-        if !response.status().is_success() {
-            let status = response.status();
+        let status = response.status();
+        if status == reqwest::StatusCode::BAD_REQUEST {
+            // A past-the-end timestamp and an expired enrollment both answer with
+            // this bare 400 and no code in the body, so it is marked rather than
+            // described here; only the caller knows which one it submitted.
+            return Err(VideoProgressRejected.into());
+        }
+        if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             anyhow::bail!("Failed to update video progress: {} - {}", status, body);
         }
