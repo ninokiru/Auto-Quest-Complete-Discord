@@ -237,11 +237,8 @@ pub async fn complete_video_quest(
                 // second of the video, which is an enrollment or client problem,
                 // not a rounding accident. Retrying it three times only buries the
                 // reason under a generic error.
-                if final_step
-                    && e
-                        .downcast_ref::<crate::discord_api::VideoProgressRejected>()
-                        .is_some()
-                {
+                let rejected = e.downcast_ref::<crate::discord_api::VideoProgressRejected>();
+                if final_step && rejected.is_some() {
                     let message = format!(
                         "Discord rejected the final second of this video quest ({}s). \
                          The enrollment has probably expired or the client properties are \
