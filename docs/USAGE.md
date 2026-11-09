@@ -230,7 +230,7 @@ about a reward you had not earned yet.
 | Section | What it controls |
 | --- | --- |
 | **Account** | Signed-in account, login method, manual token entry, token storage note |
-| **Quest Behavior** | Video completion speed (1.0x–10.0x, default 1.0x; at 5.0x+ the app rests 1–2 minutes after three video quests finish), video progress submission interval (10–30 s, default 15 s), Activity checkpoint speed (1.0x–5.0x) and checkpoint interval (30–900 s), game progress polling interval (30–300 s, default 120 s), quests at once (1–20, default 3), game quest mode (Simulate or CDP injection), simulation directory, Orb/Nitro display toggle |
+| **Quest Behavior** | Video completion speed (1.0x–10.0x, default 1.0x; at 5.0x+ the app rests 1–2 minutes after three video quests finish), video progress submission interval (10–30 s, default 15 s), Activity checkpoint speed (1.0x–20.0x) and checkpoint interval (30–900 s), game progress polling interval (30–300 s, default 120 s), quests at once (1–20, default 3), game quest mode (Simulate or CDP injection), simulation directory, Orb/Nitro display toggle |
 | **Discord Integration** | Client and installation picker (Discord Stable/PT/Canary, Vesktop, custom path), CDP connection state, launch or restart the client with the debug port, sync client info over CDP |
 | **Appearance** | Light/dark theme and language. English and Vietnamese; the language follows your system setting on first run |
 | **Diagnostics** | Export this session's sanitized logs |

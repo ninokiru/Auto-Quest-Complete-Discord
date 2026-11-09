@@ -97,6 +97,7 @@
     "complete_all_tasks": "Complete All Quests",
     "queue_count": "{count} queued",
     "accept_quest": "Accept Quest",
+    "quest_variants_hint": "{count} regional variants of the same quest. Accept and Start act on all of them; they run one at a time.",
     "accepting": "Accepting...",
     "stop": "Stop",
     "start_quest": "Start Quest",

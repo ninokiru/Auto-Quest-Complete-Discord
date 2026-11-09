@@ -75,19 +75,22 @@ describe('quests Activity checkpoint settings', () => {
     const store = useQuestsStore()
 
     expect(store.activitySpeedMultiplier).toBe(1)
-    expect(store.activitySpeedBounds).toEqual({ min: 1, max: 5 })
+    expect(store.activitySpeedBounds).toEqual({ min: 1, max: 20 })
     expect(store.activityCheckpointRange).toEqual({ min: 90, max: 150 })
 
     store.activitySpeedMultiplier = 3
     expect(store.activityCheckpointRange).toEqual({ min: 30, max: 50 })
     expect(localStorage.getItem('questHelper_activitySpeedMultiplier')).toBe('3')
 
-    store.activitySpeedMultiplier = 5
-    expect(store.activityCheckpointRange.min).toBeGreaterThanOrEqual(15)
+    store.activitySpeedMultiplier = 10
+    expect(store.activityCheckpointRange).toEqual({ min: 9, max: 15 })
+
+    store.activitySpeedMultiplier = 20
+    expect(store.activityCheckpointRange).toEqual({ min: 5, max: 8 })
   })
 
   it('falls back to 1x for a saved Activity speed outside the range', () => {
-    for (const stored of ['0.5', '5.1', 'nine']) {
+    for (const stored of ['0.5', '20.1', 'nine']) {
       localStorage.setItem('questHelper_activitySpeedMultiplier', stored)
       setActivePinia(createPinia())
 

@@ -19,6 +19,7 @@ import {
   questRunTask,
 } from '@/utils/questTasks'
 import { resolveSimulationExecutable } from '@/utils/executables'
+import { questVariantKey } from '@/utils/questVariants'
 import { clampGameIdleDuration, loadGameIdleDuration, resolveGameIdleDuration } from '@/utils/durationSetting'
 import { announceQuestEnd } from '@/utils/questNotifier'
 import { notifyQuestWebhook } from '@/utils/questWebhook'
@@ -363,6 +364,18 @@ export const useQuestsStore = defineStore('quests', () => {
     })
     // Return the reactive proxy, not the plain object that was pushed.
     return questSlot(questId)!
+  }
+
+  /** Regional variants of one offer share a single Discord client and a single
+   *  Activity window, so two of them running at once fight over it and both fail.
+   *  A queued variant waits until its running group-mate finishes. */
+  function variantMateRunning(quest: Quest): boolean {
+    const key = questVariantKey(quest)
+    return runningQuests.value.some(slot => {
+      if (slot.questId === quest.id) return false
+      const other = quests.value.find(item => item.id === slot.questId)
+      return !!other && questVariantKey(other) === key
+    })
   }
 
   function closeQuestSlot(questId: string) {
@@ -974,14 +987,14 @@ export const useQuestsStore = defineStore('quests', () => {
   const activityCheckpointMax = ref(initialCheckpointMax)
 
   // Activity quests only bank a checkpoint once the activity has really been up
-  // that long, so the dial divides the wait instead of skipping it: 5x turns a
-  // 90-150s cadence into 18-30s, and the floor keeps the posts from stacking up
+  // that long, so the dial divides the wait instead of skipping it: 20x turns a
+  // 90-150s cadence into 5-8s, and the floor keeps the posts from stacking up
   // back to back.
   const STORAGE_ACTIVITY_SPEED_KEY = 'questHelper_activitySpeedMultiplier'
   const MIN_ACTIVITY_SPEED = 1.0
-  const MAX_ACTIVITY_SPEED = 5.0
+  const MAX_ACTIVITY_SPEED = 20.0
   const DEFAULT_ACTIVITY_SPEED = 1.0
-  const CHECKPOINT_FLOOR_SECONDS = 15
+  const CHECKPOINT_FLOOR_SECONDS = 5
   const savedActivitySpeed = localStorage.getItem(STORAGE_ACTIVITY_SPEED_KEY)
   let initialActivitySpeed = savedActivitySpeed
     ? parseFloat(savedActivitySpeed)
@@ -2741,6 +2754,7 @@ export const useQuestsStore = defineStore('quests', () => {
         // simulated game or an Activity still owns it alone.
         const queueItem = questQueue.value.find(item =>
           !questSlot(item.id)
+          && !variantMateRunning(item)
           && !videoPacingBlocks(isVideoQueueItem(item))
           && (!isGameQuest(item)
             || gameSlotAllows(isSharedGameCandidate(item), questApplicationId(item))))

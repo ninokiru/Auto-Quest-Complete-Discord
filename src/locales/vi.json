@@ -97,6 +97,7 @@
     "complete_all_tasks": "Hoàn thành tất cả Quests",
     "queue_count": "{count} đã xếp hàng",
     "accept_quest": "Chấp nhận Quests",
+    "quest_variants_hint": "{count} biến thể vùng của cùng một quest. Chấp nhận và Bắt đầu áp dụng cho tất cả; chúng chạy lần lượt từng cái một.",
     "accepting": "Chấp nhận...",
     "stop": "Dừng lại",
     "start_quest": "Bắt đầu Quest",

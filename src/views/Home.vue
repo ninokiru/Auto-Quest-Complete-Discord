@@ -261,7 +261,7 @@
             :class="[uiStore.density === 'compact' ? 'gap-2' : 'gap-3', animateListMoves && 'quest-list-smooth']"
           >
             <QuestCard
-              v-for="quest in filteredQuests"
+              v-for="quest in displayQuests"
               :key="quest.id"
               :quest="quest"
               :quest-type="getQuestType(quest)"
@@ -270,10 +270,17 @@
               :busy="startingQuestId === quest.id || acceptingQuest === quest.id || acceptingAllQuestIds.has(quest.id) || claimingQuest === quest.id || isQuestStopping(quest.id)"
             >
               <template #actions>
+                <span
+                  v-if="questVariantsOf(quest).length > 1"
+                  class="self-center rounded-md border px-2 py-0.5 font-mono text-xs tabular-nums text-muted-foreground"
+                  :title="t('home.quest_variants_hint', { count: questVariantsOf(quest).length })"
+                >
+                  ×{{ questVariantsOf(quest).length }}
+                </span>
                 <Transition name="quest-action" mode="out-in">
                   <Button
                     v-if="!quest.user_status?.enrolled_at"
-                    @click="acceptQuest(quest)"
+                    @click="acceptQuestGroup(quest)"
                     :disabled="acceptingQuest === quest.id || acceptingAllQuestIds.has(quest.id)"
                   >
                     <Loader2 v-if="acceptingQuest === quest.id || acceptingAllQuestIds.has(quest.id)" class="w-4 h-4 mr-2 animate-spin" />
@@ -292,7 +299,7 @@
 
                   <Button
                     v-else-if="!quest.user_status?.completed_at && canStartQuest(quest)"
-                    @click="startQuest(quest)"
+                    @click="startQuestGroup(quest)"
                     variant="default"
                     :disabled="!hasFreeQuestSlot || startingQuestId !== null || isBatchAccepting || gameIdleStore.isActive"
                   >
@@ -679,7 +686,7 @@
 
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, toRaw, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useQuestsStore } from '@/stores/quests'
 import { useUiStore } from '@/stores/ui'
@@ -752,6 +759,7 @@ import {
   questRunTask,
 } from '@/utils/questTasks'
 import { getQuestRewardCategory } from '@/utils/questRewards'
+import { collapseQuestVariants } from '@/utils/questVariants'
 import { formatDateTime } from '@/utils/relativeTime'
 import {
   getSimulationExecutables,
@@ -1285,6 +1293,37 @@ const filteredQuests = computed(() => {
 // A FLIP move animation across a hundred cards is what made filtering feel
 // sticky; it is kept only for the short lists where it reads as motion.
 const animateListMoves = computed(() => filteredQuests.value.length <= 24)
+
+// Regional variants of one offer render as a single card with a count, so ten
+// identical rows cannot be mistaken for ten different quests. The counts and
+// batch dialogs still read the ungrouped list: every variant is a real quest
+// that has to be accepted, run and claimed on its own id.
+const collapsedQuests = computed(() => collapseQuestVariants(filteredQuests.value))
+const displayQuests = computed(() => collapsedQuests.value.list)
+
+function questVariantsOf(quest: Quest): Quest[] {
+  return collapsedQuests.value.groups.get(quest.id) ?? [quest]
+}
+
+async function acceptQuestGroup(quest: Quest) {
+  for (const variant of questVariantsOf(quest)) {
+    await acceptQuest(variant)
+  }
+}
+
+async function startQuestGroup(quest: Quest) {
+  const variants = questVariantsOf(quest)
+  if (variants.length === 1) {
+    await startQuest(quest)
+    return
+  }
+  // The queue serializes group-mates through variantMateRunning, so the whole
+  // group can be handed over at once without two of them fighting for the client.
+  for (const variant of variants) {
+    questsStore.addToQueue(toRaw(variant))
+  }
+  await questsStore.startQueue()
+}
 
 const unenrolledCount = computed(() => {
   return filteredQuests.value.filter(q => !q.user_status?.enrolled_at && !isQuestExpired(q)).length
