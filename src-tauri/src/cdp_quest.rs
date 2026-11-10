@@ -4511,7 +4511,12 @@ pub async fn complete_activity_quest_via_cdp(
     // minute. Failing here marked quests Failed that Discord finished seconds
     // later, so resolve as complete; the next quest refresh picks up
     // completed_at once the server writes it.
-    if server_progress_max >= total_checkpoints as f64 {
+    //
+    // `get_quest_progress` reports seconds, not checkpoints: the payload is
+    // {"TASK_KEY": {"value": N}} and N is the watched time. Comparing it against
+    // `total_checkpoints` made every quest longer than a minute look rejected.
+    let total_seconds_recorded = total_seconds as f64;
+    if server_progress_max + 1.0 >= total_seconds_recorded {
         let _ = app_handle.emit("quest-progress", 100.0f64);
         let _ = app_handle.emit("quest-complete", ());
         cdp_cleanup_after_stop(port, "activity quest unconfirmed", false).await;
@@ -4519,8 +4524,9 @@ pub async fn complete_activity_quest_via_cdp(
             LogLevel::Warn,
             LogCategory::TokenExtraction,
             &format!(
-                "CDP activity quest finished without completed_at; server accepted {}/{} checkpoints",
-                server_progress_max as u64, total_checkpoints
+                "CDP activity quest finished without completed_at; server accepted {:.0}s of {}s \
+                 across {} checkpoints",
+                server_progress_max, total_seconds_recorded, total_checkpoints
             ),
             None,
         );
@@ -4530,7 +4536,9 @@ pub async fn complete_activity_quest_via_cdp(
     // Checkpoints were rejected or never registered server-side: this is a real
     // failure, so let the task registry record Failed for this quest.
     anyhow::bail!(
-        "Activity quest finished locally, but Discord has not confirmed completion yet. Refresh quests or check Discord."
+        "Activity quest finished locally, but Discord recorded only {:.0}s of {}s. \
+         Refresh quests or check Discord.",
+        server_progress_max, total_seconds
     );
 }
 
