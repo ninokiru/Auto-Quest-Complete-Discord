@@ -4536,10 +4536,10 @@ pub async fn complete_activity_quest_via_cdp(
     // Checkpoints were rejected or never registered server-side: this is a real
     // failure, so let the task registry record Failed for this quest.
     anyhow::bail!(
-        "Activity quest finished locally, but Discord recorded only {:.0}s of {}s. \
-Refresh quests or check Discord.",
-        server_progress_max, total_seconds
-    );
+        "Activity quest finished locally, but Discord recorded only {:.0}s of {}s. Refresh quests or check Discord.",
+        server_progress_max,
+        total_seconds
+    )
 }
 
 #[cfg(test)]
