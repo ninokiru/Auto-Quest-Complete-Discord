@@ -4537,7 +4537,7 @@ pub async fn complete_activity_quest_via_cdp(
     // failure, so let the task registry record Failed for this quest.
     anyhow::bail!(
         "Activity quest finished locally, but Discord recorded only {:.0}s of {}s. \
-         Refresh quests or check Discord.",
+Refresh quests or check Discord.",
         server_progress_max, total_seconds
     );
 }
