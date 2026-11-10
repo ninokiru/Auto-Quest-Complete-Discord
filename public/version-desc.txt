@@ -2,25 +2,21 @@
 
 Auto-complete Discord **video, stream and game quests** from one window. Tauri 2 + Rust behind the scenes, Vue 3 on the surface, and no cloud service in between: everything runs on your machine.
 
-## v0.0.5 L3#4 — Activity quests count in the right unit
+## v0.0.5 L3#5 — an Activity quest you can watch while you launch it
 
-Fourth build of the third patch round. The same three things people reported: identical quests that could not be told apart, identical quests that fought over one Discord client, and an Activity quest that reported failure after Discord had already accepted every checkpoint.
+Fifth build of the third patch round. An audit of the Activity and CDP paths turned up five defects; these are all of them.
 
 ### Fixed
 
-- **Activity quests stopped calling finished work a failure.** The server-side check compared the progress Discord records — a count of *seconds* — against the quest's number of *checkpoints*. Any Activity quest longer than a minute therefore looked rejected, and the run failed with "finished locally, but Discord has not confirmed completion yet" even though Discord had accepted every checkpoint. The comparison is now in seconds, and the failure message says how many seconds Discord actually recorded.
-
-### Changed
-
-- **Identical quests are one card with a count.** Regional variants of one offer share a name, game, expiry and reward but carry different ids, so Home listed them as identical rows and it was impossible to tell which card was which. A still-run group now renders once with a `×N` badge; **Accept** and **Start** act on every variant, and the queue runs them one at a time. Completed or claimed variants keep their own cards so every reward stays claimable.
-- **Variants of one quest never run together.** Two group-mates share a single Discord client and a single Activity window, so starting both made them fight over it and fail. A queued variant now waits until its group-mate finishes.
-- **Activity checkpoint speed runs to 20x.** The dial now covers **1.0x–20.0x**. The floor between checkpoints drops from 15 s to 5 s so the top of the range is a real cadence — 20x turns the 90–150 s default into 5–8 s — instead of clamping to the same 15 s as 10x.
+- **A started Activity quest no longer looks frozen.** Starting one waits up to five minutes for you to launch the Activity in Discord, and the card only began tracking progress *after* that wait returned — so the bar sat still and the button looked dead. The card now opens, shows that it is waiting and tracks the backend from the first second. A start that fails gives the slot back.
+- **A batch says when it leaves a quest out.** Checkpoint Activity and Stream quests cannot run from a queue — one needs you to open the Activity window, the other needs a real broadcast. The batch used to drop them without a word; it now explains which quest was left out and why.
+- **A missing cadence no longer means the slowest cadence.** A caller that sent no checkpoint times got the old 180 s fallback, twice the current 90–150 s default. It now runs at 120 s.
 
 ### Checks
 
 - rustfmt, clippy, the Rust suite, the frontend suite and the translation parity check run in CI for this build.
 
-**Full Changelog**: https://github.com/ninokiru/Auto-Quest-Complete-Discord/compare/0.0.5-L3.3...0.0.5-L3.4
+**Full Changelog**: https://github.com/ninokiru/Auto-Quest-Complete-Discord/compare/0.0.5-L3.4...0.0.5-L3.5
 
 ### How the in-app update works
 
@@ -42,8 +38,8 @@ These binaries are **not code-signed**. The app rewrites its own process identit
 
 | File | Use |
 | --- | --- |
-| `auto-quest-complete-discord-Windows-x64-0.0.5-L3.4-setup.exe` | Windows installer (NSIS) |
-| `auto-quest-complete-discord-Windows-x64-0.0.5-L3.4-portable.zip` | Windows portable, no installation |
+| `auto-quest-complete-discord-Windows-x64-0.0.5-L3.5-setup.exe` | Windows installer (NSIS) |
+| `auto-quest-complete-discord-Windows-x64-0.0.5-L3.5-portable.zip` | Windows portable, no installation |
 
 This release publishes **Windows x64 only**. macOS (Apple Silicon) and Linux (x86_64 `.deb` / AppImage) builds are still fully supported by the source tree and are compiled and tested in CI — only their release publishing is temporarily switched off to keep a release run on one runner. They will return in a later release. If you need one of them now, build it from source (`pnpm tauri:build`).
 

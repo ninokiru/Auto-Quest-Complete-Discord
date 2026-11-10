@@ -176,6 +176,8 @@
     "reward_code_retry": "Thử lại",
     "reward_code_failed": "Quest này không có mã thưởng để hiện.",
     "soft_error_console_only": "{game} chỉ chạy trên máy console nên ứng dụng này không thể mô phỏng. Hãy chơi trên máy console và Discord sẽ ghi nhận tiến trình của bạn.",
+    "soft_error_activity_needs_launch": "{game} là Activity đếm checkpoint. Hãy bấm Bắt đầu trên thẻ của nó rồi mở Activity trong Discord — chạy hàng loạt không làm được bước này thay bạn.",
+    "soft_error_stream_needs_broadcast": "{game} là quest Stream và chỉ tính khi phát thật, nên đã được bỏ khỏi lượt chạy hàng loạt.",
     "background_title": "Quest đang chạy trên các tài khoản khác",
     "background_hint": "Chúng vẫn chạy sau khi bạn đổi tài khoản. Dừng một quest để kết thúc quest đó."
   },

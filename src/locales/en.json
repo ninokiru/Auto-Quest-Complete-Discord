@@ -178,6 +178,8 @@
     "reward_code_retry": "Try again",
     "reward_code_failed": "This quest has no reward code to show.",
     "soft_error_console_only": "{game} only runs on consoles, which this app cannot simulate. Play it on a console and Discord will record the progress.",
+    "soft_error_activity_needs_launch": "{game} is a checkpoint Activity. Start it from its own card, then launch the Activity in Discord — a batch cannot do that step for you.",
+    "soft_error_stream_needs_broadcast": "{game} is a Stream quest and only a real broadcast counts, so it was left out of the batch.",
     "background_title": "Quests running on other accounts",
     "background_hint": "They keep going after you switch accounts. Stop one to end its quest."
   },

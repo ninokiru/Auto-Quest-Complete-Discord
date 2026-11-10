@@ -136,6 +136,8 @@ export interface QuestSoftError {
     | 'SIMULATION_EXECUTABLE_OS_UNSUPPORTED'
     | 'SIMULATION_EXECUTABLE_NOT_FOUND'
     | 'SIMULATION_PLATFORM_UNSUPPORTED'
+    | 'ACTIVITY_NEEDS_LAUNCH'
+    | 'STREAM_NEEDS_BROADCAST'
   /** English fallback message; the UI localizes by `code` using `gameName`. */
   message: string
   /** Detectable-game name, so the dialog can render a localized message. */
@@ -2311,6 +2313,17 @@ export const useQuestsStore = defineStore('quests', () => {
       const appId = questApplicationId(quest) ?? ''
       const appName = quest.config.application?.name || quest.config.messages?.quest_name || 'Activity'
 
+      // The slot opens before the backend call: starting an Activity waits up to
+      // five minutes for the user to launch it in Discord, and the card has to
+      // show that it is waiting instead of looking like a button that did
+      // nothing. Its target is the checkpoint count — the unit Discord reports
+      // in — while `totalSeconds` only sizes the backend timer. A failed start
+      // releases the slot in the catch below.
+      openQuestSlot(quest.id, 'activity', checkpointCount, 'checkpoints', progressPct, true, activityTaskKey)
+      startProgressSimulation()
+      setupListeners()
+      syncPolling()
+
       await startCdpQuest(
         quest.id,
         'activity',
@@ -2321,15 +2334,17 @@ export const useQuestsStore = defineStore('quests', () => {
         cdpPort.value,
         checkpointTimes
       )
-
-      openQuestSlot(quest.id, 'activity', checkpointCount, 'checkpoints', progressPct, true, activityTaskKey)
-
-      startProgressSimulation()
-      setupListeners()
-      syncPolling()
-
     } catch (e) {
       error.value = errorMessage(e)
+      const slot = questSlot(quest.id)
+      if (slot) {
+        releaseQuestSlot(quest.id)
+        syncPolling()
+        if (runningQuests.value.length === 0) {
+          stopProgressSimulation()
+          cleanupListeners()
+        }
+      }
       throw e
     } finally {
       startingQuestId.value = null
@@ -2725,6 +2740,37 @@ export const useQuestsStore = defineStore('quests', () => {
   }
 
   /**
+   * A batch can queue a quest only a person can finish: a checkpoint Activity
+   * waits for the user to launch the Activity window, and a real Stream quest
+   * waits for an actual broadcast. Dropping those silently looked like the batch
+   * had swallowed them, so the skip is recorded the same way an incompatible
+   * start is.
+   */
+  function reportQueueSkip(quest: Quest): void {
+    if (quest.user_status?.completed_at) return
+    const gameName = quest.config.application?.name || quest.config.messages.quest_name || quest.id
+    if (isManualActivityQuest(quest)) {
+      softError.value = {
+        code: 'ACTIVITY_NEEDS_LAUNCH',
+        message: `"${gameName}" is a checkpoint Activity: start it from its card, then launch the Activity in Discord. Left out of the batch.`,
+        gameName,
+        questId: quest.id,
+        recoverable: true,
+      }
+      return
+    }
+    if (isManualStreamQuest(quest)) {
+      softError.value = {
+        code: 'STREAM_NEEDS_BROADCAST',
+        message: `"${gameName}" is a Stream quest and only counts a real broadcast. Left out of the batch.`,
+        gameName,
+        questId: quest.id,
+        recoverable: true,
+      }
+    }
+  }
+
+  /**
    * Fill every free parallel slot from the queue. A queue item stays in the list
    * until its quest is finalized, so the candidate for the next slot is the first
    * item that does not already occupy one — and, while a game quest runs, the
@@ -2778,6 +2824,7 @@ export const useQuestsStore = defineStore('quests', () => {
         const questKind = getQuestKind(queueItem)
         if (queueItem.user_status?.completed_at || isManualStreamQuest(queueItem)
           || isManualActivityQuest(queueItem)) {
+          reportQueueSkip(queueItem)
           dropQueueItem(queueItem.id)
           continue
         }

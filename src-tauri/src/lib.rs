@@ -2154,9 +2154,13 @@ async fn start_cdp_quest(
                     .await
                 }
                 "activity" => {
+                    // Only reached when a caller sends no cadence at all. 120 s is
+                    // the midpoint of the 90-150 s default, so a missing value
+                    // runs at the same pace as a default configuration instead of
+                    // the old 180 s that tripled the wait.
                     let times = checkpoint_times
                         .filter(|v| !v.is_empty())
-                        .unwrap_or_else(|| vec![180, 180, 180]);
+                        .unwrap_or_else(|| vec![120, 120, 120]);
                     cdp_quest::complete_activity_quest_via_cdp(
                         cdp_port,
                         quest_id,

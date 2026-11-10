@@ -859,8 +859,8 @@ async function startPendingQuestInCdpMode() {
   }
 }
 
-// Localized body for the recoverable simulation soft error:
-// e.g. a win32-only game selected while running the Linux process simulator.
+// Localized body for a recoverable soft error: a simulation start that cannot
+// work on this platform, or a batch that left out a quest only a person can run.
 const softErrorMessage = computed(() => {
   const softError = questsStore.softError
   if (!softError) return ''
@@ -869,7 +869,11 @@ const softErrorMessage = computed(() => {
       ? 'quest.soft_error_win32_only'
       : softError.code === 'SIMULATION_PLATFORM_UNSUPPORTED'
         ? 'quest.soft_error_console_only'
-        : 'quest.soft_error_not_found'
+        : softError.code === 'ACTIVITY_NEEDS_LAUNCH'
+          ? 'quest.soft_error_activity_needs_launch'
+          : softError.code === 'STREAM_NEEDS_BROADCAST'
+            ? 'quest.soft_error_stream_needs_broadcast'
+            : 'quest.soft_error_not_found'
   return t(key, { game: softError.gameName })
 })
 
